@@ -1,0 +1,2 @@
+# BetterStrava
+Strava but better
