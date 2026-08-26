@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Strava Analytics</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --orange: #FC4C02;
+      --orange-dark: #e04300;
+      --bg: #f8f7f5;
+      --surface: #ffffff;
+      --surface-2: #f2f1ef;
+      --border: #e5e3df;
+      --text: #1a1a1a;
+      --text-muted: #777672;
+      --radius: 10px;
+    }
+
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── LANDING ── */
+    #landing {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2rem;
+      padding: 2rem;
+    }
+
+    .strava-logo { width: 56px; height: 56px; }
+
+    #landing h1 {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      text-align: center;
+    }
+
+    #landing p {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      text-align: center;
+      max-width: 420px;
+      line-height: 1.6;
+    }
+
+    .btn-strava {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--orange);
+      color: white;
+      font-size: 1rem;
+      font-weight: 600;
+      padding: 14px 28px;
+      border-radius: 50px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, transform 0.1s;
+      box-shadow: 0 4px 14px rgba(252,76,2,0.35);
+    }
+    .btn-strava:hover { background: var(--orange-dark); transform: translateY(-1px); }
+    .btn-strava:active { transform: translateY(0); }
+    .btn-strava svg { width: 22px; height: 22px; fill: white; }
+
+    /* ── LOADING ── */
+    #loading {
+      display: none;
+      min-height: 100vh;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--orange);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading p { color: var(--text-muted); font-size: 0.95rem; }
+
+    /* ── DASHBOARD ── */
+    #dashboard { display: none; }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      height: 56px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .topbar-logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1rem; }
+    .topbar-logo svg { width: 24px; height: 24px; fill: var(--orange); }
+    .athlete-info { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; background: var(--surface-2); }
+    .athlete-name { font-size: 0.9rem; font-weight: 500; }
+    .btn-logout {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 12px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .btn-logout:hover { border-color: var(--text-muted); }
+
+    .tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .tab {
+      padding: 12px 18px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: color 0.15s;
+    }
+    .tab.active { color: var(--orange); border-bottom-color: var(--orange); }
+
+    .main { max-width: 960px; margin: 0 auto; padding: 2rem; }
+
+    /* metrics */
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 1.5rem; }
+    .metric { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; }
+    .metric-val { font-size: 1.8rem; font-weight: 700; margin-bottom: 2px; }
+    .metric-lbl { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+    /* charts */
+    .charts { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 1.5rem; }
+    .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; }
+    .chart-card h3 { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
+    .chart-wrap { height: 180px; }
+
+    /* activities */
+    .acts-header { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; flex-wrap: wrap; }
+    .acts-header h2 { font-size: 1rem; font-weight: 600; margin-right: auto; }
+    .filter-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+    .pill {
+      padding: 5px 14px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      background: none;
+      color: var(--text-muted);
+      transition: all 0.15s;
+    }
+    .pill.active { background: var(--orange); border-color: var(--orange); color: white; font-weight: 600; }
+
+    .act-list { display: flex; flex-direction: column; gap: 8px; }
+    .act-row {
+      display: grid;
+      grid-template-columns: 40px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      transition: border-color 0.15s;
+    }
+    .act-row:hover { border-color: #ccc; }
+    .act-icon { font-size: 1.5rem; text-align: center; }
+    .act-name { font-weight: 600; font-size: 0.95rem; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .act-meta { font-size: 0.8rem; color: var(--text-muted); }
+    .act-stats { display: flex; gap: 16px; text-align: right; }
+    .act-stat { font-size: 0.85rem; font-weight: 600; }
+    .act-stat small { display: block; font-size: 0.7rem; color: var(--text-muted); font-weight: 400; }
+
+    /* AI tab */
+    .ai-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1rem; }
+    .ai-input-row { display: flex; gap: 10px; }
+    .ai-input-row input {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .ai-input-row input:focus { border-color: var(--orange); }
+    .btn-ai {
+      background: var(--orange);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .btn-ai:hover { background: var(--orange-dark); }
+    .ai-result { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.95rem; line-height: 1.8; white-space: pre-wrap; display: none; }
+
+    .quick-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 1rem; }
+    .quick-pill {
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      background: var(--surface-2);
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .quick-pill:hover { border-color: var(--orange); color: var(--orange); }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 600px) {
+      .charts { grid-template-columns: 1fr; }
+      .act-stats { gap: 10px; }
+      .topbar { padding: 0 1rem; }
+      .main { padding: 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- LANDING -->
+<section id="landing">
+  <svg class="strava-logo" viewBox="0 0 24 24" fill="#FC4C02"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0 4 13.828h4.168"/></svg>
+  <h1>Analyse tes<br/>activités Strava</h1>
+  <p>Visualise tes stats, explore tes performances et pose des questions à l'IA sur ton entraînement.</p>
+  <a id="strava-connect-btn" class="btn-strava" href="#">
+    <svg viewBox="0 0 24 24"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0 4 13.828h4.168"/></svg>
+    Connecter avec Strava
+  </a>
+</section>
+
+<!-- LOADING -->
+<section id="loading">
+  <div class="spinner"></div>
+  <p id="loading-msg">Connexion à Strava…</p>
+</section>
+
+<!-- DASHBOARD -->
+<div id="dashboard">
+  <nav class="topbar">
+    <div class="topbar-logo">
+      <svg viewBox="0 0 24 24"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0 4 13.828h4.168"/></svg>
+      Strava Analytics
+    </div>
+    <div class="athlete-info">
+      <img class="avatar" id="athlete-avatar" src="" alt=""/>
+      <span class="athlete-name" id="athlete-name"></span>
+      <button class="btn-logout" onclick="logout()">Déconnecter</button>
+    </div>
+  </nav>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('overview', this)">Vue d'ensemble</button>
+    <button class="tab" onclick="switchTab('activities', this)">Activités</button>
+    <button class="tab" onclick="switchTab('ai', this)">Analyse IA</button>
+  </div>
+
+  <div class="main">
+    <!-- OVERVIEW -->
+    <div id="tab-overview">
+      <div class="metrics" id="metrics"></div>
+      <div class="charts">
+        <div class="chart-card">
+          <h3>Distance par semaine (km)</h3>
+          <div class="chart-wrap"><canvas id="chart-weekly"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <h3>Types d'activités</h3>
+          <div class="chart-wrap"><canvas id="chart-types"></canvas></div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <h3>Heures d'entraînement par mois</h3>
+        <div class="chart-wrap"><canvas id="chart-monthly"></canvas></div>
+      </div>
+    </div>
+
+    <!-- ACTIVITIES -->
+    <div id="tab-activities" class="hidden">
+      <div class="acts-header">
+        <h2>Activités récentes</h2>
+        <div class="filter-pills" id="filter-pills"></div>
+      </div>
+      <div class="act-list" id="act-list"></div>
+    </div>
+
+    <!-- AI -->
+    <div id="tab-ai" class="hidden">
+      <div class="ai-box">
+        <div class="ai-input-row">
+          <input id="ai-input" type="text" placeholder="Ex : Quel est mon meilleur mois ? Mes runs les plus longs ?"/>
+          <button class="btn-ai" onclick="askAI()">Analyser ✦</button>
+        </div>
+        <div class="quick-pills">
+          <button class="quick-pill" onclick="setQ('Quelle est ma progression sur les 3 derniers mois ?')">📈 Progression</button>
+          <button class="quick-pill" onclick="setQ('Quel type d\'activité je pratique le plus ?')">🏅 Type dominant</button>
+          <button class="quick-pill" onclick="setQ('Quels jours de la semaine je m\'entraîne le plus ?')">📅 Jours favoris</button>
+          <button class="quick-pill" onclick="setQ('Quel est mon meilleur record de distance ?')">🏆 Records</button>
+          <button class="quick-pill" onclick="setQ('Donne-moi des conseils pour améliorer mon entraînement.')">💡 Conseils</button>
+        </div>
+        <div class="ai-result" id="ai-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── CONFIG ───────────────────────────────────────────────
+// Remplace ces valeurs avec les tiennes après avoir créé ton app Strava
+    const CLIENT_ID = '274766';
+    const REDIRECT_URI = 'https://betterstrava.netlify.app/callback';
+    const SCOPE = 'read,profile:read_all,activity:read,activity:read_all';
+// ──────────────────────────────────────────────────────────
+
+let TOKEN = null;
+let ACTIVITIES = [];
+let charts_inst = {};
+
+const $ = id => document.getElementById(id);
+
+// Build Strava OAuth URL (same pattern as bifurkate)
+const OAUTH_URL = `https://www.strava.com/oauth/authorize?client_id=${CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&approval_prompt=force&scope=${SCOPE}`;
+$('strava-connect-btn').href = OAUTH_URL;
+
+// ─── ICONS / HELPERS ──────────────────────────────────────
+const ICONS = { Run:'🏃', Ride:'🚴', Swim:'🏊', Walk:'🚶', Hike:'🥾', WeightTraining:'🏋️', Yoga:'🧘', VirtualRide:'🖥️', TrailRun:'🏃', AlpineSki:'⛷️', NordicSki:'🎿', Workout:'💪' };
+const icon = t => ICONS[t] || '🏅';
+const fmtDist = m => m > 999 ? (m/1000).toFixed(1)+'km' : Math.round(m)+'m';
+const fmtTime = s => { const h=Math.floor(s/3600), m=Math.floor((s%3600)/60); return h>0 ? `${h}h${m>0?m+'min':''}` : `${m}min`; };
+const fmtDate = d => new Date(d).toLocaleDateString('fr-FR', {day:'numeric', month:'short', year:'numeric'});
+const fmtPace = (s,m) => { if(!m||m<100) return null; const pm=s/m*1000; return `${Math.floor(pm/60)}'${String(Math.round(pm%60)).padStart(2,'0')}''/km`; };
+
+function showEl(id){ $(id).style.display='flex'; }
+function showBlock(id){ $(id).style.display='block'; }
+function hideEl(id){ $(id).style.display='none'; }
+
+// ─── AUTH FLOW ────────────────────────────────────────────
+async function init() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const stored = sessionStorage.getItem('strava_token');
+
+  if (stored) {
+    TOKEN = stored;
+    loadDashboard();
+    return;
+  }
+
+  if (code) {
+    window.history.replaceState({}, '', window.location.pathname);
+    showEl('loading');
+    hideEl('landing');
+    $('loading-msg').textContent = 'Échange du token…';
+    try {
+      // Call our Netlify function to exchange the code securely
+      const res = await fetch(`/.netlify/functions/exchange-token?code=${code}`);
+      const data = await res.json();
+      if (data.errors || !data.access_token) throw new Error(data.message || 'Erreur token');
+      TOKEN = data.access_token;
+      sessionStorage.setItem('strava_token', TOKEN);
+      if (data.athlete) sessionStorage.setItem('strava_athlete', JSON.stringify(data.athlete));
+      loadDashboard();
+    } catch(e) {
+      hideEl('loading');
+      showEl('landing');
+      alert('Erreur de connexion : ' + e.message);
+    }
+    return;
+  }
+
+  showEl('landing');
+}
+
+// ─── API CALLS ────────────────────────────────────────────
+async function stravaFetch(path) {
+  // Use our proxy function to avoid CORS
+  const res = await fetch(`/.netlify/functions/strava-api?path=${encodeURIComponent(path)}`, {
+    headers: { 'Authorization': 'Bearer ' + TOKEN }
+  });
+  if (!res.ok) throw new Error('API error ' + res.status);
+  return res.json();
+}
+
+async function loadDashboard() {
+  showEl('loading');
+  hideEl('landing');
+  $('dashboard').style.display = 'none';
+
+  try {
+    $('loading-msg').textContent = 'Récupération du profil…';
+    let athlete = JSON.parse(sessionStorage.getItem('strava_athlete') || 'null');
+    if (!athlete) athlete = await stravaFetch('/athlete');
+
+    $('athlete-name').textContent = athlete.firstname + ' ' + athlete.lastname;
+    if (athlete.profile) $('athlete-avatar').src = athlete.profile;
+
+    $('loading-msg').textContent = 'Chargement des activités…';
+    const pages = [];
+    for (let p = 1; p <= 5; p++) {
+      const acts = await stravaFetch(`/athlete/activities?per_page=100&page=${p}`);
+      pages.push(...acts);
+      if (acts.length < 100) break;
+    }
+    ACTIVITIES = pages;
+
+    hideEl('loading');
+    $('dashboard').style.display = 'block';
+    renderAll();
+  } catch(e) {
+    hideEl('loading');
+    showEl('landing');
+    sessionStorage.clear();
+    alert('Erreur : ' + e.message);
+  }
+}
+
+// ─── RENDER ───────────────────────────────────────────────
+function renderAll() {
+  renderMetrics();
+  renderCharts();
+  renderActivities(ACTIVITIES);
+  renderFilters();
+}
+
+function renderMetrics() {
+  const total = ACTIVITIES.length;
+  const dist = ACTIVITIES.reduce((s,a) => s + (a.distance||0), 0);
+  const time = ACTIVITIES.reduce((s,a) => s + (a.moving_time||0), 0);
+  const elev = ACTIVITIES.reduce((s,a) => s + (a.total_elevation_gain||0), 0);
+  $('metrics').innerHTML = `
+    <div class="metric"><div class="metric-val" style="color:#FC4C02">${total}</div><div class="metric-lbl">Activités</div></div>
+    <div class="metric"><div class="metric-val">${fmtDist(dist)}</div><div class="metric-lbl">Distance totale</div></div>
+    <div class="metric"><div class="metric-val">${fmtTime(time)}</div><div class="metric-lbl">Temps de mouvement</div></div>
+    <div class="metric"><div class="metric-val">${Math.round(elev).toLocaleString('fr-FR')}m</div><div class="metric-lbl">Dénivelé cumulé</div></div>
+  `;
+}
+
+function renderCharts() {
+  // Weekly distance (last 12 weeks)
+  const now = new Date();
+  const weeks = {};
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now); d.setDate(d.getDate() - i * 7);
+    weeks[`S${d.getMonth()+1}/${String(d.getDate()).padStart(2,'0')}`] = 0;
+  }
+  ACTIVITIES.forEach(a => {
+    const ms = now - new Date(a.start_date_local);
+    if (ms > 12 * 7 * 86400 * 1000) return;
+    const wi = Math.floor(ms / (7 * 86400 * 1000));
+    const ref = new Date(now); ref.setDate(ref.getDate() - wi * 7);
+    const k = `S${ref.getMonth()+1}/${String(ref.getDate()).padStart(2,'0')}`;
+    if (k in weeks) weeks[k] += (a.distance||0) / 1000;
+  });
+
+  if (charts_inst.weekly) charts_inst.weekly.destroy();
+  charts_inst.weekly = new Chart($('chart-weekly'), {
+    type: 'bar',
+    data: { labels: Object.keys(weeks), datasets: [{ data: Object.values(weeks).map(v=>Math.round(v*10)/10), backgroundColor: '#FC4C0299', borderColor: '#FC4C02', borderWidth: 1.5, borderRadius: 4 }] },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{ticks:{font:{size:10},maxRotation:45}},y:{ticks:{font:{size:10}}}} }
+  });
+
+  // Types donut
+  const types = {};
+  ACTIVITIES.forEach(a => { const t = a.sport_type||a.type; types[t]=(types[t]||0)+1; });
+  const sorted = Object.entries(types).sort((a,b)=>b[1]-a[1]).slice(0,7);
+  const COLORS = ['#FC4C02','#ff7043','#ffa726','#66bb6a','#29b6f6','#7e57c2','#ec407a'];
+  if (charts_inst.types) charts_inst.types.destroy();
+  charts_inst.types = new Chart($('chart-types'), {
+    type: 'doughnut',
+    data: { labels: sorted.map(([t])=>t), datasets:[{ data: sorted.map(([,v])=>v), backgroundColor: COLORS, borderWidth:0 }] },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'right', labels:{font:{size:11},boxWidth:12,padding:8} } } }
+  });
+
+  // Monthly hours (last 6 months)
+  const months = {};
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    months[d.toLocaleDateString('fr-FR',{month:'short',year:'2-digit'})] = 0;
+  }
+  ACTIVITIES.forEach(a => {
+    const d = new Date(a.start_date_local);
+    const k = d.toLocaleDateString('fr-FR',{month:'short',year:'2-digit'});
+    if (k in months) months[k] += (a.moving_time||0) / 3600;
+  });
+  if (charts_inst.monthly) charts_inst.monthly.destroy();
+  charts_inst.monthly = new Chart($('chart-monthly'), {
+    type: 'line',
+    data: { labels: Object.keys(months), datasets:[{ data: Object.values(months).map(v=>Math.round(v*10)/10), borderColor:'#FC4C02', backgroundColor:'#FC4C0210', fill:true, tension:0.4, pointBackgroundColor:'#FC4C02', pointRadius:5 }] },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{ticks:{font:{size:11}}},y:{ticks:{font:{size:11}}}} }
+  });
+}
+
+function renderActivities(acts) {
+  const list = $('act-list');
+  list.innerHTML = '';
+  acts.slice(0, 60).forEach(a => {
+    const t = a.sport_type || a.type;
+    const pace = (t==='Run'||t==='TrailRun') ? fmtPace(a.moving_time, a.distance) : null;
+    list.insertAdjacentHTML('beforeend', `
+      <div class="act-row">
+        <div class="act-icon">${icon(t)}</div>
+        <div>
+          <div class="act-name">${a.name}</div>
+          <div class="act-meta">${fmtDate(a.start_date_local)} · ${t}</div>
+        </div>
+        <div class="act-stats">
+          ${a.distance > 100 ? `<div class="act-stat">${fmtDist(a.distance)}<small>distance</small></div>` : ''}
+          <div class="act-stat">${fmtTime(a.moving_time)}<small>durée</small></div>
+          ${pace ? `<div class="act-stat">${pace}<small>allure</small></div>` : ''}
+          ${a.total_elevation_gain > 0 ? `<div class="act-stat">+${Math.round(a.total_elevation_gain)}m<small>D+</small></div>` : ''}
+        </div>
+      </div>`);
+  });
+}
+
+function renderFilters() {
+  const types = [...new Set(ACTIVITIES.map(a => a.sport_type||a.type))];
+  const container = $('filter-pills');
+  container.innerHTML = '<button class="pill active" onclick="filterBy(this, null)">Toutes</button>';
+  types.forEach(t => {
+    container.insertAdjacentHTML('beforeend', `<button class="pill" onclick="filterBy(this,'${t}')">${icon(t)} ${t}</button>`);
+  });
+}
+
+function filterBy(btn, type) {
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  renderActivities(type ? ACTIVITIES.filter(a => (a.sport_type||a.type) === type) : ACTIVITIES);
+}
+
+function switchTab(name, btn) {
+  ['overview','activities','ai'].forEach(n => {
+    const el = $('tab-'+n);
+    if (n === name) el.classList.remove('hidden'); else el.classList.add('hidden');
+  });
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// ─── AI ───────────────────────────────────────────────────
+function setQ(q) { $('ai-input').value = q; }
+
+async function askAI() {
+  const q = $('ai-input').value.trim();
+  if (!q) return;
+  const result = $('ai-result');
+  result.style.display = 'block';
+  result.textContent = '⏳ Analyse en cours…';
+
+  const summary = ACTIVITIES.slice(0, 150).map(a => ({
+    date: a.start_date_local.slice(0,10),
+    type: a.sport_type||a.type,
+    name: a.name,
+    dist_km: Math.round(a.distance/100)/10,
+    dur_min: Math.round(a.moving_time/60),
+    elev: Math.round(a.total_elevation_gain||0),
+    hr: a.average_heartrate || null,
+  }));
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        system: `Tu es un coach sportif expert. Analyse les données Strava de l'athlète et réponds de façon concise, précise et motivante en français. Utilise les chiffres des données.`,
+        messages: [{ role: 'user', content: `Mes ${ACTIVITIES.length} activités Strava:\n${JSON.stringify(summary)}\n\nQuestion: ${q}` }]
+      })
+    });
+    const data = await res.json();
+    result.textContent = data.content?.[0]?.text || 'Pas de réponse.';
+  } catch(e) {
+    result.textContent = 'Erreur : ' + e.message;
+  }
+}
+
+function logout() {
+  sessionStorage.clear();
+  TOKEN = null; ACTIVITIES = [];
+  $('dashboard').style.display = 'none';
+  showEl('landing');
+}
+
+// ─── START ────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
