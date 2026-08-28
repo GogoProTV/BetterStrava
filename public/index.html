@@ -134,13 +134,8 @@ function defaultValues(type) {
 // ═══════════════════════════════════════════════════════════════════
 // STRAVA
 // ═══════════════════════════════════════════════════════════════════
-async function resolveClientId() {
-  try {
-    const cfg = await fetch('/.netlify/functions/strava-config').then(r => r.json());
-    if (cfg && cfg.client_id) return String(cfg.client_id);
-  } catch (e) {}
-  return '';
-}
+const STRAVA_CLIENT_ID = '274766';
+const STRAVA_REDIRECT_URI = 'https://betterstrava.netlify.app/callback';
 
 function storeToken(res) {
   localStorage.setItem('strava_token', res.access_token);
@@ -166,13 +161,9 @@ function api(path, token) {
   }).then(r => r.json());
 }
 
-async function connect() {
-  setState({ status: 'loading', error: '' });
-  const id = await resolveClientId();
-  if (!id) { setState({ status: 'error', error: 'Client ID Strava indisponible.' }); return; }
-  const redirect = window.location.origin + window.location.pathname;
-  window.location.href = 'https://www.strava.com/oauth/authorize?client_id=' + encodeURIComponent(id) +
-    '&response_type=code&redirect_uri=' + encodeURIComponent(redirect) +
+function connect() {
+  window.location.href = 'https://www.strava.com/oauth/authorize?client_id=' + encodeURIComponent(STRAVA_CLIENT_ID) +
+    '&response_type=code&redirect_uri=' + encodeURIComponent(STRAVA_REDIRECT_URI) +
     '&approval_prompt=auto&scope=activity:read_all,profile:read_all';
 }
 
