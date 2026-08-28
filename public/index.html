@@ -5,24 +5,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Analyse d'entraînement</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&display=swap">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
-  * { box-sizing: border-box; }
-  body { margin: 0; background: #f3f2f2; color: #201e1d; font-family: "Archivo", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
-  a { color: #ae1800; text-decoration: none; border-bottom: 2px solid #ec3013; }
-  a:hover { color: #ec3013; }
-  ::selection { background: #ffc4b8; }
-  button:focus-visible, [tabindex]:focus-visible { outline: 2px solid #ec3013; outline-offset: 2px; }
+* { box-sizing: border-box; margin: 0; padding: 0; border-radius: 0 !important; }
+body { background: #f3f2f2; color: #201e1d; font-family: "Archivo", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: #ae1800; text-decoration: none; border-bottom: 2px solid #ec3013; }
+a:hover { color: #ec3013; }
+::selection { background: #ffc4b8; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid #ec3013; outline-offset: 2px; }
+input, select { font-family: inherit; }
+button { font-family: inherit; }
 </style>
 </head>
 <body>
-<div id="root" style="display: flex; align-items: flex-start; min-height: 100vh; background: #f3f2f2;"></div>
-
+<div id="root"></div>
 <script>
-// ═══════════════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════════════
+const { createElement: h, useState, useEffect, useRef, useCallback } = React;
+
+// ── helpers ─────────────────────────────────────────────────────────────────
 function weekStart(d) {
   const x = new Date(d);
   const day = (x.getDay() + 6) % 7;
@@ -31,163 +35,46 @@ function weekStart(d) {
   return x;
 }
 function sum(list, key) { return list.reduce((s, a) => s + (a[key] || 0), 0); }
-function fmtNum(v, dec) { return Number(v).toLocaleString('fr-FR', { minimumFractionDigits: dec ?? 0, maximumFractionDigits: dec ?? 0 }); }
+function fmtNum(v, dec) { return Number(v).toLocaleString('fr-FR', { minimumFractionDigits: dec, maximumFractionDigits: dec }); }
 function fmtPace(min) {
   if (!isFinite(min) || min <= 0) return '—';
   const total = Math.round(min * 60);
   return Math.floor(total / 60) + "'" + String(total % 60).padStart(2, '0') + '"';
 }
 function fmtH(min) { const h = Math.floor(min / 60); return h + 'h' + String(Math.round(min % 60)).padStart(2, '0'); }
-function fatigueColor(f) { return ['#ffe0d9','#ffb3a3','#f97a60','#ec3013','#ae1800'][Math.max(1, Math.min(5, f)) - 1]; }
+function fatigueColor(f) { return ['#ffe0d9', '#ffb3a3', '#f97a60', '#ec3013', '#ae1800'][Math.max(1, Math.min(5, f)) - 1]; }
 function fatigueInk(f) { return f >= 4 ? '#ffffff' : '#201e1d'; }
-
 function btnStyle(active) {
-  return 'padding: 9px 14px; border: 2px solid ' + (active ? '#ec3013' : '#201e1d') +
-    '; background: ' + (active ? '#ec3013' : 'transparent') + '; color: ' + (active ? '#ffffff' : '#201e1d') +
-    '; font-family: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; cursor: pointer;';
+  return {
+    padding: '9px 14px', border: '2px solid ' + (active ? '#ec3013' : '#201e1d'),
+    background: active ? '#ec3013' : 'transparent', color: active ? '#ffffff' : '#201e1d',
+    fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em',
+    textTransform: 'uppercase', textAlign: 'left', cursor: 'pointer',
+  };
 }
 function navStyle(active, sub) {
-  return 'display: flex; align-items: center; gap: 10px; width: 100%; padding: ' + (sub ? '11px 24px 11px 38px' : '15px 24px') +
-    '; border: 0; border-bottom: ' + (sub ? '1px solid #d7d3d3' : '2px solid #201e1d') +
-    '; background: ' + (active ? '#ec3013' : 'transparent') + '; color: ' + (active ? '#ffffff' : '#201e1d') +
-    '; font-family: inherit; font-size: ' + (sub ? '12px' : '13px') + '; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; cursor: pointer;';
+  return {
+    display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
+    padding: sub ? '11px 24px 11px 38px' : '15px 24px',
+    border: '0', borderBottom: sub ? '1px solid #d7d3d3' : '2px solid #201e1d',
+    background: active ? '#ec3013' : 'transparent', color: active ? '#ffffff' : '#201e1d',
+    fontFamily: 'inherit', fontSize: sub ? '12px' : '13px', fontWeight: '600',
+    letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: 'pointer',
+  };
 }
 function deltaChip(pct, betterHigh) {
-  if (pct === null || !isFinite(pct)) return { text: '—', style: 'padding: 3px 8px; font-size: 12px; font-weight: 600; background: #eae9e9; color: #605d5d;', arrow: '→', arrowStyle: 'font-size: 15px; color: #605d5d;' };
+  if (pct === null || !isFinite(pct)) return { text: '—', style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', background: '#eae9e9', color: '#605d5d' }, arrow: '→', arrowStyle: { fontSize: '15px', color: '#605d5d' } };
   const good = betterHigh ? pct > 0 : pct < 0;
   const flat = pct === 0;
   return {
     text: (pct > 0 ? '+' : '') + pct + '%',
-    style: 'padding: 3px 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; background: ' + (flat ? '#eae9e9' : good ? '#ffe0d9' : '#eae9e9') + '; color: ' + (flat ? '#605d5d' : good ? '#ae1800' : '#444141') + ';',
+    style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ffe0d9' : '#eae9e9', color: flat ? '#605d5d' : good ? '#ae1800' : '#444141' },
     arrow: flat ? '→' : pct > 0 ? '▲' : '▼',
-    arrowStyle: 'font-size: 13px; line-height: 1; color: ' + (flat ? '#605d5d' : good ? '#ec3013' : '#605d5d') + ';',
+    arrowStyle: { fontSize: '13px', lineHeight: '1', color: flat ? '#605d5d' : good ? '#ec3013' : '#605d5d' },
   };
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// STATE
-// ═══════════════════════════════════════════════════════════════════
-const state = {
-  tab: 'programme',
-  athleteOpen: false,
-  athleteSection: 'Condition physique',
-  sport: 'Tous',
-  range: 180,
-  metric: 'km',
-  expanded: false,
-  view: 8,
-  status: 'idle', // idle | loading | ready | empty | error
-  error: '',
-  profile: { name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '' },
-  race: { type: 'Marathon', date: '2026-09-12', values: {} },
-};
-
-const raceCatalog = buildRaceCatalog();
-state.race.values = defaultValues('Marathon');
-
-let data = [];
-let charts = {};
-let lineRef = null, dailyRef = null, zoneRef = null;
-let drawTimer = null;
-
-function buildRaceCatalog() {
-  const tri = (swim, bike, bikeD, run, runD) => ({ fields: [
-    { k: 'swim', label: 'Natation (km)', v: swim, step: 0.1 },
-    { k: 'bike', label: 'Vélo (km)', v: bike },
-    { k: 'bikeElev', label: 'D+ vélo (m)', v: bikeD, step: 10 },
-    { k: 'run', label: 'Course (km)', v: run, step: 0.1 },
-    { k: 'runElev', label: 'D+ course (m)', v: runD, step: 10 },
-  ]});
-  const run = (dist, elev, step) => ({ fields: [
-    { k: 'run', label: 'Distance (km)', v: dist, step: step || 0.1 },
-    { k: 'runElev', label: 'Dénivelé D+ (m)', v: elev, step: 10 },
-    { k: 'runElevNeg', label: 'Dénivelé D− (m)', v: elev, step: 10 },
-  ]});
-  const bike = (dist, elev) => ({ fields: [
-    { k: 'bike', label: 'Distance (km)', v: dist },
-    { k: 'bikeElev', label: 'Dénivelé D+ (m)', v: elev, step: 10 },
-  ]});
-  return {
-    'Triathlon XS': tri(0.4, 10, 60, 2.5, 20),
-    'Triathlon S': tri(0.75, 20, 150, 5, 40),
-    'Triathlon M': tri(1.5, 40, 350, 10, 70),
-    'Triathlon L': tri(3, 80, 900, 20, 150),
-    'Triathlon 70.3': tri(1.9, 90, 800, 21.1, 160),
-    'Ironman': tri(3.8, 180, 1600, 42.2, 300),
-    'Marathon': run(42.195, 250),
-    'Semi-marathon': run(21.097, 120),
-    '10 km': run(10, 50),
-    'Trail court (moins de 25 km)': run(21, 1100),
-    'Trail long (25–50 km)': run(42, 2400),
-    'Ultra-trail (plus de 80 km)': run(105, 6000, 1),
-    'Cyclosportive': bike(140, 2600),
-    'Contre-la-montre vélo': bike(40, 250),
-    'Natation eau libre': { fields: [{ k: 'swim', label: 'Distance (km)', v: 5, step: 0.1 }, { k: 'swimTemp', label: 'Température (°C)', v: 18 }] },
-  };
-}
-function defaultValues(type) {
-  const out = {};
-  (raceCatalog[type] || { fields: [] }).fields.forEach(f => { out[f.k] = f.v; });
-  return out;
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// STRAVA
-// ═══════════════════════════════════════════════════════════════════
-const STRAVA_CLIENT_ID = '274766';
-const STRAVA_REDIRECT_URI = 'https://betterstrava.netlify.app/callback';
-
-function storeToken(res) {
-  localStorage.setItem('strava_token', res.access_token);
-  if (res.refresh_token) localStorage.setItem('strava_refresh_token', res.refresh_token);
-  if (res.expires_at) localStorage.setItem('strava_expires_at', String(res.expires_at));
-  return res.access_token;
-}
-
-async function freshToken(token) {
-  const exp = Number(localStorage.getItem('strava_expires_at') || 0);
-  const refresh = localStorage.getItem('strava_refresh_token');
-  if (!refresh || !exp || exp * 1000 - Date.now() > 5 * 60000) return token;
-  try {
-    const res = await fetch('/.netlify/functions/exchange-token?refresh_token=' + encodeURIComponent(refresh)).then(r => r.json());
-    if (res && res.access_token) return storeToken(res);
-  } catch (e) {}
-  return token;
-}
-
-function api(path, token) {
-  return fetch('/.netlify/functions/strava-api?path=' + encodeURIComponent(path), {
-    headers: { authorization: 'Bearer ' + token },
-  }).then(r => r.json());
-}
-
-function connect() {
-  window.location.href = 'https://www.strava.com/oauth/authorize?client_id=' + encodeURIComponent(STRAVA_CLIENT_ID) +
-    '&response_type=code&redirect_uri=' + encodeURIComponent(STRAVA_REDIRECT_URI) +
-    '&approval_prompt=auto&scope=activity:read_all,profile:read_all';
-}
-
-function disconnect() {
-  localStorage.removeItem('strava_token');
-  localStorage.removeItem('strava_refresh_token');
-  localStorage.removeItem('strava_expires_at');
-  data = [];
-  setState({ status: 'idle', error: '' });
-}
-
-function applyAthlete(a) {
-  if (!a) return;
-  setState(s => ({
-    profile: {
-      ...s.profile,
-      name: [a.firstname, a.lastname].filter(Boolean).join(' ') || s.profile.name,
-      gender: a.sex === 'F' ? 'Femme' : a.sex === 'M' ? 'Homme' : s.profile.gender,
-      weight: a.weight || s.profile.weight,
-      ftp: a.ftp || s.profile.ftp,
-    },
-  }));
-}
-
+// ── activity mapping ─────────────────────────────────────────────────────────
 function mapActivity(a) {
   const map = {
     Run: 'Course', VirtualRun: 'Course', TrailRun: 'Trail',
@@ -202,81 +89,110 @@ function mapActivity(a) {
   const effort = a.suffer_score;
   return {
     date: new Date(a.start_date_local || a.start_date),
-    name: a.name || null,
-    sport,
-    dist: Math.round(dist * 10) / 10,
-    time,
+    name: a.name || null, sport, dist: Math.round(dist * 10) / 10, time,
     elev: Math.round(a.total_elevation_gain || 0),
     pace: dist > 0 ? time / dist : null,
     power: a.average_watts ? Math.round(a.average_watts) : null,
+    maxPower: a.max_watts ? Math.round(a.max_watts) : null,
+    secs: a.moving_time || a.elapsed_time || 0,
     hr: a.average_heartrate ? Math.round(a.average_heartrate) : null,
     fatigue: effort ? Math.max(1, Math.min(5, Math.ceil(effort / 40))) : null,
+    trainingLoad: effort || Math.round(time * 0.85),
     planned: false,
   };
 }
 
-async function initStrava() {
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get('code');
-  let token = localStorage.getItem('strava_token');
-  if (code) {
-    setState({ status: 'loading' });
-    try {
-      const res = await fetch('/.netlify/functions/exchange-token?code=' + encodeURIComponent(code)).then(r => r.json());
-      if (!res.access_token) throw new Error(res.message || res.error || 'Échange du code impossible');
-      token = storeToken(res);
-      if (res.athlete) applyAthlete(res.athlete);
-      window.history.replaceState({}, '', window.location.pathname);
-    } catch (e) {
-      setState({ status: 'error', error: e.message });
-      return;
-    }
-  }
-  if (!token) { setState({ status: 'idle' }); return; }
-  setState({ status: 'loading', error: '' });
+// ── race catalog ─────────────────────────────────────────────────────────────
+const RACE_CATALOG = {
+  'Triathlon XS': { fields: [{ k:'swim',label:'Natation (km)',v:0.4,step:0.1},{k:'bike',label:'Vélo (km)',v:10},{k:'bikeElev',label:'D+ vélo (m)',v:60,step:10},{k:'run',label:'Course (km)',v:2.5,step:0.1},{k:'runElev',label:'D+ course (m)',v:20,step:10}]},
+  'Triathlon S':  { fields: [{ k:'swim',label:'Natation (km)',v:0.75,step:0.1},{k:'bike',label:'Vélo (km)',v:20},{k:'bikeElev',label:'D+ vélo (m)',v:150,step:10},{k:'run',label:'Course (km)',v:5,step:0.1},{k:'runElev',label:'D+ course (m)',v:40,step:10}]},
+  'Triathlon M':  { fields: [{ k:'swim',label:'Natation (km)',v:1.5,step:0.1},{k:'bike',label:'Vélo (km)',v:40},{k:'bikeElev',label:'D+ vélo (m)',v:350,step:10},{k:'run',label:'Course (km)',v:10,step:0.1},{k:'runElev',label:'D+ course (m)',v:70,step:10}]},
+  'Triathlon L':  { fields: [{ k:'swim',label:'Natation (km)',v:3,step:0.1},{k:'bike',label:'Vélo (km)',v:80},{k:'bikeElev',label:'D+ vélo (m)',v:900,step:10},{k:'run',label:'Course (km)',v:20,step:0.1},{k:'runElev',label:'D+ course (m)',v:150,step:10}]},
+  'Triathlon 70.3':{ fields:[{k:'swim',label:'Natation (km)',v:1.9,step:0.1},{k:'bike',label:'Vélo (km)',v:90},{k:'bikeElev',label:'D+ vélo (m)',v:800,step:10},{k:'run',label:'Course (km)',v:21.1,step:0.1},{k:'runElev',label:'D+ course (m)',v:160,step:10}]},
+  'Ironman':      { fields: [{k:'swim',label:'Natation (km)',v:3.8,step:0.1},{k:'bike',label:'Vélo (km)',v:180},{k:'bikeElev',label:'D+ vélo (m)',v:1600,step:10},{k:'run',label:'Course (km)',v:42.2,step:0.1},{k:'runElev',label:'D+ course (m)',v:300,step:10}]},
+  'Marathon':     { fields: [{k:'run',label:'Distance (km)',v:42.195,step:0.1},{k:'runElev',label:'Dénivelé D+ (m)',v:250,step:10},{k:'runElevNeg',label:'Dénivelé D− (m)',v:250,step:10}]},
+  'Semi-marathon':{ fields: [{k:'run',label:'Distance (km)',v:21.097,step:0.1},{k:'runElev',label:'Dénivelé D+ (m)',v:120,step:10},{k:'runElevNeg',label:'Dénivelé D− (m)',v:120,step:10}]},
+  '10 km':        { fields: [{k:'run',label:'Distance (km)',v:10,step:0.1},{k:'runElev',label:'Dénivelé D+ (m)',v:50,step:10},{k:'runElevNeg',label:'Dénivelé D− (m)',v:50,step:10}]},
+  'Trail court (moins de 25 km)': { fields: [{k:'run',label:'Distance (km)',v:21,step:0.1},{k:'runElev',label:'Dénivelé D+ (m)',v:1100,step:10},{k:'runElevNeg',label:'Dénivelé D− (m)',v:1100,step:10}]},
+  'Trail long (25–50 km)':  { fields: [{k:'run',label:'Distance (km)',v:42,step:0.1},{k:'runElev',label:'Dénivelé D+ (m)',v:2400,step:10},{k:'runElevNeg',label:'Dénivelé D− (m)',v:2400,step:10}]},
+  'Ultra-trail (plus de 80 km)': { fields: [{k:'run',label:'Distance (km)',v:105,step:1},{k:'runElev',label:'Dénivelé D+ (m)',v:6000,step:10},{k:'runElevNeg',label:'Dénivelé D− (m)',v:6000,step:10}]},
+  'Cyclosportive':{ fields: [{k:'bike',label:'Distance (km)',v:140},{k:'bikeElev',label:'Dénivelé D+ (m)',v:2600,step:10}]},
+  'Contre-la-montre vélo': { fields: [{k:'bike',label:'Distance (km)',v:40},{k:'bikeElev',label:'Dénivelé D+ (m)',v:250,step:10}]},
+  'Natation eau libre': { fields: [{k:'swim',label:'Distance (km)',v:5,step:0.1},{k:'swimTemp',label:'Température (°C)',v:18}]},
+};
+
+function defaultValues(type) {
+  const out = {};
+  (RACE_CATALOG[type] || { fields: [] }).fields.forEach(f => { out[f.k] = f.v; });
+  return out;
+}
+
+// ── Strava API ────────────────────────────────────────────────────────────────
+const BASE = '/.netlify/functions';
+
+async function resolveClientId() {
   try {
-    token = await freshToken(token);
-    const athlete = await api('/athlete', token);
-    if (athlete && athlete.errors) throw new Error('Session Strava expirée — reconnecte-toi.');
-    if (athlete) applyAthlete(athlete);
-    const acts = [];
-    for (let page = 1; page <= 8; page++) {
-      const batch = await api('/athlete/activities?per_page=200&page=' + page, token);
-      if (!Array.isArray(batch)) throw new Error(batch && batch.message ? batch.message : 'Réponse Strava inattendue');
-      acts.push(...batch);
-      if (batch.length < 200) break;
+    const cfg = await fetch(BASE + '/strava-config').then(r => r.json());
+    if (cfg && cfg.client_id) return String(cfg.client_id);
+  } catch (e) {}
+  return '';
+}
+
+function stravaApi(path, token) {
+  return fetch(BASE + '/strava-api?path=' + encodeURIComponent(path), {
+    headers: { authorization: 'Bearer ' + token },
+  }).then(r => r.json());
+}
+
+async function freshToken(token) {
+  const exp = Number(localStorage.getItem('strava_expires_at') || 0);
+  const refresh = localStorage.getItem('strava_refresh_token');
+  if (!refresh || !exp || exp * 1000 - Date.now() > 5 * 60000) return token;
+  try {
+    const res = await fetch(BASE + '/exchange-token?refresh_token=' + encodeURIComponent(refresh)).then(r => r.json());
+    if (res && res.access_token) {
+      localStorage.setItem('strava_token', res.access_token);
+      if (res.refresh_token) localStorage.setItem('strava_refresh_token', res.refresh_token);
+      if (res.expires_at) localStorage.setItem('strava_expires_at', String(res.expires_at));
+      return res.access_token;
     }
-    data = acts.map(mapActivity).filter(a => a).sort((x, y) => y.date - x.date);
-    setState({ status: data.length ? 'ready' : 'empty' });
-  } catch (e) {
-    setState({ status: 'error', error: e.message });
-  }
+  } catch (e) {}
+  return token;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// COMPUTED VALUES
-// ═══════════════════════════════════════════════════════════════════
-function filtered(rangeDays, sport) {
-  const cutoff = Date.now() - rangeDays * 86400000;
-  return data.filter(a => a.date.getTime() >= cutoff && (sport === 'Tous' || a.sport === sport));
+// ── crosshair plugin ─────────────────────────────────────────────────────────
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterEvent(chart, args) {
+    const e = args.event;
+    chart._cx = (e.type === 'mousemove' && e.x >= chart.chartArea.left && e.x <= chart.chartArea.right) ? e.x : null;
+    if (e.type === 'mouseout') chart._cx = null;
+  },
+  afterDatasetsDraw(chart) {
+    if (chart._cx == null) return;
+    const { ctx, chartArea } = chart;
+    ctx.save(); ctx.beginPath();
+    ctx.moveTo(chart._cx, chartArea.top); ctx.lineTo(chart._cx, chartArea.bottom);
+    ctx.lineWidth = 1; ctx.strokeStyle = '#201e1d'; ctx.stroke(); ctx.restore();
+  },
+};
+
+function chartDefaults() {
+  Chart.defaults.font.family = 'Archivo, system-ui, sans-serif';
+  Chart.defaults.font.size = 11;
+  Chart.defaults.color = '#605d5d';
 }
 
-function windowData(offset) {
-  const { range, sport } = state;
-  const end = Date.now() - offset * range * 86400000;
-  const start = end - range * 86400000;
-  return data.filter(a => a.date.getTime() >= start && a.date.getTime() < end && (sport === 'Tous' || a.sport === sport));
-}
-
-function zoneMinutes(list) {
-  const max = Number(state.profile.fcMax) || 190;
+// ── zone minutes ─────────────────────────────────────────────────────────────
+function zoneMinutes(list, fcMax) {
+  const max = Number(fcMax) || 190;
   const defs = [
-    { label: 'Z1 · récup', hi: 0.6, color: '#ffe0d9' },
-    { label: 'Z2 · endurance', hi: 0.7, color: '#ffb3a3' },
-    { label: 'Z3 · tempo', hi: 0.8, color: '#f97a60' },
-    { label: 'Z4 · seuil', hi: 0.9, color: '#ec3013' },
-    { label: 'Z5 · VMA', hi: 1.2, color: '#ae1800' },
-  ].map(d => ({ ...d, min: 0 }));
+    { label: 'Z1 · récup', hi: 0.6, color: '#ffe0d9', min: 0 },
+    { label: 'Z2 · endurance', hi: 0.7, color: '#ffb3a3', min: 0 },
+    { label: 'Z3 · tempo', hi: 0.8, color: '#f97a60', min: 0 },
+    { label: 'Z4 · seuil', hi: 0.9, color: '#ec3013', min: 0 },
+    { label: 'Z5 · VMA', hi: 1.2, color: '#ae1800', min: 0 },
+  ];
   list.forEach(a => {
     if (!a.hr) return;
     const ratio = a.hr / max;
@@ -286,808 +202,970 @@ function zoneMinutes(list) {
   return defs;
 }
 
-function buildWeeks() {
-  const thisWeek = weekStart(new Date());
-  const oldest = data.length ? weekStart(data[data.length - 1].date) : thisWeek;
-  const allWeeks = Math.max(1, Math.round((thisWeek.getTime() - oldest.getTime()) / (7 * 86400000)) + 1);
-  const n = state.view === 'saison' ? allWeeks : Math.min(allWeeks, state.view);
-  const starts = [];
-  // semaine en cours en premier (index 0), puis vers le passé
-  for (let i = 0; i < n; i++) starts.push(new Date(thisWeek.getTime() - i * 7 * 86400000));
-  const dows = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-
-  const agg = s => {
-    const end = s.getTime() + 7 * 86400000;
-    const list = data.filter(a => a.date.getTime() >= s.getTime() && a.date.getTime() < end);
-    const done = list.filter(a => !a.planned);
-    return { list, done, min: sum(done, 'time'), km: sum(done, 'dist'), elev: sum(done, 'elev'), n: done.length };
-  };
-
-  return starts.map((s, idx) => {
-    const cur = agg(s);
-    const prev = agg(new Date(s.getTime() - 7 * 86400000));
-    const isFuture = s.getTime() > today.getTime();
-    const isCurrent = s.getTime() === thisWeek.getTime();
-    const pct = (a, b) => (b > 0 ? Math.round(((a - b) / b) * 100) : null);
-
-    const days = dows.map((dow, i) => {
-      const d = new Date(s.getTime() + i * 86400000);
-      const sessions = cur.list.filter(a => a.date.toDateString() === d.toDateString()).map(a => {
-        const c = fatigueColor(a.fatigue || 3);
-        const short = { Course: 'Course', Trail: 'Trail', 'Vélo': 'Vélo', Natation: 'Nat.' };
-        const fi = a.fatigue;
-        return {
-          sport: short[a.sport] || a.sport,
-          time: fmtH(a.time),
-          workout: a.name || 'Donnée manquante',
-          detail: a.dist ? fmtNum(a.dist, 1) + ' km' : '',
-          ifLabel: fi ? 'IF ' + fi : '',
-          ifStyle: fi ? 'align-self: flex-start; margin-top: 4px; padding: 1px 5px; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; background: rgba(255,255,255,0.35); border: 1px solid currentColor;' : 'display:none;',
-          title: a.sport + ' · fatigue ' + (fi || '?') + '/5',
-          style: 'flex: 1 1 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: center; padding: 6px 3px; border: 2px solid ' + c + '; background: ' + c + '; color: ' + fatigueInk(a.fatigue || 3) + ';',
-        };
-      });
-      const isToday = d.toDateString() === today.toDateString();
-      return {
-        dow, num: d.getDate(), sessions, empty: sessions.length === 0,
-        numStyle: 'font-size: 12px; font-weight: 800; ' + (isToday ? 'padding: 1px 6px; background: #201e1d; color: #ffffff;' : 'color: #201e1d;'),
-        cellStyle: 'min-width: 0; padding: 12px 6px 14px;' + (i < 6 ? ' border-right: 1px solid #d7d3d3;' : '') +
-          (d.getDay() === 0 || d.getDay() === 6 ? ' background: #eae9e9;' : ''),
-      };
-    });
-
-    const mkStat = (label, value, p, betterHigh) => {
-      const chip = deltaChip(p, betterHigh);
-      return { label, value, delta: chip.text, deltaStyle: chip.style, arrow: chip.arrow, arrowStyle: chip.arrowStyle };
-    };
-
-    const rated = cur.done.filter(a => a.fatigue);
-    const avgF = rated.length ? rated.reduce((s2, a) => s2 + a.fatigue, 0) / rated.length : 0;
-    const fLabels = ['Donnée manquante', 'Facile', 'Modérée', 'Soutenue', 'Dure', 'Très dure'];
-
-    return {
-      titleStyle: 'font-size: ' + (isCurrent ? '17px' : '15px') + '; font-weight: 800; letter-spacing: -0.01em; color: ' + (isCurrent ? '#ae1800' : '#201e1d') + ';',
-      title: isCurrent ? 'Semaine en cours' : 'Semaine du ' + s.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) + (s.getFullYear() !== new Date().getFullYear() ? ' ' + s.getFullYear() : ''),
-      span: s.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + ' → ' + new Date(s.getTime() + 6 * 86400000).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }),
-      tag: isFuture ? 'Planifiée' : isCurrent ? 'En cours' : cur.min >= prev.min ? 'Charge en hausse' : 'Charge en baisse',
-      tagStyle: 'padding: 3px 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; background: ' +
-        (isFuture ? '#eae9e9' : isCurrent ? '#201e1d' : cur.min >= prev.min ? '#ffe0d9' : '#eae9e9') + '; color: ' +
-        (isCurrent ? '#ffffff' : isFuture ? '#605d5d' : cur.min >= prev.min ? '#ae1800' : '#444141') + ';',
-      blockNote: cur.n + (cur.n > 1 ? ' séances réalisées' : ' séance réalisée'),
-      rowStyle: isCurrent
-        ? 'border-top: 2px solid #ec3013; border-bottom: 2px solid #ec3013; border-left: 6px solid #ec3013; background: #fdf1ee;'
-        : 'border-bottom: 2px solid #201e1d;',
-      days,
-      stats: [
-        mkStat('Temps', cur.min ? fmtH(cur.min) : 'Donnée manquante', pct(cur.min, prev.min), true),
-        mkStat('Distance', cur.km ? fmtNum(Math.round(cur.km), 0) + ' km' : 'Donnée manquante', pct(cur.km, prev.km), true),
-        mkStat('D+', cur.elev ? '+' + fmtNum(Math.round(cur.elev), 0) + ' m' : 'Donnée manquante', pct(cur.elev, prev.elev), true),
-        mkStat('Séances', String(cur.n), pct(cur.n, prev.n), true),
-      ],
-      fatigueDots: [1,2,3,4,5].map(i => ({
-        style: 'width: 14px; height: 14px; background: ' + (i <= Math.round(avgF) ? fatigueColor(Math.round(avgF)) : '#eae9e9') + '; border: 1px solid #d7d3d3;',
-      })),
-      fatigueLabel: fLabels[Math.round(avgF)] || 'Donnée manquante',
-    };
+// ── fitness series ───────────────────────────────────────────────────────────
+function fitnessSeries(data, days) {
+  const end = new Date(); end.setHours(0, 0, 0, 0);
+  const warmup = 42;
+  const startCalc = new Date(end.getTime() - (days + warmup) * 86400000);
+  const daily = new Map();
+  data.forEach(a => {
+    if (a.date < startCalc) return;
+    const k = new Date(a.date); k.setHours(0, 0, 0, 0);
+    const key = k.getTime();
+    daily.set(key, (daily.get(key) || 0) + (a.trainingLoad || 0));
   });
+  let ctl = 0, atl = 0;
+  const out = [];
+  for (let t = startCalc.getTime(); t <= end.getTime(); t += 86400000) {
+    const load = daily.get(t) || 0;
+    ctl = ctl + (load - ctl) / 42;
+    atl = atl + (load - atl) / 7;
+    out.push({ t, ctl: Math.round(ctl * 10) / 10, atl: Math.round(atl * 10) / 10, tsb: Math.round((ctl - atl) * 10) / 10 });
+  }
+  return out.slice(warmup);
 }
 
-function computeVals() {
-  const { tab, athleteOpen, athleteSection, sport, range, metric, expanded } = state;
+// ── Main App ─────────────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab] = useState('programme');
+  const [athleteOpen, setAthleteOpen] = useState(false);
+  const [athleteSection, setAthleteSection] = useState('Condition physique');
+  const [view, setView] = useState(8);
+  const [sport, setSport] = useState('Tous');
+  const [range, setRange] = useState(180);
+  const [showElev, setShowElev] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [powRange, setPowRange] = useState(90);
+  const [powCompare, setPowCompare] = useState(365);
+  const [paceRange, setPaceRange] = useState(90);
+  const [paceCompare, setPaceCompare] = useState(365);
+  const [hrRange, setHrRange] = useState(90);
+  const [hrCompare, setHrCompare] = useState(365);
+  const [fitRange, setFitRange] = useState(90);
+  const [status, setStatus] = useState('idle');
+  const [error, setError] = useState('');
+  const [data, setData] = useState([]);
+  const [profile, setProfile] = useState({ name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '' });
+  const [race, setRace] = useState({ type: 'Marathon', date: '2026-09-12', values: defaultValues('Marathon') });
+
+  const lineRef = useRef(null);
+  const barRef = useRef(null);
+  const dailyRef = useRef(null);
+  const zoneRef = useRef(null);
+  const powerRef = useRef(null);
+  const paceRef = useRef(null);
+  const hrRef = useRef(null);
+  const fitRef = useRef(null);
+  const charts = useRef({});
+
+  function destroyChart(key) {
+    if (charts.current[key]) { charts.current[key].destroy(); charts.current[key] = null; }
+  }
+  function upsert(key, ref, cfg) {
+    if (!ref.current) return;
+    destroyChart(key);
+    charts.current[key] = new Chart(ref.current, cfg);
+  }
+
+  function applyAthlete(a) {
+    setProfile(p => ({
+      ...p,
+      name: [a.firstname, a.lastname].filter(Boolean).join(' ') || p.name,
+      gender: a.sex === 'F' ? 'Femme' : a.sex === 'M' ? 'Homme' : p.gender,
+      weight: a.weight || p.weight,
+      ftp: a.ftp || p.ftp,
+    }));
+  }
+
+  // ── Strava OAuth ───────────────────────────────────────────────────────────
+  const connect = useCallback(async () => {
+    setStatus('loading'); setError('');
+    const id = await resolveClientId();
+    if (!id) { setStatus('error'); setError('Identifiant client Strava indisponible côté serveur.'); return; }
+    const redirect = window.location.origin + window.location.pathname;
+    window.location.href = 'https://www.strava.com/oauth/authorize?client_id=' + encodeURIComponent(id) +
+      '&response_type=code&redirect_uri=' + encodeURIComponent(redirect) +
+      '&approval_prompt=auto&scope=activity:read_all,profile:read_all';
+  }, []);
+
+  const disconnect = useCallback(() => {
+    localStorage.removeItem('strava_token');
+    localStorage.removeItem('strava_refresh_token');
+    localStorage.removeItem('strava_expires_at');
+    setData([]); setStatus('idle'); setError('');
+  }, []);
+
+  // ── Init Strava (OAuth callback + token refresh) ───────────────────────────
+  useEffect(() => {
+    async function init() {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      let token = localStorage.getItem('strava_token');
+      if (code) {
+        setStatus('loading');
+        try {
+          const res = await fetch(BASE + '/exchange-token?code=' + encodeURIComponent(code)).then(r => r.json());
+          if (!res.access_token) throw new Error(res.message || res.error || 'Échange du code impossible');
+          token = res.access_token;
+          localStorage.setItem('strava_token', token);
+          if (res.refresh_token) localStorage.setItem('strava_refresh_token', res.refresh_token);
+          if (res.expires_at) localStorage.setItem('strava_expires_at', String(res.expires_at));
+          if (res.athlete) applyAthlete(res.athlete);
+          window.history.replaceState({}, '', window.location.pathname);
+        } catch (e) { setStatus('error'); setError(e.message); return; }
+      }
+      if (!token) { setStatus('idle'); return; }
+      setStatus('loading'); setError('');
+      try {
+        token = await freshToken(token);
+        const athlete = await stravaApi('/athlete', token);
+        if (athlete && athlete.errors) throw new Error('Session Strava expirée — reconnecte-toi.');
+        if (athlete) applyAthlete(athlete);
+        const acts = [];
+        for (let page = 1; page <= 8; page++) {
+          const batch = await stravaApi('/athlete/activities?per_page=200&page=' + page, token);
+          if (!Array.isArray(batch)) throw new Error(batch && batch.message ? batch.message : 'Réponse Strava inattendue');
+          acts.push(...batch);
+          if (batch.length < 200) break;
+        }
+        const mapped = acts.map(a => mapActivity(a)).filter(Boolean).sort((x, y) => y.date - x.date);
+        setData(mapped); setStatus(mapped.length ? 'ready' : 'empty');
+      } catch (e) { setStatus('error'); setError(e.message); }
+    }
+    init();
+    // Try local file if no Strava
+    async function loadLocal() {
+      try {
+        const res = await fetch('donnees-strava.json', { cache: 'no-store' });
+        if (!res.ok) return;
+        const raw = await res.json();
+        const list = Array.isArray(raw) ? raw : (raw.activities || []);
+        if (!list.length) return;
+        if (raw.athlete) applyAthlete(raw.athlete);
+        const mapped = list.map(a => mapActivity(a)).filter(Boolean).sort((x, y) => y.date - x.date);
+        setData(prev => prev.length ? prev : mapped);
+      } catch (e) {}
+    }
+    loadLocal();
+  }, []);
+
+  // ── Export CSV ─────────────────────────────────────────────────────────────
+  function exportCsv() {
+    const acts = filtered(data, range, sport);
+    const head = 'date,sport,distance_km,duree_min,denivele_m,allure_min_km,puissance_w,fc_moy,fatigue\n';
+    const body = acts.map(a => [a.date.toISOString().slice(0, 10), a.sport, a.dist, a.time, a.elev, Math.round(a.pace * 100) / 100, a.power || '', a.hr, a.fatigue].join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([head + body], { type: 'text/csv' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = 'analyse-entrainement.csv'; link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // ── Charts ─────────────────────────────────────────────────────────────────
+  function filtered(d, rangeDays, sp) {
+    const cutoff = Date.now() - rangeDays * 86400000;
+    return d.filter(a => a.date.getTime() >= cutoff && (sp === 'Tous' || a.sport === sp));
+  }
+
+  function window2(d, offset, rangeDays, sp) {
+    const end = Date.now() - offset * rangeDays * 86400000;
+    const start = end - rangeDays * 86400000;
+    return d.filter(a => a.date.getTime() >= start && a.date.getTime() < end && (sp === 'Tous' || a.sport === sp));
+  }
+
+  const POWER_DURATIONS = [
+    { s: 5, l: '5 s' }, { s: 15, l: '15 s' }, { s: 30, l: '30 s' }, { s: 60, l: '1 min' },
+    { s: 120, l: '2 min' }, { s: 300, l: '5 min' }, { s: 600, l: '10 min' }, { s: 1200, l: '20 min' },
+    { s: 1800, l: '30 min' }, { s: 3600, l: '1 h' }, { s: 5400, l: '1 h 30' }, { s: 10800, l: '3 h' },
+  ];
+
+  function powerCurve(days, offset) {
+    const end = Date.now() - (offset || 0) * days * 86400000;
+    const start = end - days * 86400000;
+    const rides = data.filter(a => a.sport === 'Vélo' && a.power && a.secs && a.date.getTime() >= start && a.date.getTime() < end);
+    return POWER_DURATIONS.map(d => {
+      let best = null;
+      rides.forEach(a => {
+        if (a.secs < d.s) { if (d.s <= 60 && a.maxPower) best = Math.max(best || 0, a.maxPower); return; }
+        best = Math.max(best || 0, a.power);
+        if (d.s <= 60 && a.maxPower) best = Math.max(best, a.maxPower);
+      });
+      return best;
+    });
+  }
+
+  const PACE_DISTANCES = [
+    { d: 1, l: '1 km' }, { d: 2, l: '2 km' }, { d: 5, l: '5 km' }, { d: 10, l: '10 km' },
+    { d: 15, l: '15 km' }, { d: 21.1, l: 'Semi' }, { d: 30, l: '30 km' }, { d: 42.2, l: 'Marathon' },
+  ];
+  const HR_BINS = [
+    { min: 100, max: 120, l: '100-120' }, { min: 120, max: 130, l: '120-130' }, { min: 130, max: 140, l: '130-140' },
+    { min: 140, max: 150, l: '140-150' }, { min: 150, max: 160, l: '150-160' }, { min: 160, max: 170, l: '160-170' },
+    { min: 170, max: 180, l: '170-180' }, { min: 180, max: 200, l: '180+' },
+  ];
+
+  function paceCurve(days, offset) {
+    const end = Date.now() - (offset || 0) * days * 86400000;
+    const start = end - days * 86400000;
+    const runs = data.filter(a => (a.sport === 'Course' || a.sport === 'Trail') && a.pace && a.dist && a.date.getTime() >= start && a.date.getTime() < end);
+    return PACE_DISTANCES.map(x => {
+      let best = null;
+      runs.forEach(a => { if (a.dist >= x.d && (best === null || a.pace < best)) best = a.pace; });
+      return best === null ? null : Math.round(best * 100) / 100;
+    });
+  }
+
+  function hrSpeedCurve(days, offset) {
+    const end = Date.now() - (offset || 0) * days * 86400000;
+    const start = end - days * 86400000;
+    const acts = data.filter(a => a.hr && a.dist && a.time && a.date.getTime() >= start && a.date.getTime() < end);
+    return HR_BINS.map(b => {
+      const inBin = acts.filter(a => a.hr >= b.min && a.hr < b.max);
+      if (!inBin.length) return null;
+      const km = inBin.reduce((s, a) => s + a.dist, 0);
+      const h = inBin.reduce((s, a) => s + a.time, 0) / 60;
+      return h ? Math.round((km / h) * 10) / 10 : null;
+    });
+  }
+
+  // Draw fitness chart
+  useEffect(() => {
+    if (tab !== 'athlete' || athleteSection !== 'Condition physique') return;
+    chartDefaults();
+    const series = fitnessSeries(data, fitRange);
+    const labels = series.map(p => new Date(p.t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }));
+    upsert('fitness', fitRef, {
+      type: 'line', plugins: [crosshairPlugin],
+      data: { labels, datasets: [
+        { label: 'Forme', data: series.map(p => p.tsb), borderColor: '#bab6b6', borderWidth: 2, backgroundColor: 'rgba(186,182,182,0.22)', fill: 'origin', tension: 0.25, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'y1' },
+        { label: 'Fatigue', data: series.map(p => p.atl), borderColor: '#201e1d', borderWidth: 2, borderDash: [5, 4], backgroundColor: 'transparent', fill: false, tension: 0.25, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'y' },
+        { label: 'Condition physique', data: series.map(p => p.ctl), borderColor: '#ec3013', borderWidth: 2.5, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.25, pointRadius: 0, pointHoverRadius: 5, yAxisID: 'y' },
+      ]},
+      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 },
+        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } }, tooltip: { enabled: true, animation: false, backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, position: 'nearest', titleFont: { weight: '700' }, callbacks: { label: c => c.dataset.label + ' · ' + c.parsed.y } } },
+        scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 24 } }, y: { grid: { color: 'rgba(32,30,29,0.12)', drawTicks: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Charge (CTL / ATL)', color: '#605d5d' } }, y1: { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'Forme (TSB)', color: '#605d5d' } } },
+      },
+    });
+    return () => destroyChart('fitness');
+  }, [tab, athleteSection, data, fitRange]);
+
+  useEffect(() => {
+    if (tab !== 'athlete' || athleteSection !== 'Puissance') return;
+    chartDefaults();
+    upsert('power', powerRef, {
+      type: 'line', plugins: [crosshairPlugin],
+      data: { labels: POWER_DURATIONS.map(d => d.l), datasets: [
+        { label: 'Comparaison', data: powerCurve(powCompare, 1), borderColor: '#bab6b6', borderWidth: 2, borderDash: [5, 4], backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 3, pointBackgroundColor: '#bab6b6', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, spanGaps: true },
+        { label: 'Actuel', data: powerCurve(powRange, 0), borderColor: '#ec3013', borderWidth: 2.5, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.2, pointRadius: 4, pointBackgroundColor: '#ec3013', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, pointHoverRadius: 6, spanGaps: true },
+      ]},
+      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 },
+        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16, usePointStyle: false } }, tooltip: { enabled: true, animation: false, backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true, position: 'nearest', titleFont: { weight: '700' }, callbacks: { title: items => 'Effort ' + items[0].label, label: c => c.dataset.label + ' · ' + (c.parsed.y == null ? 'donnée manquante' : c.parsed.y + ' W') } } },
+        scales: { x: { grid: { display: false }, title: { display: true, text: "Durée d'effort", color: '#605d5d' } }, y: { grid: { color: 'rgba(32,30,29,0.12)', drawTicks: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Puissance (W)', color: '#605d5d' } } },
+      },
+    });
+    return () => destroyChart('power');
+  }, [tab, athleteSection, data, powRange, powCompare]);
+
+  useEffect(() => {
+    if (tab !== 'athlete' || athleteSection !== 'Allure') return;
+    chartDefaults();
+    const fmtP = v => Math.floor(v) + ':' + String(Math.round((v % 1) * 60)).padStart(2, '0');
+    upsert('pace', paceRef, {
+      type: 'line',
+      data: { labels: PACE_DISTANCES.map(x => x.l), datasets: [
+        { label: 'Comparaison', data: paceCurve(paceCompare, 1), borderColor: '#bab6b6', borderWidth: 2, borderDash: [5, 4], backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 3, pointBackgroundColor: '#bab6b6', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, spanGaps: true },
+        { label: 'Actuel', data: paceCurve(paceRange, 0), borderColor: '#ec3013', borderWidth: 2.5, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.2, pointRadius: 4, pointBackgroundColor: '#ec3013', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, pointHoverRadius: 6, spanGaps: true },
+      ]},
+      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true, callbacks: { label: c => c.dataset.label + ' · ' + (c.parsed.y == null ? 'donnée manquante' : fmtP(c.parsed.y) + ' /km') } } },
+        scales: { x: { grid: { display: false }, title: { display: true, text: 'Distance', color: '#605d5d' } }, y: { reverse: true, grid: { color: 'rgba(32,30,29,0.12)', drawTicks: false }, border: { display: false }, ticks: { callback: v => fmtP(v) }, title: { display: true, text: 'Allure (min/km)', color: '#605d5d' } } },
+      },
+    });
+    return () => destroyChart('pace');
+  }, [tab, athleteSection, data, paceRange, paceCompare]);
+
+  useEffect(() => {
+    if (tab !== 'athlete' || athleteSection !== 'Fréquence cardiaque') return;
+    chartDefaults();
+    upsert('hr', hrRef, {
+      type: 'line',
+      data: { labels: HR_BINS.map(b => b.l), datasets: [
+        { label: 'Comparaison', data: hrSpeedCurve(hrCompare, 1), borderColor: '#bab6b6', borderWidth: 2, borderDash: [5, 4], backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 3, pointBackgroundColor: '#bab6b6', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, spanGaps: true },
+        { label: 'Actuel', data: hrSpeedCurve(hrRange, 0), borderColor: '#ec3013', borderWidth: 2.5, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.2, pointRadius: 4, pointBackgroundColor: '#ec3013', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, pointHoverRadius: 6, spanGaps: true },
+      ]},
+      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true, callbacks: { label: c => c.dataset.label + ' · ' + (c.parsed.y == null ? 'donnée manquante' : c.parsed.y + ' km/h') } } },
+        scales: { x: { grid: { display: false }, title: { display: true, text: 'Fréquence cardiaque moyenne (bpm)', color: '#605d5d' } }, y: { grid: { color: 'rgba(32,30,29,0.12)', drawTicks: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Vitesse moyenne (km/h)', color: '#605d5d' } } },
+      },
+    });
+    return () => destroyChart('hr');
+  }, [tab, athleteSection, data, hrRange, hrCompare]);
+
+  // Activities charts
+  useEffect(() => {
+    if (tab !== 'activites') return;
+    chartDefaults();
+    const grid = { color: 'rgba(32,30,29,0.12)', drawTicks: false };
+    const acts = filtered(data, range, sport);
+    const byWeek = range <= 90;
+    const buckets = new Map();
+    const keyOf = d => byWeek ? weekStart(d).getTime() : new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+    if (byWeek) {
+      const nWeeks = Math.ceil(range / 7);
+      for (let i = nWeeks - 1; i >= 0; i--) buckets.set(keyOf(new Date(Date.now() - i * 7 * 86400000)), { km: 0, h: 0, elev: 0 });
+    } else {
+      const nMonths = Math.max(3, Math.round(range / 30));
+      for (let i = nMonths - 1; i >= 0; i--) { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); buckets.set(keyOf(d), { km: 0, h: 0, elev: 0 }); }
+    }
+    acts.forEach(a => { const w = buckets.get(keyOf(a.date)); if (w) { w.km += a.dist; w.h += a.time / 60; w.elev += a.elev; } });
+    const labels = [...buckets.keys()].map(k => new Date(k).toLocaleDateString('fr-FR', byWeek ? { day: 'numeric', month: 'short' } : { month: 'short', year: '2-digit' }));
+    const vals = [...buckets.values()].map(w => Math.round(w.km * 10) / 10);
+    const elevVals = [...buckets.values()].map(w => Math.round(w.elev));
+    const datasets = [{ label: 'Distance (km)', data: vals, borderColor: '#ec3013', borderWidth: 2, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.25, pointRadius: 3.5, pointBackgroundColor: '#ec3013', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, pointHoverRadius: 6, yAxisID: 'y' }];
+    if (showElev) datasets.push({ label: 'D+ (m)', data: elevVals, borderColor: '#201e1d', borderWidth: 2, borderDash: [5, 4], backgroundColor: 'transparent', fill: false, tension: 0.25, pointRadius: 3, pointBackgroundColor: '#201e1d', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, pointHoverRadius: 5, yAxisID: 'y1' });
+    upsert('line', lineRef, { type: 'line', data: { labels, datasets }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: false } }, scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 18 }, title: { display: true, text: byWeek ? 'Semaines' : 'Mois', color: '#605d5d' } }, y: { grid, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Distance (km)', color: '#605d5d' } }, y1: { display: showElev, position: 'right', grid: { display: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Dénivelé D+ (m)', color: '#605d5d' } } } } });
+
+    const days = []; const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    for (let i = range - 1; i >= 0; i--) days.push(new Date(dayStart.getTime() - i * 86400000));
+    const perDay = new Map();
+    data.forEach(a => { if (sport !== 'Tous' && a.sport !== sport) return; const k = a.date.toDateString(); perDay.set(k, (perDay.get(k) || 0) + a.time); });
+    upsert('daily', dailyRef, { type: 'bar', data: { labels: days.map(d => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })), datasets: [{ data: days.map(d => Math.round(perDay.get(d.toDateString()) || 0)), backgroundColor: days.map(d => d.getDay() === 0 || d.getDay() === 6 ? '#605d5d' : '#ec3013'), borderWidth: 0, barPercentage: 1, categoryPercentage: 0.82 }] }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: false, callbacks: { label: c => c.parsed.y + ' min' } } }, scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 28 }, title: { display: true, text: 'Jours', color: '#605d5d' } }, y: { grid, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Minutes / jour', color: '#605d5d' } } } } });
+
+    const sports = ['Course', 'Trail', 'Vélo', 'Natation'];
+    const shades = { Course: '#ec3013', Trail: '#ff9783', 'Vélo': '#605d5d', Natation: '#bab6b6' };
+    const zoneMin = zoneMinutes(acts, profile.fcMax);
+    upsert('zone', zoneRef, { type: 'doughnut', data: { labels: zoneMin.map(z => z.label), datasets: [{ data: zoneMin.map(z => z.min), backgroundColor: zoneMin.map(z => z.color), borderColor: '#f3f2f2', borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '46%', plugins: { legend: { display: false }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true, callbacks: { label: c => c.label + ' · ' + Math.round(c.parsed / 60) + ' h (' + Math.round((c.parsed / zoneMin.reduce((s, z) => s + z.min, 0)) * 100) + ' %)' } } } } });
+
+    const splitKeys = [...buckets.keys()];
+    const shown = sport === 'Tous' ? sports : [sport];
+    upsert('bar', barRef, { type: 'bar', data: { labels, datasets: shown.map(sp => ({ label: sp, backgroundColor: shades[sp], borderWidth: 0, data: splitKeys.map(k => Math.round(acts.filter(a => a.sport === sp && keyOf(a.date) === k).reduce((s, a) => s + a.time / 60, 0) * 10) / 10) })) }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, plugins: { legend: { display: shown.length > 1, position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, padding: 14 } }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true } }, scales: { x: { stacked: true, grid: { display: false }, title: { display: true, text: byWeek ? 'Semaines' : 'Mois', color: '#605d5d' } }, y: { stacked: true, grid, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Heures', color: '#605d5d' } } } } });
+
+    return () => { destroyChart('line'); destroyChart('daily'); destroyChart('zone'); destroyChart('bar'); };
+  }, [tab, data, range, sport, showElev, profile.fcMax]);
+
+  // ── Build weeks ────────────────────────────────────────────────────────────
+  function buildWeeks() {
+    const thisWeek = weekStart(new Date());
+    const oldest = data.length ? weekStart(data[data.length - 1].date) : thisWeek;
+    const allWeeks = Math.max(1, Math.round((thisWeek.getTime() - oldest.getTime()) / (7 * 86400000)) + 1);
+    const n = view === 'saison' ? allWeeks : Math.min(allWeeks, view);
+    const starts = [];
+    for (let i = n - 1; i >= 0; i--) starts.push(new Date(thisWeek.getTime() - i * 7 * 86400000));
+    const dows = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const fLabels = { 1: 'Facile', 2: 'Modéré', 3: 'Difficile', 4: 'Très dur', 5: 'Extrême' };
+    const agg = s => {
+      const end = s.getTime() + 7 * 86400000;
+      const list = data.filter(a => a.date.getTime() >= s.getTime() && a.date.getTime() < end && !a.planned);
+      return { list, min: sum(list, 'time'), km: sum(list, 'dist'), elev: sum(list, 'elev'), n: list.length };
+    };
+    return starts.map(s => {
+      const cur = agg(s); const prev = agg(new Date(s.getTime() - 7 * 86400000));
+      const isCurrent = s.getTime() === thisWeek.getTime();
+      const pct = (a, b) => b > 0 ? Math.round(((a - b) / b) * 100) : null;
+      const mkStat = (label, value, pctv) => {
+        const chip = deltaChip(pctv, true);
+        return { label, value: value || 'Donnée manquante', arrow: chip.arrow, arrowStyle: chip.arrowStyle, delta: chip.text, deltaStyle: chip.style };
+      };
+      const avgF = cur.list.length ? cur.list.reduce((s, a) => s + (a.fatigue || 3), 0) / cur.list.length : 0;
+      const daysList = dows.map((dow, i) => {
+        const d = new Date(s.getTime() + i * 86400000);
+        const sessions = cur.list.filter(a => a.date.toDateString() === d.toDateString()).map(a => {
+          const c = fatigueColor(a.fatigue);
+          const short = { Course: 'Course', Trail: 'Trail', 'Vélo': 'Vélo', Natation: 'Nat.' };
+          return {
+            sport: short[a.sport] || a.sport,
+            time: fmtH(a.time),
+            workout: a.name || 'Donnée manquante',
+            detail: a.dist ? fmtNum(a.dist, 1) + ' km' : '',
+            ifLabel: a.fatigue ? 'IF ' + a.fatigue : 'IF',
+            ifStyle: { alignSelf: 'flex-start', marginTop: '4px', padding: '1px 5px', fontSize: '10px', fontWeight: '800', letterSpacing: '0.06em', background: 'rgba(255,255,255,0.35)', border: '1px solid currentColor' },
+            style: { flex: '1 1 0', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '6px 3px', border: '2px solid ' + c, background: c, color: fatigueInk(a.fatigue) },
+          };
+        });
+        const isToday = d.toDateString() === today.toDateString();
+        return { dow, num: d.getDate(), sessions, empty: sessions.length === 0, numStyle: { fontSize: '12px', fontWeight: '800', ...(isToday ? { padding: '1px 6px', background: '#201e1d', color: '#ffffff' } : { color: '#201e1d' }) }, cellStyle: { minWidth: 0, padding: '8px 6px 8px', borderRight: '1px solid #d7d3d3', borderLeft: i > 0 ? '0' : undefined } };
+      });
+      const wkDate = new Date(s);
+      const wkEnd = new Date(s.getTime() + 6 * 86400000);
+      const span = wkDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + ' – ' + wkEnd.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+      const wkNum = (() => { const d = new Date(s); d.setHours(0,0,0,0); d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7); const w = new Date(d.getFullYear(), 0, 4); return 1 + Math.round(((d.getTime() - w.getTime()) / 86400000 - 3 + (w.getDay() + 6) % 7) / 7); })();
+      return {
+        isCurrent,
+        rowStyle: { borderTop: isCurrent ? '2px solid #ec3013' : undefined, borderBottom: '2px solid #201e1d', borderLeft: isCurrent ? '6px solid #ec3013' : undefined, background: isCurrent ? '#fdf1ee' : undefined },
+        title: 'Semaine ' + wkNum, span, tag: isCurrent ? 'En cours' : '',
+        tagStyle: { padding: '2px 8px', fontSize: '11px', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase', background: '#ec3013', color: '#fff', display: isCurrent ? undefined : 'none' },
+        blockNote: cur.n + ' séance' + (cur.n > 1 ? 's' : ''),
+        stats: [
+          mkStat('Temps', cur.min ? fmtH(cur.min) : '', pct(cur.min, prev.min)),
+          mkStat('Distance', cur.km ? fmtNum(Math.round(cur.km), 0) + ' km' : '', pct(cur.km, prev.km)),
+          mkStat('D+', cur.elev ? '+' + fmtNum(Math.round(cur.elev), 0) + ' m' : '', pct(cur.elev, prev.elev)),
+          mkStat('Séances', String(cur.n), pct(cur.n, prev.n)),
+        ],
+        fatigueDots: [1, 2, 3, 4, 5].map(i => ({ style: { width: '14px', height: '14px', background: i <= Math.round(avgF) ? fatigueColor(Math.round(avgF)) : '#eae9e9', border: '1px solid #d7d3d3' } })),
+        fatigueLabel: fLabels[Math.round(avgF)] || 'Donnée manquante',
+        days: daysList,
+      };
+    }).reverse();
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  const powPeriods = [{ label: '1 mois', value: 30 }, { label: '3 mois', value: 90 }, { label: '6 mois', value: 180 }, { label: '1 an', value: 365 }];
+  const powLabel = v => (powPeriods.find(p => p.value === v) || {}).label || '';
+  const mkOptions = (list, current, setter) => list.map(o => ({ label: o.label, active: current === o.value, onClick: () => setter(o.value) }));
+
   const now = Date.now();
   const cur90 = data.filter(a => a.date.getTime() >= now - 90 * 86400000);
   const prev90 = data.filter(a => a.date.getTime() >= now - 455 * 86400000 && a.date.getTime() < now - 365 * 86400000);
-  const race = state.race;
-  const spec = raceCatalog[race.type] || { fields: [] };
+  const wStart = weekStart(new Date()).getTime();
+  const curWeekActs = data.filter(a => a.date.getTime() >= wStart - 7 * 86400000 && a.date.getTime() < wStart);
+  const prevWeekActs = data.filter(a => a.date.getTime() >= wStart - 14 * 86400000 && a.date.getTime() < wStart - 7 * 86400000);
+
   const raceDateObj = race.date ? new Date(race.date + 'T12:00:00') : null;
   const daysToRace = raceDateObj ? Math.round((raceDateObj.getTime() - now) / 86400000) : null;
   const weeksLeft = Math.max(0, Math.round(((raceDateObj ? raceDateObj.getTime() : now) - now) / (7 * 86400000)));
-  const plan = 24;
-  const weeksDone = Math.max(0, plan - weeksLeft);
+  const plan = 24; const weeksDone = Math.max(0, plan - weeksLeft);
   const load90 = sum(cur90, 'time') / 60, loadPrev = sum(prev90, 'time') / 60;
   const ready = Math.max(0, Math.min(99, Math.round(52 + (weeksDone / plan) * 34 + (loadPrev > 0 ? Math.min(12, ((load90 - loadPrev) / loadPrev) * 30) : 0))));
-  const p = state.profile;
-  const setP = (k, v) => setState(s => ({ profile: { ...s.profile, [k]: v } }));
-  const bmi = p.height > 0 && p.weight > 0 ? Math.round((p.weight / Math.pow(p.height / 100, 2)) * 10) / 10 : null;
-  const wkg = p.weight > 0 && p.ftp > 0 ? Math.round((p.ftp / p.weight) * 100) / 100 : null;
-  const curW = windowData(0), prevW = windowData(1);
-  const acts = filtered(range, sport);
 
-  const mkOptions = (list, key) => list.map(o => ({
-    label: o.label, style: btnStyle(state[key] === o.value),
-    onSelect: () => setState({ [key]: o.value }),
-  }));
+  const acts = filtered(data, range, sport);
+  const byWeek = range <= 90;
+  const curW = window2(data, 0, range, sport);
+  const prevW = window2(data, 1, range, sport);
 
-  const kpiDef = [
-    { label: 'Distance', unit: 'km', get: l => sum(l, 'dist'), dec: 0 },
-    { label: 'Temps · Time', unit: 'h', get: l => sum(l, 'time') / 60, dec: 0 },
-    { label: 'Dénivelé · Elevation', unit: 'm', get: l => sum(l, 'elev'), dec: 0 },
-    sport === 'Vélo'
-      ? { label: 'Puissance moy.', unit: 'W', get: l => { const pp = l.filter(a => a.power); return pp.length ? sum(pp, 'power') / pp.length : 0; }, dec: 0 }
-      : sport === 'Tous'
-        ? { label: 'Vitesse moy.', unit: 'km/h', get: l => { const d2 = sum(l, 'dist'), t2 = sum(l, 'time') / 60; return t2 ? d2 / t2 : 0; }, dec: 1, speed: true }
-        : { label: 'Allure moy.', unit: '/km', get: l => { const d2 = sum(l, 'dist'), t2 = sum(l, 'time'); return d2 ? t2 / d2 : 0; }, dec: 2, pace: true },
-  ];
-  const kpis = kpiDef.map((k, i) => {
-    const c = k.get(curW), pv = k.get(prevW);
-    const pctv = pv > 0 ? Math.round(((c - pv) / pv) * 100) : null;
-    const chip = deltaChip(pctv, !k.pace);
-    const txt = !curW.length || !isFinite(c) || c === 0
-      ? 'Donnée manquante'
-      : k.pace ? fmtPace(c) : fmtNum(k.speed ? Math.round(c * 10) / 10 : Math.round(c), k.speed ? 1 : 0);
-    return {
-      label: k.label, unit: txt === 'Donnée manquante' ? '' : k.unit,
-      value: txt,
-      delta: chip.text, deltaNote: 'vs période précédente', deltaStyle: chip.style,
-      valueStyle: 'font-size: ' + (txt.length > 10 ? '15px' : txt.length > 5 ? '30px' : '38px') + '; font-weight: 800; letter-spacing: -0.03em; line-height: 0.95;',
-      cellStyle: 'min-width: 0; padding: 24px 24px 28px;' + (i < 3 ? ' border-right: 2px solid #201e1d;' : ''),
-    };
-  });
+  const fitSeries = (tab === 'athlete' && athleteSection === 'Condition physique') ? fitnessSeries(data, fitRange) : [];
+  const lastFit = fitSeries[fitSeries.length - 1];
+  const prevFit = fitSeries.length > 7 ? fitSeries[fitSeries.length - 8] : null;
+  const hasFit = fitSeries.some(p => p.ctl > 0);
+  const bigStat = { marginTop: '6px', fontSize: '34px', fontWeight: '800', letterSpacing: '-0.03em', lineHeight: '1' };
+  const smallStat = { marginTop: '6px', fontSize: '14px', fontWeight: '600', color: '#605d5d', overflowWrap: 'anywhere' };
+  const delta = (a, b) => b == null ? '' : (a - b >= 0 ? '+' : '') + Math.round((a - b) * 10) / 10 + ' sur 7 j';
+  const fitStats = !hasFit
+    ? ['Condition physique', 'Fatigue', 'Forme', 'Ratio charge'].map(l => ({ label: l, value: 'Donnée manquante', valueStyle: smallStat, sub: '' }))
+    : [
+      { label: 'Condition physique', valueStyle: bigStat, value: String(Math.round(lastFit.ctl)), sub: delta(lastFit.ctl, prevFit && prevFit.ctl) },
+      { label: 'Fatigue', valueStyle: bigStat, value: String(Math.round(lastFit.atl)), sub: delta(lastFit.atl, prevFit && prevFit.atl) },
+      { label: 'Forme', valueStyle: bigStat, value: (lastFit.tsb >= 0 ? '+' : '') + Math.round(lastFit.tsb), sub: lastFit.tsb > 5 ? 'Affûté' : lastFit.tsb < -20 ? 'Surcharge' : 'Charge productive' },
+      { label: 'Ratio charge', valueStyle: lastFit.ctl ? bigStat : smallStat, value: lastFit.ctl ? String(Math.round((lastFit.atl / lastFit.ctl) * 100) / 100) : 'Donnée manquante', sub: 'Fatigue / condition physique' },
+    ];
 
   const rows = acts.slice(0, expanded ? 40 : 8).map(a => ({
     date: a.date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: '2-digit' }),
-    sport: a.sport,
-    dist: fmtNum(a.dist, 1) + ' km',
-    time: Math.floor(a.time / 60) + 'h' + String(a.time % 60).padStart(2, '0'),
+    sport: a.sport, dist: fmtNum(a.dist, 1) + ' km', time: Math.floor(a.time / 60) + 'h' + String(a.time % 60).padStart(2, '0'),
     elev: a.elev ? '+' + fmtNum(a.elev, 0) + ' m' : 'Donnée manquante',
     pace: !a.pace ? 'Donnée manquante' : a.sport === 'Natation' ? fmtPace(a.pace / 10) + '/100m' : fmtPace(a.pace) + '/km',
     power: a.power ? a.power + ' W' : 'Donnée manquante',
   }));
 
-  const goalKpis = [
-    { label: 'Objectif', value: race.type, unit: '', delta: raceDateObj ? raceDateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: '2-digit' }) : '—', note: daysToRace === null ? '' : 'J−' + daysToRace, good: null },
-    { label: 'Temps projeté', value: 'Donnée manquante', unit: '', delta: '—', note: 'à calculer', good: null },
-    { label: 'Prêt · Readiness', value: data.length ? String(ready) : 'Donnée manquante', unit: data.length ? '%' : '', delta: data.length ? (ready >= 75 ? 'En bonne voie' : 'À consolider') : '—', note: race.type, good: data.length ? ready >= 75 : null },
-    { label: 'Semaines restantes', value: String(weeksLeft), unit: 'sem.', delta: weeksDone + ' faites', note: 'sur ' + plan, good: null },
-  ].map((k, i) => ({
-    label: k.label, value: k.value, unit: k.unit, delta: k.delta, deltaNote: k.note,
-    valueStyle: 'font-size: ' + (String(k.value).length > 16 ? '16px' : '20px') + '; font-weight: 800; letter-spacing: -0.02em; line-height: 1.05;',
-    deltaStyle: 'padding: 3px 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; background: ' +
-      (k.good ? '#ffe0d9' : '#eae9e9') + '; color: ' + (k.good ? '#ae1800' : '#605d5d') + ';',
-    cellStyle: 'min-width: 0; padding: 24px 24px 28px;' + (i < 3 ? ' border-right: 2px solid #201e1d;' : ''),
-  }));
+  const zm = zoneMinutes(acts, profile.fcMax);
+  const zmTotal = zm.reduce((s, z) => s + z.min, 0) || 1;
 
-  const zm = zoneMinutes(acts);
-  const totalZone = zm.reduce((s, z) => s + z.min, 0) || 1;
-  const raceFields = spec.fields.map(f => ({
-    label: f.label, step: f.step || 1, value: race.values[f.k] ?? '',
-    onInput: e => { const v = e.target.value; setState(s => ({ race: { ...s.race, values: { ...s.race.values, [f.k]: v === '' ? '' : Number(v) } } })); },
-  }));
-  const profileFields = [
-    { k: 'age', label: 'Âge (ans)', step: 1 },
-    { k: 'height', label: 'Taille (cm)', step: 1 },
-    { k: 'weight', label: 'Poids (kg)', step: 0.1 },
-    { k: 'fcMax', label: 'FC max (bpm)', step: 1 },
-    { k: 'fcRest', label: 'FC repos (bpm)', step: 1 },
-    { k: 'ftp', label: 'FTP vélo (W)', step: 1 },
-  ].map(f => ({
-    label: f.label, step: f.step, value: p[f.k] ?? '',
-    onInput: e => { const v = e.target.value; setP(f.k, v === '' ? '' : Number(v)); },
-  }));
-
-  return {
-    tab, athleteOpen, athleteSection, sport, range, metric, expanded,
-    isProgramme: tab === 'programme', isAthlete: tab === 'athlete', isActivites: tab === 'activites', isProfil: tab === 'profil',
-    weeks: data.length ? buildWeeks() : [],
-    noData: !data.length,
-    legendStyle: 'display: ' + (data.length ? 'flex' : 'none') + '; flex-wrap: wrap; align-items: flex-end; gap: 40px; padding: 22px 32px 44px;',
-    noDataMsg: state.status === 'loading' ? 'Import des activités Strava…'
-      : state.status === 'error' ? 'Erreur Strava : ' + state.error
-      : state.status === 'empty' ? 'Aucune activité trouvée sur ce compte Strava.'
-      : 'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.',
-    goalKpis,
-    viewOptions: [{ label: 'Saison', value: 'saison' }, { label: '4 sem.', value: 4 }, { label: '8 sem.', value: 8 }].map(o => ({
-      label: o.label, style: btnStyle(state.view === o.value), onSelect: () => setState({ view: o.value }),
-    })),
-    kpis, rows, acts,
-    selectionLabel: acts.length ? acts.length + ' séances · ' + (sport === 'Tous' ? 'tous sports' : sport) : 'Donnée manquante',
-    selectionSub: acts.length
-      ? fmtNum(Math.round(sum(acts, 'dist')), 0) + ' km · ' + Math.round(sum(acts, 'time') / 60) + ' h · +' + fmtNum(sum(acts, 'elev'), 0) + ' m'
-      : state.status === 'loading' ? 'Import Strava en cours…' : 'Connecte Strava pour importer tes activités.',
-    sportOptions: mkOptions([
-      { label: 'Tous', value: 'Tous' }, { label: 'Course', value: 'Course' }, { label: 'Trail', value: 'Trail' },
-      { label: 'Vélo', value: 'Vélo' }, { label: 'Natation', value: 'Natation' },
-    ], 'sport'),
-    rangeOptions: mkOptions([{ label: '30 j', value: 30 }, { label: '90 j', value: 90 }, { label: '6 mois', value: 180 }, { label: '12 mois', value: 365 }], 'range'),
-    metricOptions: mkOptions([{ label: 'Distance', value: 'km' }, { label: 'Heures', value: 'h' }, { label: 'D+', value: 'elev' }], 'metric'),
-    tableNote: (expanded ? Math.min(40, acts.length) : Math.min(8, acts.length)) + ' / ' + acts.length,
-    rowCountNote: acts.length ? 'Trié du plus récent au plus ancien.' : 'Donnée manquante — aucune activité importée.',
-    toggleLabel: expanded ? 'Réduire la liste' : 'Voir plus de séances',
-    toggleRows: () => setState(s => ({ expanded: !s.expanded })),
-    showEfforts: sport !== 'Tous',
-    effortSlots: (sport === 'Vélo' ? ['5 km','10 km','20 km','50 km'] : ['400 m','1 km','5 km','10 km','20 km']).map(l => ({ label: l })),
-    zones: zm.map(z => ({
-      label: z.label, time: fmtH(z.min), pct: Math.round((z.min / totalZone) * 100) + ' %',
-      swatch: 'flex: 0 0 auto; width: 12px; height: 12px; background: ' + z.color + '; border: 1px solid #d7d3d3;',
-    })),
-    zoneNote: acts.some(a => a.hr) ? 'Minutes passées dans chaque zone de fréquence cardiaque, calculées à partir d\'une FC max de ' + (Number(state.profile.fcMax) || 190) + ' bpm.' : 'Donnée manquante — aucune fréquence cardiaque sur les activités importées.',
-    zonePlacement: 'grid-column: 2; min-width: 0; padding: 28px 32px 32px; grid-row: ' + (sport !== 'Tous' ? '2;' : '1 / span 2;'),
-    dailyRangeLabel: range >= 365 ? '12 mois' : range >= 180 ? '6 mois' : range + ' jours',
-    volumeTitle: range <= 90 ? 'Volume par semaine' : 'Volume par mois',
-    volumeAxisLabel: range <= 90 ? 'Abscisse en semaines' : 'Abscisse en mois',
-    dailyNote: !acts.length ? 'Donnée manquante — aucune activité importée sur la période.' : 'Minutes d\'activité par jour : ' + new Set(acts.map(a => a.date.toDateString())).size + ' jours actifs, ' + Math.round(sum(acts, 'time') / 60) + ' h cumulées. Week-ends en gris.',
-    stravaStatus: state.status === 'loading' ? 'Import des activités…'
-      : state.status === 'ready' ? data.length + ' activités importées'
-      : state.status === 'empty' ? 'Aucune activité trouvée.'
-      : state.status === 'error' ? 'Erreur : ' + state.error
-      : 'Non connecté — aucune donnée.',
-    stravaBtnLabel: state.status === 'ready' ? 'Déconnecter' : state.status === 'loading' ? 'Chargement…' : 'Connecter Strava',
-    stravaAction: state.status === 'ready' ? disconnect : connect,
-    stravaBtnStyle: 'display: flex; align-items: center; width: 100%; padding: 11px 14px; border: 2px solid #201e1d; background: transparent; color: #201e1d; font-family: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; cursor: pointer;',
-    exportStyle: 'display: flex; align-items: center; width: 100%; padding: 12px 14px; border: 2px solid ' +
-      (data.length ? '#ec3013' : '#bab6b6') + '; background: ' + (data.length ? '#ec3013' : 'transparent') +
-      '; color: ' + (data.length ? '#ffffff' : '#bab6b6') + '; font-family: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; cursor: ' + (data.length ? 'pointer' : 'not-allowed') + ';',
-    exportCsv: () => {
-      if (!data.length) return;
-      const aa = filtered(range, sport);
-      const head = 'date,sport,distance_km,duree_min,denivele_m,allure_min_km,puissance_w,fc_moy,fatigue\n';
-      const body = aa.map(a => [a.date.toISOString().slice(0,10),a.sport,a.dist,a.time,a.elev,a.pace?Math.round(a.pace*100)/100:'',a.power||'',a.hr||'',a.fatigue||''].join(',')).join('\n');
-      const url = URL.createObjectURL(new Blob([head+body],{type:'text/csv'}));
-      const link = document.createElement('a'); link.href=url; link.download='analyse-entrainement.csv'; link.click(); URL.revokeObjectURL(url);
-    },
-    profile: {
-      name: p.name || 'Donnée manquante',
-      sub: p.height||p.weight||p.ftp ? [p.height?p.height+' cm':null,p.weight?p.weight+' kg':null,p.ftp?'FTP '+p.ftp+' W':null].filter(Boolean).join(' · ') : 'Donnée manquante',
-      derived: 'IMC '+(bmi??'donnée manquante')+' · rapport poids-puissance '+(wkg??'donnée manquante')+' W/kg · réserve cardiaque '+(p.fcMax&&p.fcRest?p.fcMax-p.fcRest+' bpm':'donnée manquante')+'.',
-    },
-    genders: ['Femme','Homme','Non précisé'],
-    profileFields,
-    onProfileName: e => setP('name', e.target.value),
-    onProfileGender: e => setP('gender', e.target.value),
-    navProgramme: navStyle(tab==='programme'),
-    navAthlete: navStyle(tab==='athlete'),
-    navActivites: navStyle(tab==='activites'),
-    caretStyle: 'font-size: 12px; line-height: 1; transform: rotate('+(athleteOpen?'180deg':'0deg')+');',
-    athleteItems: ['Condition physique','Puissance','Allure','Comparaison 2025'].map(s => ({
-      label: s, key: s,
-      style: navStyle(tab==='athlete' && athleteSection===s, true),
-      onSelect: () => setState({ tab:'athlete', athleteSection:s }),
-    })),
-    athleteTitle: athleteSection,
-    goProgramme: () => setState({ tab:'programme' }),
-    goActivites: () => setState({ tab:'activites' }),
-    toggleAthlete: () => setState(s => ({ athleteOpen:!s.athleteOpen, tab:'athlete' })),
-    goProfil: () => setState({ tab:'profil' }),
-    profileCardStyle: 'display: block; width: 100%; padding: 16px 24px 18px; border: 0; border-top: 2px solid #201e1d; background: '+(tab==='profil'?'#ffe0d9':'transparent')+'; font-family: inherit; text-align: left; cursor: pointer;',
-    raceTypes: Object.keys(raceCatalog),
-    raceType: race.type,
-    raceDate: race.date,
-    raceFields,
-    onRaceType: e => { const t = e.target.value; setState(s => ({ race: {...s.race, type:t, values:defaultValues(t)} })); },
-    onRaceDate: e => { const d = e.target.value; setState(s => ({ race: {...s.race, date:d} })); },
-    raceCountdown: daysToRace===null ? 'Aucune date renseignée.' : daysToRace>=0
-      ? 'Dans '+daysToRace+' jours · '+Math.round(daysToRace/7)+' semaines de préparation restantes.'
-      : 'Course passée il y a '+Math.abs(daysToRace)+' jours.',
-    raceSummary: spec.fields.map(f => f.label.replace(/ \(.*\)/,'')+' : '+(race.values[f.k]===''?'—':race.values[f.k])).join(' · '),
-    goal: {
-      date: raceDateObj ? raceDateObj.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}) : 'date à définir',
-      ready, projected: 'Donnée manquante',
-    },
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// CHARTS
-// ═══════════════════════════════════════════════════════════════════
-function upsert(key, canvas, cfg) {
-  if (!canvas) return;
-  if (charts[key]) charts[key].destroy();
-  charts[key] = new window.Chart(canvas, cfg);
-}
-
-function drawCharts(v) {
-  if (v.tab !== 'activites') return;
-  if (!window.Chart) { clearTimeout(drawTimer); drawTimer = setTimeout(() => drawCharts(v), 120); return; }
-  const C = window.Chart;
-  C.defaults.font.family = 'Archivo, system-ui, sans-serif';
-  C.defaults.font.size = 11;
-  C.defaults.color = '#605d5d';
-  const grid = { color: 'rgba(32,30,29,0.12)', drawTicks: false };
-  const base = {
-    responsive: true, maintainAspectRatio: false, animation: { duration: 240 },
-    plugins: { legend: { display: false }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: false } },
-  };
-  const acts = v.acts;
-  const byWeek = v.range <= 90;
-  const buckets = new Map();
-  const keyOf = d => byWeek ? weekStart(d).getTime() : new Date(d.getFullYear(), d.getMonth(), 1).getTime();
-  if (byWeek) {
-    const nW = Math.ceil(v.range / 7);
-    for (let i = nW-1; i >= 0; i--) buckets.set(keyOf(new Date(Date.now()-i*7*86400000)), {km:0,h:0,elev:0});
-  } else {
-    const nM = Math.max(3, Math.round(v.range/30));
-    for (let i = nM-1; i >= 0; i--) { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth()-i); buckets.set(keyOf(d),{km:0,h:0,elev:0}); }
-  }
-  acts.forEach(a => { const w=buckets.get(keyOf(a.date)); if(w){w.km+=a.dist;w.h+=a.time/60;w.elev+=a.elev;} });
-  const metric = v.metric;
-  const labels = [...buckets.keys()].map(k => new Date(k).toLocaleDateString('fr-FR', byWeek?{day:'numeric',month:'short'}:{month:'short',year:'2-digit'}));
-  const vals = [...buckets.values()].map(w => Math.round((metric==='km'?w.km:metric==='h'?w.h:w.elev)*10)/10);
-
-  upsert('line', lineRef, {
-    type:'line',
-    data:{labels,datasets:[{data:vals,borderColor:'#ec3013',borderWidth:2,backgroundColor:'rgba(236,48,19,0.08)',fill:true,tension:0.25,pointRadius:3.5,pointBackgroundColor:'#ec3013',pointBorderColor:'#f3f2f2',pointBorderWidth:1.5,pointHoverRadius:6}]},
-    options:{...base,scales:{
-      x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},
-      y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:metric==='km'?'Distance (km)':metric==='h'?'Heures':'Dénivelé D+ (m)',color:'#605d5d'}},
-    }},
+  const seasonStats = [
+    { label: 'Heures saison', unit: 'h', c: sum(cur90, 'time') / 60, pv: sum(prev90, 'time') / 60 },
+    { label: 'Distance', unit: 'km', c: sum(cur90, 'dist'), pv: sum(prev90, 'dist') },
+    { label: 'Dénivelé', unit: 'm', c: sum(cur90, 'elev'), pv: sum(prev90, 'elev') },
+    { label: 'Séances', unit: '', c: cur90.length, pv: prev90.length },
+  ].map((s, i) => {
+    const chip = deltaChip(s.pv > 0 ? Math.round(((s.c - s.pv) / s.pv) * 100) : null, true);
+    return { label: s.label, unit: s.unit, value: fmtNum(Math.round(s.c), 0), delta: chip.text, deltaStyle: chip.style, arrow: chip.arrow, arrowStyle: chip.arrowStyle, cellStyle: { padding: '22px 32px 26px', borderRight: i < 3 ? '2px solid #201e1d' : undefined } };
   });
 
-  const days=[];
-  const ds=new Date(); ds.setHours(0,0,0,0);
-  for(let i=v.range-1;i>=0;i--) days.push(new Date(ds.getTime()-i*86400000));
-  const perDay=new Map();
-  data.forEach(a=>{
-    if(v.sport!=='Tous'&&a.sport!==v.sport) return;
-    const k=a.date.toDateString();
-    perDay.set(k,(perDay.get(k)||0)+a.time);
-  });
-  upsert('daily', dailyRef, {
-    type:'bar',
-    data:{
-      labels:days.map(d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})),
-      datasets:[{
-        data:days.map(d=>Math.round(perDay.get(d.toDateString())||0)),
-        backgroundColor:days.map(d=>(d.getDay()===0||d.getDay()===6?'#605d5d':'#ec3013')),
-        borderWidth:0,barPercentage:1,categoryPercentage:0.82,
-      }],
-    },
-    options:{...base,
-      plugins:{...base.plugins,tooltip:{...base.plugins.tooltip,callbacks:{label:c=>c.parsed.y+' min'}}},
-      scales:{
-        x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,autoSkipPadding:28},title:{display:true,text:'Jours',color:'#605d5d'}},
-        y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Minutes / jour',color:'#605d5d'}},
-      },
-    },
-  });
+  const p = profile;
+  const bmi = p.height > 0 && p.weight > 0 ? Math.round((p.weight / Math.pow(p.height / 100, 2)) * 10) / 10 : null;
+  const wkg = p.weight > 0 && p.ftp > 0 ? Math.round((p.ftp / p.weight) * 100) / 100 : null;
+  const spec = RACE_CATALOG[race.type];
 
-  const zm = zoneMinutes(acts);
-  upsert('zone', zoneRef, {
-    type:'doughnut',
-    data:{labels:zm.map(z=>z.label),datasets:[{data:zm.map(z=>z.min),backgroundColor:zm.map(z=>z.color),borderColor:'#f3f2f2',borderWidth:2}]},
-    options:{...base,cutout:'46%',plugins:{
-      legend:{display:false},
-      tooltip:{...base.plugins.tooltip,displayColors:true,callbacks:{label:c=>c.label+' · '+Math.round(c.parsed/60)+' h ('+Math.round((c.parsed/zm.reduce((s,z)=>s+z.min,0))*100)+' %)'}},
-    }},
-  });
-}
+  const stravaStatus = status === 'loading' ? 'Import des activités…'
+    : status === 'ready' ? data.length + ' activités importées'
+    : status === 'empty' ? 'Aucune activité trouvée sur ce compte.'
+    : status === 'error' ? 'Erreur : ' + error
+    : 'Non connecté — aucune donnée.';
+  const stravaBtnLabel = status === 'ready' ? 'Déconnecter' : status === 'loading' ? 'Chargement…' : 'Connecter Strava';
 
-// ═══════════════════════════════════════════════════════════════════
-// RENDER
-// ═══════════════════════════════════════════════════════════════════
-function setState(updater) {
-  if (typeof updater === 'function') {
-    const next = updater(state);
-    Object.assign(state, next);
-  } else {
-    Object.assign(state, updater);
+  const noData = !data.length;
+  const noDataMsg = status === 'loading' ? 'Import des activités Strava…'
+    : status === 'error' ? 'Erreur Strava : ' + error
+    : status === 'empty' ? 'Aucune activité trouvée sur ce compte Strava.'
+    : 'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
+
+  const athleteSections = ['Condition physique', 'Puissance', 'Allure', 'Fréquence cardiaque'];
+
+  function BtnRow({ options }) {
+    return h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+      options.map(o => h('button', {
+        key: o.label, type: 'button', onClick: o.onClick,
+        style: btnStyle(o.active),
+        onMouseEnter: e => e.currentTarget.style.background = o.active ? '#ec3013' : '#ffe0d9',
+        onMouseLeave: e => e.currentTarget.style.background = o.active ? '#ec3013' : 'transparent',
+      }, o.label))
+    );
   }
-  render();
-}
 
-function el(tag, attrs, ...children) {
-  const e = document.createElement(tag);
-  if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) {
-      if (k === 'style' && typeof v === 'string') e.style.cssText = v;
-      else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2).toLowerCase(), v);
-      else if (k === 'ref') v(e);
-      else if (v !== null && v !== undefined && v !== false) e.setAttribute(k, v);
-    }
-  }
-  for (const c of children.flat()) {
-    if (c == null || c === false) continue;
-    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
-  }
-  return e;
-}
+  const kpiDef = [
+    { label: 'Distance', unit: 'km', get: l => sum(l, 'dist'), pace: false },
+    { label: 'Temps', unit: 'h', get: l => sum(l, 'time') / 60, pace: false },
+    { label: 'Dénivelé', unit: 'm', get: l => sum(l, 'elev'), pace: false },
+    sport === 'Vélo'
+      ? { label: 'Puissance moy.', unit: 'W', get: l => { const p2 = l.filter(a => a.power); return p2.length ? sum(p2, 'power') / p2.length : 0; }, pace: false }
+      : { label: 'Allure moy.', unit: '/km', get: l => { const d = sum(l, 'dist'), t = sum(l, 'time'); return d ? t / d : 0; }, pace: true },
+  ];
+  const kpis = kpiDef.map((k, i) => {
+    const c = k.get(curW), pv = k.get(prevW);
+    const pctv = pv > 0 ? Math.round(((c - pv) / pv) * 100) : null;
+    const chip = deltaChip(pctv, !k.pace);
+    const txt = !curW.length || !isFinite(c) || c === 0 ? 'Donnée manquante'
+      : k.pace ? fmtPace(c) : fmtNum(Math.round(c), 0);
+    return { label: k.label, unit: txt === 'Donnée manquante' ? '' : k.unit, value: txt, delta: chip.text, deltaNote: 'vs période précédente', deltaStyle: chip.style, valueStyle: { fontSize: txt.length > 10 ? '15px' : txt.length > 5 ? '30px' : '38px', fontWeight: '800', letterSpacing: '-0.03em', lineHeight: '0.95' }, cellStyle: { minWidth: 0, padding: '24px 24px 28px', borderRight: i < 3 ? '2px solid #201e1d' : undefined } };
+  });
 
-function renderSidebar(v) {
-  return el('aside', { style: 'flex: 0 0 260px; width: 260px; height: 100vh; position: sticky; top: 0; display: flex; flex-direction: column; border-right: 2px solid #201e1d; overflow-y: auto;' },
-    // brand
-    el('div', { style: 'display: flex; flex-direction: column; gap: 6px; padding: 24px 24px 22px; border-bottom: 2px solid #201e1d;' },
-      el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #ec3013;' }, 'Data explorer'),
-      el('span', { style: 'font-size: 20px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.05;' }, "Analyse d'entraînement"),
-    ),
-    // nav
-    el('nav', { style: 'display: flex; flex-direction: column; border-bottom: 2px solid #201e1d;' },
-      el('button', { type: 'button', style: v.navProgramme, onMouseenter: e => e.target.style.background = '#ffe0d9', onMouseleave: e => e.target.style.background = v.tab==='programme'?'#ec3013':'transparent', onClick: v.goProgramme }, 'Programme'),
-      el('button', { type: 'button', style: v.navAthlete, onMouseenter: e => e.target.style.background = '#ffe0d9', onMouseleave: e => e.target.style.background = v.tab==='athlete'?'#ec3013':'transparent', onClick: v.toggleAthlete },
-        el('span', { style: 'flex: 1;' }, 'Athlète'),
-        el('span', { style: v.caretStyle }, '▾'),
-      ),
-      ...(v.athleteOpen ? [
-        el('div', { style: 'display: flex; flex-direction: column; background: #eae9e9; border-bottom: 2px solid #201e1d;' },
-          ...v.athleteItems.map(item =>
-            el('button', { type: 'button', style: item.style, onMouseenter: e => { if(!item.style.includes('#ec3013')) e.currentTarget.style.background='#ffe0d9'; }, onMouseleave: e => { e.currentTarget.style.cssText = item.style; }, onClick: item.onSelect }, item.label)
-          )
-        )
-      ] : []),
-      el('button', { type: 'button', style: v.navActivites, onMouseenter: e => e.target.style.background = '#ffe0d9', onMouseleave: e => e.target.style.background = v.tab==='activites'?'#ec3013':'transparent', onClick: v.goActivites }, 'Activités'),
-    ),
-    // strava
-    el('div', { style: 'margin-top: auto; padding: 20px 24px 8px;' },
-      el('span', { style: 'display: block; font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, 'Strava'),
-      el('p', { style: 'margin: 8px 0 12px; font-size: 12px; color: #605d5d;' }, v.stravaStatus),
-      el('button', { type: 'button', style: v.stravaBtnStyle, onMouseenter: e => { e.currentTarget.style.background='#ffe0d9'; e.currentTarget.style.borderColor='#ec3013'; }, onMouseleave: e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.borderColor='#201e1d'; }, onClick: v.stravaAction }, v.stravaBtnLabel),
-    ),
-    el('div', { style: 'padding: 8px 24px 20px;' },
-      el('button', { type: 'button', style: v.exportStyle, onClick: v.exportCsv, onMouseenter: e => { if(data.length){e.currentTarget.style.background='#dd2b0f';} }, onMouseleave: e => { if(data.length){e.currentTarget.style.background='#ec3013';} } }, 'Exporter CSV'),
-    ),
-    // profile card
-    el('button', { type: 'button', style: v.profileCardStyle, onMouseenter: e => { if(v.tab!=='profil') e.currentTarget.style.background='#ffe0d9'; }, onMouseleave: e => { if(v.tab!=='profil') e.currentTarget.style.background='transparent'; }, onClick: v.goProfil },
-      el('span', { style: 'display: block; font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, 'Athlète · voir le profil'),
-      el('span', { style: 'display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 6px;' },
-        el('span', { style: 'font-size: 16px; font-weight: 800; letter-spacing: -0.01em;' }, v.profile.name),
-        el('span', { style: 'font-size: 14px; color: #ec3013;' }, '→'),
-      ),
-      el('span', { style: 'display: block; margin-top: 4px; font-size: 12px; color: #605d5d;' }, v.profile.sub),
-    ),
-  );
-}
+  // ── Render structure ───────────────────────────────────────────────────────
+  return h('div', { style: { display: 'flex', alignItems: 'flex-start', minHeight: '100vh', background: '#f3f2f2' } },
 
-function renderProgramme(v) {
-  return el('div', null,
-    // header
-    el('header', { style: 'display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 24px; padding: 24px 32px; border-bottom: 2px solid #201e1d;' },
-      el('div', { style: 'display: flex; flex-direction: column; gap: 4px;' },
-        el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #ec3013;' }, 'Programme'),
-        el('h1', { style: 'margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.02em; line-height: 1;' }, 'Calendrier par semaine'),
+    // ASIDE
+    h('aside', { style: { flex: '0 0 260px', width: '260px', height: '100vh', position: 'sticky', top: 0, display: 'flex', flexDirection: 'column', borderRight: '2px solid #201e1d' } },
+      h('div', { style: { display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: '6px', height: '108px', boxSizing: 'border-box', padding: '24px 24px 22px', borderBottom: '2px solid #201e1d' } },
+        h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ec3013' } }, 'Data explorer'),
+        h('span', { style: { fontSize: '20px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1.05' } }, 'Analyse', h('br'), "d'entraînement")
       ),
-    ),
-    // KPI + view
-    el('section', { style: 'display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 20px 44px; padding: 18px 32px; border-bottom: 2px solid #201e1d;' },
-      el('div', { style: 'display: flex; flex: 1 1 520px; flex-wrap: wrap; gap: 20px 44px; min-width: 0;' },
-        ...v.goalKpis.map(kpi =>
-          el('div', { style: 'display: flex; flex-direction: column; gap: 6px; min-width: 0;' },
-            el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, kpi.label),
-            el('div', { style: 'display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;' },
-              el('span', { style: kpi.valueStyle }, kpi.value),
-              el('span', { style: 'font-size: 13px; font-weight: 600; color: #605d5d;' }, kpi.unit),
-            ),
-            el('div', { style: 'display: flex; flex-wrap: wrap; align-items: center; gap: 8px;' },
-              el('span', { style: kpi.deltaStyle }, kpi.delta),
-              el('span', { style: 'font-size: 12px; color: #605d5d;' }, kpi.deltaNote),
-            ),
-          )
-        )
-      ),
-      el('div', { style: 'display: flex; flex-direction: column; gap: 6px;' },
-        el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, 'Affichage'),
-        el('div', { style: 'display: flex; flex-wrap: wrap; gap: 8px;' },
-          ...v.viewOptions.map(opt =>
-            el('button', { type:'button', style: opt.style, onMouseenter: e => { if(!opt.style.includes('#ec3013')) e.currentTarget.style.background='#ffe0d9'; }, onMouseleave: e => { e.currentTarget.style.cssText=opt.style; }, onClick: opt.onSelect }, opt.label)
+      h('nav', { style: { display: 'flex', flexDirection: 'column', borderBottom: '2px solid #201e1d' } },
+        h('button', { type: 'button', onClick: () => setTab('programme'), style: navStyle(tab === 'programme'), onMouseEnter: e => { if (tab !== 'programme') e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { if (tab !== 'programme') e.currentTarget.style.background = 'transparent'; } }, 'Programme'),
+        h('button', { type: 'button', onClick: () => { setAthleteOpen(o => !o); setTab('athlete'); }, style: navStyle(tab === 'athlete'), onMouseEnter: e => { if (tab !== 'athlete') e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { if (tab !== 'athlete') e.currentTarget.style.background = 'transparent'; } },
+          h('span', { style: { flex: '1' } }, 'Athlète'),
+          h('span', { style: { fontSize: '12px', lineHeight: '1', transform: athleteOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' } }, '▾')
+        ),
+        athleteOpen && h('div', { style: { display: 'flex', flexDirection: 'column', background: '#eae9e9', borderBottom: '2px solid #201e1d' } },
+          athleteSections.map(s =>
+            h('button', { key: s, type: 'button', onClick: () => { setAthleteSection(s); setTab('athlete'); }, style: navStyle(tab === 'athlete' && athleteSection === s, true), onMouseEnter: e => { if (athleteSection !== s) e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { if (athleteSection !== s) e.currentTarget.style.background = 'transparent'; } }, s)
           )
         ),
+        h('button', { type: 'button', onClick: () => setTab('activites'), style: navStyle(tab === 'activites'), onMouseEnter: e => { if (tab !== 'activites') e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { if (tab !== 'activites') e.currentTarget.style.background = 'transparent'; } }, 'Activités')
       ),
-    ),
-    // no data
-    v.noData ? el('p', { style: 'margin: 0; padding: 28px 32px 32px; font-size: 14px; color: #605d5d;' }, v.noDataMsg) : null,
-    // weeks
-    el('section', null,
-      ...v.weeks.map(wk =>
-        el('div', { style: wk.rowStyle },
-          el('div', { style: 'display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 14px 32px; border-bottom: 1px solid #d7d3d3;' },
-            el('div', { style: 'display: flex; align-items: baseline; gap: 14px;' },
-              el('span', { style: wk.titleStyle }, wk.title),
-              el('span', { style: 'font-size: 12px; color: #605d5d;' }, wk.span),
-              el('span', { style: wk.tagStyle }, wk.tag),
-            ),
-            el('span', { style: 'font-size: 12px; color: #605d5d;' }, wk.blockNote),
-          ),
-          el('div', { style: 'display: grid; grid-template-columns: calc(100% / 4) minmax(0, 1fr);' },
-            // stats col
-            el('div', { style: 'min-width: 0; padding: 16px 14px 20px; border-right: 1px solid #d7d3d3;' },
-              el('div', { style: 'display: flex; flex-direction: column; gap: 12px;' },
-                ...wk.stats.map(st =>
-                  el('div', null,
-                    el('span', { style: 'display: block; font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, st.label),
-                    el('div', { style: 'display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-top: 4px;' },
-                      el('span', { style: 'font-size: 20px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums;' }, st.value),
-                      el('span', { style: st.arrowStyle }, st.arrow),
-                      el('span', { style: st.deltaStyle }, st.delta),
-                    ),
-                  )
-                )
-              ),
-              el('div', { style: 'display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px;' },
-                el('span', { style: 'font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, 'Fatigue moy.'),
-                el('div', { style: 'display: flex; gap: 3px;' }, ...wk.fatigueDots.map(dot => el('span', { style: dot.style }))),
-                el('span', { style: 'font-size: 12px; font-weight: 600;' }, wk.fatigueLabel),
-              ),
-            ),
-            // days grid
-            el('div', { style: 'display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));' },
-              ...wk.days.map(day =>
-                el('div', { style: day.cellStyle },
-                  el('div', { style: 'display: flex; align-items: baseline; justify-content: space-between; gap: 4px;' },
-                    el('span', { style: 'font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, day.dow),
-                    el('span', { style: day.numStyle }, String(day.num)),
-                  ),
-                  el('div', { style: 'display: flex; flex-direction: column; gap: 4px; margin-top: 8px; height: 168px;' },
-                    ...day.sessions.map(s =>
-                      el('div', { style: s.style, title: s.title },
-                        el('span', { style: 'display: block; font-size: 13px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1;' }, s.sport),
-                        el('span', { style: 'display: block; font-size: 12px; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; hyphens: auto;' }, s.workout),
-                        el('span', { style: 'display: block; font-size: 12px; font-weight: 600; line-height: 1.25;' }, s.time),
-                        el('span', { style: 'display: block; font-size: 12px; font-weight: 600; line-height: 1.25;' }, s.detail),
-                        el('span', { style: s.ifStyle }, s.ifLabel),
-                      )
-                    ),
-                    day.empty ? el('span', { style: 'display: flex; align-items: center; height: 100%; font-size: 12px; color: #bab6b6;' }, 'Repos') : null,
-                  ),
-                )
-              )
-            ),
-          ),
-        )
+      h('div', { style: { marginTop: 'auto', padding: '20px 24px 8px' } },
+        h('span', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Strava'),
+        h('p', { style: { margin: '8px 0 12px', fontSize: '12px', color: '#605d5d' } }, stravaStatus),
+        h('button', { type: 'button', onClick: status === 'ready' ? disconnect : connect, style: { display: 'flex', alignItems: 'center', width: '100%', padding: '11px 14px', border: '2px solid #201e1d', background: 'transparent', color: '#201e1d', fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: 'pointer' }, onMouseEnter: e => { e.currentTarget.style.background = '#ffe0d9'; e.currentTarget.style.borderColor = '#ec3013'; }, onMouseLeave: e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = '#201e1d'; } }, stravaBtnLabel)
       ),
-      // legend
-      el('div', { style: v.legendStyle },
-        el('div', null,
-          el('span', { style: 'display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, 'Indice de fatigue'),
-          el('div', { style: 'display: flex; gap: 3px; margin-top: 8px; width: 220px;' },
-            el('span', { style: 'flex: 1; height: 12px; background: #ffe0d9;' }),
-            el('span', { style: 'flex: 1; height: 12px; background: #ffb3a3;' }),
-            el('span', { style: 'flex: 1; height: 12px; background: #f97a60;' }),
-            el('span', { style: 'flex: 1; height: 12px; background: #ec3013;' }),
-            el('span', { style: 'flex: 1; height: 12px; background: #ae1800;' }),
-          ),
-          el('div', { style: 'display: flex; justify-content: space-between; width: 220px; margin-top: 6px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #605d5d;' },
-            el('span', null, 'Facile'), el('span', null, 'Très dur'),
-          ),
+      h('div', { style: { padding: '8px 24px 20px' } },
+        h('button', { type: 'button', onClick: exportCsv, disabled: noData, style: { display: 'flex', alignItems: 'center', width: '100%', padding: '12px 14px', border: '2px solid ' + (data.length ? '#ec3013' : '#bab6b6'), background: data.length ? '#ec3013' : 'transparent', color: data.length ? '#ffffff' : '#bab6b6', fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: data.length ? 'pointer' : 'not-allowed' } }, 'Exporter CSV')
+      ),
+      h('button', { type: 'button', onClick: () => setTab('profil'), style: { display: 'block', width: '100%', padding: '16px 24px 18px', border: '0', borderTop: '2px solid #201e1d', background: tab === 'profil' ? '#ffe0d9' : 'transparent', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer' }, onMouseEnter: e => { if (tab !== 'profil') e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { if (tab !== 'profil') e.currentTarget.style.background = tab === 'profil' ? '#ffe0d9' : 'transparent'; } },
+        h('span', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Athlète · voir le profil'),
+        h('span', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px', marginTop: '6px' } },
+          h('span', { style: { fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, profile.name || 'Donnée manquante'),
+          h('span', { style: { fontSize: '14px', color: '#ec3013' } }, '→')
         ),
-      ),
-    ),
-  );
-}
-
-function renderActivites(v) {
-  return el('div', null,
-    el('header', { style: 'display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; padding: 24px 32px; border-bottom: 2px solid #201e1d;' },
-      el('div', { style: 'display: flex; flex-direction: column; gap: 4px;' },
-        el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #ec3013;' }, 'Activités'),
-        el('h1', { style: 'margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.02em; line-height: 1;' }, "Analyse de l'activité"),
-      ),
-      el('div', { style: 'display: flex; flex-direction: column; gap: 4px;' },
-        el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, 'Sélection'),
-        el('span', { style: 'font-size: 14px; font-weight: 600;' }, v.selectionLabel),
-        el('span', { style: 'font-size: 12px; color: #605d5d;' }, v.selectionSub),
-      ),
-    ),
-    // filters
-    el('section', { style: 'display: flex; flex-wrap: wrap; gap: 40px; padding: 24px 32px; border-bottom: 2px solid #201e1d;' },
-      ...['sportOptions','rangeOptions','metricOptions'].map((key, i) => {
-        const labels = ['Sport','Période · Range','Volume hebdo · Weekly metric'];
-        return el('div', { style: 'display: flex; flex-direction: column; gap: 10px;' },
-          el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, labels[i]),
-          el('div', { style: 'display: flex; flex-wrap: wrap; gap: 8px;' },
-            ...v[key].map(opt =>
-              el('button', { type:'button', style: opt.style, onMouseenter: e => { if(!opt.style.includes('#ec3013')) e.currentTarget.style.background='#ffe0d9'; }, onMouseleave: e => { e.currentTarget.style.cssText=opt.style; }, onClick: opt.onSelect }, opt.label)
-            )
-          ),
-        );
-      })
-    ),
-    // kpi grid
-    el('section', { style: 'display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 2px solid #201e1d;' },
-      ...v.kpis.map(kpi =>
-        el('div', { style: kpi.cellStyle },
-          el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, kpi.label),
-          el('div', { style: 'display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-top: 14px;' },
-            el('span', { style: kpi.valueStyle }, kpi.value),
-            el('span', { style: 'font-size: 13px; font-weight: 600; color: #605d5d;' }, kpi.unit),
-          ),
-          el('div', { style: 'display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px;' },
-            el('span', { style: kpi.deltaStyle }, kpi.delta),
-            el('span', { style: 'font-size: 12px; color: #605d5d;' }, kpi.deltaNote),
-          ),
+        h('span', { style: { display: 'block', marginTop: '4px', fontSize: '12px', color: '#605d5d' } },
+          p.height || p.weight || p.ftp ? [p.height ? p.height + ' cm' : null, p.weight ? p.weight + ' kg' : null, p.ftp ? 'FTP ' + p.ftp + ' W' : null].filter(Boolean).join(' · ') : 'Donnée manquante'
         )
       )
     ),
-    // charts grid
-    el('section', { style: 'display: grid; grid-template-columns: 2fr 1fr; grid-template-rows: auto auto; border-bottom: 2px solid #201e1d;' },
-      el('div', { style: 'grid-column: 1; grid-row: 1; min-width: 0; padding: 28px 32px 32px; border-right: 2px solid #201e1d; border-bottom: 2px solid #201e1d;' },
-        el('div', { style: 'display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 20px;' },
-          el('h2', { style: 'margin: 0; font-size: 16px; font-weight: 800; letter-spacing: -0.01em;' }, v.volumeTitle),
-          el('span', { style: 'font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, v.volumeAxisLabel),
-        ),
-        el('div', { style: 'height: 252px;' }, el('canvas', { ref: c => lineRef = c })),
-      ),
-      el('div', { style: 'grid-column: 1; grid-row: 2; min-width: 0; padding: 28px 32px 32px; border-right: 2px solid #201e1d;' },
-        el('div', { style: 'display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px;' },
-          el('h2', { style: 'margin: 0; font-size: 16px; font-weight: 800; letter-spacing: -0.01em;' }, 'Charge quotidienne'),
-          el('span', { style: 'font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, v.dailyRangeLabel),
-        ),
-        el('p', { style: 'margin: 0 0 14px; font-size: 12px; color: #605d5d; max-width: 62ch;' }, v.dailyNote),
-        el('div', { style: 'height: 252px;' }, el('canvas', { ref: c => dailyRef = c })),
-      ),
-      v.showEfforts ? el('div', { style: 'grid-column: 2; grid-row: 1; min-width: 0; padding: 28px 32px 32px; border-bottom: 2px solid #201e1d;' },
-        el('div', { style: 'display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-bottom: 8px;' },
-          el('h2', { style: 'margin: 0; font-size: 16px; font-weight: 800; letter-spacing: -0.01em;' }, 'Meilleurs efforts'),
-          el('span', { style: 'font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, 'À compléter'),
-        ),
-        el('p', { style: 'margin: 0 0 16px; font-size: 12px; color: #605d5d; max-width: 42ch;' }, 'Emplacement réservé aux meilleurs efforts par distance. Le calcul sera branché plus tard.'),
-        el('div', { style: 'display: flex; flex-direction: column;' },
-          ...v.effortSlots.map(ef =>
-            el('div', { style: 'display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid #d7d3d3;' },
-              el('span', { style: 'font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #605d5d;' }, ef.label),
-              el('span', { style: 'font-size: 15px; font-weight: 800; color: #bab6b6;' }, '—'),
-            )
-          )
-        ),
-      ) : null,
-      el('div', { style: v.zonePlacement },
-        el('div', { style: 'display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-bottom: 8px;' },
-          el('h2', { style: 'margin: 0; font-size: 16px; font-weight: 800; letter-spacing: -0.01em;' }, 'Temps par zone cardiaque'),
-          el('span', { style: 'font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, 'Répartition'),
-        ),
-        el('p', { style: 'margin: 0 0 14px; font-size: 12px; color: #605d5d; max-width: 42ch;' }, v.zoneNote),
-        el('div', { style: 'height: 190px;' }, el('canvas', { ref: c => zoneRef = c })),
-        el('div', { style: 'display: flex; flex-direction: column; margin-top: 16px;' },
-          ...v.zones.map(z =>
-            el('div', { style: 'display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 6px 0; border-bottom: 1px solid #d7d3d3;' },
-              el('span', { style: z.swatch }),
-              el('span', { style: 'flex: 1 0 auto; font-size: 12px; font-weight: 600;' }, z.label),
-              el('span', { style: 'font-size: 12px; font-variant-numeric: tabular-nums;' }, z.time),
-              el('span', { style: 'font-size: 12px; color: #605d5d; font-variant-numeric: tabular-nums;' }, z.pct),
-            )
-          )
-        ),
-      ),
-    ),
-    // table
-    el('section', { style: 'padding: 28px 32px 48px;' },
-      el('div', { style: 'display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 20px;' },
-        el('h2', { style: 'margin: 0; font-size: 16px; font-weight: 800; letter-spacing: -0.01em;' }, 'Séances de la sélection'),
-        el('span', { style: 'font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, v.tableNote),
-      ),
-      el('table', { style: 'width: 100%; border-collapse: collapse; font-size: 14px;' },
-        el('thead', null,
-          el('tr', { style: 'border-top: 2px solid #201e1d; border-bottom: 2px solid #201e1d;' },
-            ...['Date','Sport','Distance','Temps','D+','Allure','Puissance'].map((h, i) =>
-              el('th', { style: 'padding: 10px ' + (i===6?'0':'12px') + ' 10px ' + (i===0?'0':'12px') + '; text-align: ' + (i<=1?'left':'right') + '; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, h)
-            )
-          )
-        ),
-        el('tbody', null,
-          ...v.rows.map(row =>
-            el('tr', { style: 'border-bottom: 1px solid #d7d3d3;', onMouseenter: e => e.currentTarget.style.background='#eae9e9', onMouseleave: e => e.currentTarget.style.background='transparent' },
-              el('td', { style: 'padding: 12px 12px 12px 0; color: #605d5d;' }, row.date),
-              el('td', { style: 'padding: 12px; font-weight: 600;' }, row.sport),
-              el('td', { style: 'padding: 12px; text-align: right; font-variant-numeric: tabular-nums;' }, row.dist),
-              el('td', { style: 'padding: 12px; text-align: right; font-variant-numeric: tabular-nums;' }, row.time),
-              el('td', { style: 'padding: 12px; text-align: right; font-variant-numeric: tabular-nums;' }, row.elev),
-              el('td', { style: 'padding: 12px; text-align: right; font-variant-numeric: tabular-nums;' }, row.pace),
-              el('td', { style: 'padding: 12px 0 12px 12px; text-align: right; font-variant-numeric: tabular-nums; color: #605d5d;' }, row.power),
-            )
-          )
-        ),
-      ),
-      el('div', { style: 'display: flex; align-items: center; gap: 16px; margin-top: 24px;' },
-        el('button', { type:'button', style: 'min-width: 200px; padding: 12px 16px; border: 2px solid #201e1d; background: transparent; color: #201e1d; font-family: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; cursor: pointer;', onMouseenter: e => { e.currentTarget.style.background='#ffe0d9'; e.currentTarget.style.borderColor='#ec3013'; }, onMouseleave: e => { e.currentTarget.style.background='transparent'; e.currentTarget.style.borderColor='#201e1d'; }, onClick: v.toggleRows }, v.toggleLabel),
-        el('span', { style: 'font-size: 12px; color: #605d5d;' }, v.rowCountNote),
-      ),
-    ),
-  );
-}
 
-function renderAthlete(v) {
-  return el('div', { style: 'padding: 28px 32px;' },
-    el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #ec3013;' }, 'Athlète'),
-    el('h1', { style: 'margin: 6px 0 14px; font-size: 30px; font-weight: 800; letter-spacing: -0.02em; line-height: 1;' }, v.athleteTitle),
-    el('p', { style: 'margin: 0; font-size: 14px; color: #605d5d; max-width: 62ch;' }, "Section à construire : condition physique, courbe de puissance vélo et comparaisons vs l'an dernier. Dis-moi quand tu veux que je la fasse."),
-  );
-}
+    // MAIN
+    h('main', { style: { flex: 1, minWidth: 0 } },
 
-function renderProfil(v) {
-  return el('div', null,
-    el('header', { style: 'display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 24px; padding: 24px 32px; border-bottom: 2px solid #201e1d;' },
-      el('div', { style: 'display: flex; flex-direction: column; gap: 4px;' },
-        el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #ec3013;' }, 'Profil'),
-        el('h1', { style: 'margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.02em; line-height: 1;' }, v.profile.name),
-      ),
-      el('div', { style: 'display: flex; flex-direction: column; gap: 4px;' },
-        el('span', { style: 'font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, 'Objectif'),
-        el('span', { style: 'font-size: 14px; font-weight: 600;' }, v.raceType + ' · ' + v.goal.date),
-        el('span', { style: 'font-size: 12px; color: #605d5d;' }, v.raceCountdown),
-      ),
-    ),
-    el('section', { style: 'display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); border-bottom: 2px solid #201e1d;' },
-      el('div', { style: 'min-width: 0; padding: 24px 32px 28px; border-right: 2px solid #201e1d;' },
-        el('h2', { style: 'margin: 0 0 4px; font-size: 15px; font-weight: 800; letter-spacing: -0.01em;' }, 'Identité'),
-        el('p', { style: 'margin: 0 0 18px; font-size: 12px; color: #605d5d;' }, "Ces données servent aux zones, à la charge et aux estimations."),
-        el('div', { style: 'display: grid; grid-template-columns: 1fr 1fr; gap: 16px 18px;' },
-          el('div', { style: 'display: flex; flex-direction: column; gap: 7px; grid-column: span 2;' },
-            el('label', { style: 'font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, 'Nom'),
-            el('input', { type:'text', value: state.profile.name, style: 'width: 100%; padding: 10px 12px; border: 2px solid #201e1d; border-radius: 0; background: #ffffff; color: #201e1d; font-family: inherit; font-size: 14px; font-weight: 600;', onFocus: e => e.target.style.borderColor='#ec3013', onBlur: e => e.target.style.borderColor='#201e1d', onChange: v.onProfileName }),
+      // ── PROGRAMME ─────────────────────────────────────────────────────────
+      tab === 'programme' && h('div', null,
+        h('header', { style: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '24px', minHeight: '108px', boxSizing: 'border-box', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ec3013' } }, 'Programme'),
+            h('h1', { style: { margin: 0, fontSize: '30px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1' } }, 'Calendrier par semaine')
+          )
+        ),
+        h('section', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '20px 44px', padding: '18px 32px', borderBottom: '2px solid #201e1d' } },
+          h('div', { style: { display: 'flex', flex: '1 1 520px', flexWrap: 'wrap', gap: '20px 44px', minWidth: 0 } },
+            [
+              { label: 'Objectif', value: race.type, unit: '', delta: raceDateObj ? raceDateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: '2-digit' }) : '—', note: daysToRace === null ? '' : 'J−' + daysToRace, good: null },
+              { label: 'Temps projeté', value: 'Donnée manquante', unit: '', delta: '—', note: 'à calculer', good: null },
+              { label: 'Prêt · Readiness', value: data.length ? String(ready) : 'Donnée manquante', unit: data.length ? '%' : '', delta: data.length ? (ready >= 75 ? 'En bonne voie' : 'À consolider') : '—', note: race.type, good: data.length ? ready >= 75 : null },
+              { label: 'Semaines restantes', value: raceDateObj ? String(weeksLeft) : 'Donnée manquante', unit: raceDateObj ? 'sem.' : '', delta: raceDateObj ? "jusqu'à la course" : '—', note: '', good: null },
+            ].map((k, i) =>
+              h('div', { key: i, style: { display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 } },
+                h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, k.label),
+                h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '8px' } },
+                  h('span', { style: { fontSize: String(k.value).length > 16 ? '16px' : '20px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1.05' } }, k.value),
+                  k.unit && h('span', { style: { fontSize: '13px', fontWeight: '600', color: '#605d5d' } }, k.unit)
+                ),
+                h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' } },
+                  h('span', { style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: k.good ? '#ffe0d9' : '#eae9e9', color: k.good ? '#ae1800' : '#605d5d' } }, k.delta),
+                  h('span', { style: { fontSize: '12px', color: '#605d5d' } }, k.note)
+                )
+              )
+            )
           ),
-          el('div', { style: 'display: flex; flex-direction: column; gap: 7px; grid-column: span 2;' },
-            el('label', { style: 'font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, 'Genre'),
-            el('select', { style: 'width: 100%; padding: 10px 12px; border: 2px solid #201e1d; border-radius: 0; background: #ffffff; color: #201e1d; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;', onChange: v.onProfileGender },
-              ...v.genders.map(g => el('option', { value: g, ...(state.profile.gender===g?{selected:'selected'}:{}) }, g))
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Affichage'),
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+              [{ label: 'Saison', value: 'saison' }, { label: '4 sem.', value: 4 }, { label: '8 sem.', value: 8 }].map(o =>
+                h('button', { key: o.label, type: 'button', onClick: () => setView(o.value), style: btnStyle(view === o.value), onMouseEnter: e => { if (view !== o.value) e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { e.currentTarget.style.background = view === o.value ? '#ec3013' : 'transparent'; } }, o.label)
+              )
+            )
+          )
+        ),
+        noData && h('p', { style: { margin: 0, padding: '28px 32px 32px', fontSize: '14px', color: '#605d5d' } }, noDataMsg),
+        h('section', null,
+          data.length ? buildWeeks().map((wk, wi) =>
+            h('div', { key: wi, style: wk.rowStyle },
+              h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', padding: '14px 32px', borderBottom: '1px solid #d7d3d3' } },
+                h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '14px' } },
+                  h('span', { style: { fontSize: '14px', fontWeight: '800', letterSpacing: '-0.01em' } }, wk.title),
+                  h('span', { style: { fontSize: '12px', color: '#605d5d' } }, wk.span),
+                  wk.isCurrent && h('span', { style: wk.tagStyle }, wk.tag)
+                ),
+                h('span', { style: { fontSize: '12px', color: '#605d5d' } }, wk.blockNote)
+              ),
+              h('div', { style: { display: 'grid', gridTemplateColumns: 'calc(100% / 4) minmax(0, 1fr)' } },
+                h('div', { style: { minWidth: 0, padding: '16px 14px 20px', borderRight: '1px solid #d7d3d3' } },
+                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+                    wk.stats.map((st, si) =>
+                      h('div', { key: si },
+                        h('span', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, st.label),
+                        h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '8px', marginTop: '4px' } },
+                          h('span', { style: { fontSize: '20px', fontWeight: '800', letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' } }, st.value),
+                          h('span', { style: st.arrowStyle }, st.arrow),
+                          h('span', { style: st.deltaStyle }, st.delta)
+                        )
+                      )
+                    )
+                  ),
+                  h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginTop: '16px' } },
+                    h('span', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Fatigue moy.'),
+                    h('div', { style: { display: 'flex', gap: '3px' } }, wk.fatigueDots.map((dot, di) => h('span', { key: di, style: dot.style }))),
+                    h('span', { style: { fontSize: '12px', fontWeight: '600' } }, wk.fatigueLabel)
+                  )
+                ),
+                h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' } },
+                  wk.days.map((day, di) =>
+                    h('div', { key: di, style: { minWidth: 0, padding: '8px 6px 8px', borderRight: di < 6 ? '1px solid #d7d3d3' : undefined } },
+                      h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '4px' } },
+                        h('span', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, day.dow),
+                        h('span', { style: day.numStyle }, day.num)
+                      ),
+                      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px', height: '168px' } },
+                        day.sessions.map((s, si) =>
+                          h('div', { key: si, style: s.style },
+                            h('span', { style: { display: 'block', fontSize: '13px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1.1' } }, s.sport),
+                            h('span', { style: { display: 'block', fontSize: '12px', fontWeight: '700', lineHeight: '1.2', overflowWrap: 'anywhere', hyphens: 'auto' } }, s.workout),
+                            h('span', { style: { display: 'block', fontSize: '12px', fontWeight: '600', lineHeight: '1.25' } }, s.time),
+                            h('span', { style: { display: 'block', fontSize: '12px', fontWeight: '600', lineHeight: '1.25' } }, s.detail),
+                            h('span', { style: s.ifStyle }, s.ifLabel)
+                          )
+                        ),
+                        day.empty && h('span', { style: { display: 'flex', alignItems: 'center', height: '100%', fontSize: '12px', color: '#bab6b6' } }, 'Repos')
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          ) : null,
+          data.length && h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: '40px', padding: '22px 32px 44px' } },
+            h('div', null,
+              h('span', { style: { display: 'block', fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Indice de fatigue'),
+              h('div', { style: { display: 'flex', gap: '3px', marginTop: '8px', width: '220px' } },
+                ['#ffe0d9', '#ffb3a3', '#f97a60', '#ec3013', '#ae1800'].map((c, i) => h('span', { key: i, style: { flex: '1', height: '12px', background: c } }))
+              ),
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', width: '220px', marginTop: '6px', fontSize: '10px', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#605d5d' } },
+                h('span', null, 'Facile'), h('span', null, 'Très dur')
+              )
+            )
+          )
+        )
+      ),
+
+      // ── ATHLETE ──────────────────────────────────────────────────────────
+      tab === 'athlete' && h('div', null,
+        h('header', { style: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '32px', minHeight: '108px', boxSizing: 'border-box', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ec3013' } }, 'Athlète'),
+            h('h1', { style: { margin: 0, fontSize: '30px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1' } }, athleteSection)
+          )
+        ),
+        athleteSection === 'Condition physique' && h('div', null,
+          h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
+            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période de calcul'),
+              h(BtnRow, { options: mkOptions(powPeriods, fitRange, setFitRange) })
+            )
+          ),
+          h('section', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: '2px solid #201e1d' } },
+            fitStats.map((st, i) =>
+              h('div', { key: i, style: { minWidth: 0, padding: '20px 32px 22px', borderRight: i < 3 ? '1px solid #d7d3d3' : undefined } },
+                h('div', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, st.label),
+                h('div', { style: st.valueStyle }, st.value),
+                h('div', { style: { marginTop: '6px', fontSize: '12px', color: '#605d5d' } }, st.sub)
+              )
+            )
+          ),
+          h('section', { style: { padding: '28px 32px 32px' } },
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px 16px', marginBottom: '10px' } },
+              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Condition physique, fatigue et forme'),
+              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Rouge : condition physique · Noir : fatigue · Gris : forme')
             ),
-          ),
-          ...v.profileFields.map(f =>
-            el('div', { style: 'display: flex; flex-direction: column; gap: 7px;' },
-              el('label', { style: 'font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, f.label),
-              el('input', { type:'number', step: f.step, value: f.value, style: 'width: 100%; padding: 10px 12px; border: 2px solid #201e1d; border-radius: 0; background: #ffffff; color: #201e1d; font-family: inherit; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums;', onFocus: e => e.target.style.borderColor='#ec3013', onBlur: e => e.target.style.borderColor='#201e1d', onChange: f.onInput }),
-            )
-          ),
+            h('p', { style: { margin: '0 0 18px', fontSize: '12px', color: '#605d5d', maxWidth: '90ch' } }, data.some(a => a.trainingLoad) ? 'Condition physique (CTL 42j), fatigue (ATL 7j) et forme (TSB) calculées à partir de la charge de chaque séance.' : 'Donnée manquante — aucune activité importée.'),
+            h('div', { style: { height: 'calc(100vh - 440px)', minHeight: '340px' } }, h('canvas', { ref: fitRef }))
+          )
         ),
-        el('p', { style: 'margin: 18px 0 0; font-size: 12px; color: #605d5d;' }, v.profile.derived),
-      ),
-      el('div', { style: 'min-width: 0; padding: 24px 32px 28px;' },
-        el('h2', { style: 'margin: 0 0 4px; font-size: 15px; font-weight: 800; letter-spacing: -0.01em;' }, 'Course visée'),
-        el('p', { style: 'margin: 0 0 16px; font-size: 12px; color: #605d5d;' }, 'Le type de course pré-remplit les champs à compléter.'),
-        el('label', { style: 'display: block; font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, 'Type de course'),
-        el('select', { style: 'width: 100%; margin-top: 8px; padding: 11px 12px; border: 2px solid #201e1d; border-radius: 0; background: #ffffff; color: #201e1d; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;', onChange: v.onRaceType },
-          ...v.raceTypes.map(rt => el('option', { value: rt, ...(v.raceType===rt?{selected:'selected'}:{}) }, rt))
-        ),
-        el('label', { style: 'display: block; margin-top: 16px; font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #605d5d;' }, 'Date'),
-        el('input', { type:'date', value: v.raceDate, style: 'width: 100%; margin-top: 8px; padding: 10px 12px; border: 2px solid #201e1d; border-radius: 0; background: #ffffff; color: #201e1d; font-family: inherit; font-size: 13px; font-weight: 600;', onChange: v.onRaceDate }),
-        el('p', { style: 'margin: 14px 0 0; font-size: 12px; color: #605d5d;' }, v.raceCountdown),
-        el('div', { style: 'display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; margin: 22px 0 16px; padding-top: 18px; border-top: 2px solid #201e1d;' },
-          el('h3', { style: 'margin: 0; font-size: 13px; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase;' }, v.raceType),
-          el('span', { style: 'font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, 'Distances et dénivelés'),
-        ),
-        el('div', { style: 'display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px 20px;' },
-          ...v.raceFields.map(f =>
-            el('div', { style: 'display: flex; flex-direction: column; gap: 7px;' },
-              el('label', { style: 'font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, f.label),
-              el('input', { type:'number', step: f.step, value: f.value, style: 'width: 100%; padding: 10px 12px; border: 2px solid #201e1d; border-radius: 0; background: #ffffff; color: #201e1d; font-family: inherit; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums;', onFocus: e => e.target.style.borderColor='#ec3013', onBlur: e => e.target.style.borderColor='#201e1d', onChange: f.onInput }),
-            )
-          ),
-        ),
-        el('div', { style: 'display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 22px; padding-top: 18px; border-top: 2px solid #201e1d;' },
-          el('div', null,
-            el('span', { style: 'display: block; font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, 'Estimation'),
-            el('div', { style: 'display: flex; align-items: baseline; gap: 6px; margin-top: 4px;' },
-              el('span', { style: 'font-size: 30px; font-weight: 800; letter-spacing: -0.03em; line-height: 0.9;' }, String(v.goal.ready)),
-              el('span', { style: 'font-size: 13px; font-weight: 600; color: #605d5d;' }, '% prêt'),
+        athleteSection === 'Puissance' && h('div', null,
+          h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
+            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période de calcul'),
+              h(BtnRow, { options: mkOptions(powPeriods, powRange, setPowRange) })
             ),
+            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Comparaison'),
+              h(BtnRow, { options: mkOptions(powPeriods, powCompare, setPowCompare) })
+            )
           ),
-          el('div', { style: 'padding-left: 20px; border-left: 2px solid #201e1d;' },
-            el('span', { style: 'display: block; font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #605d5d;' }, 'Temps projeté'),
-            el('span', { style: 'display: block; margin-top: 4px; font-size: 24px; font-weight: 800; letter-spacing: -0.02em;' }, v.goal.projected),
-          ),
-          el('p', { style: 'margin: 0; flex: 1 1 260px; font-size: 12px; color: #605d5d;' }, v.raceSummary),
+          h('section', { style: { padding: '28px 32px 32px' } },
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px 16px', marginBottom: '10px' } },
+              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Courbe de puissance'),
+              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Rouge : ' + powLabel(powRange) + ' · Gris : ' + powLabel(powCompare) + ' précédents')
+            ),
+            h('p', { style: { margin: '0 0 18px', fontSize: '12px', color: '#605d5d', maxWidth: '90ch' } }, data.some(a => a.sport === 'Vélo' && a.power) ? 'Meilleure puissance par durée d\'effort. Estimation calculée à partir des moyennes et pics de chaque sortie.' : 'Donnée manquante — aucune sortie vélo avec capteur de puissance.'),
+            h('div', { style: { height: 'calc(100vh - 320px)', minHeight: '380px' } }, h('canvas', { ref: powerRef }))
+          )
         ),
+        athleteSection === 'Allure' && h('div', null,
+          h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
+            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période de calcul'),
+              h(BtnRow, { options: mkOptions(powPeriods, paceRange, setPaceRange) })
+            ),
+            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Comparaison'),
+              h(BtnRow, { options: mkOptions(powPeriods, paceCompare, setPaceCompare) })
+            )
+          ),
+          h('section', { style: { padding: '28px 32px 32px' } },
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px 16px', marginBottom: '10px' } },
+              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Meilleure allure par distance'),
+              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Rouge : ' + powLabel(paceRange) + ' · Gris : ' + powLabel(paceCompare) + ' précédents')
+            ),
+            h('p', { style: { margin: '0 0 18px', fontSize: '12px', color: '#605d5d', maxWidth: '90ch' } }, data.some(a => (a.sport === 'Course' || a.sport === 'Trail') && a.pace) ? 'Meilleure allure moyenne par distance. Estimation calculée à partir de l\'allure moyenne de chaque sortie.' : 'Donnée manquante — aucune sortie course ou trail.'),
+            h('div', { style: { height: 'calc(100vh - 320px)', minHeight: '380px' } }, h('canvas', { ref: paceRef }))
+          )
+        ),
+        athleteSection === 'Fréquence cardiaque' && h('div', null,
+          h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
+            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période de calcul'),
+              h(BtnRow, { options: mkOptions(powPeriods, hrRange, setHrRange) })
+            ),
+            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Comparaison'),
+              h(BtnRow, { options: mkOptions(powPeriods, hrCompare, setHrCompare) })
+            )
+          ),
+          h('section', { style: { padding: '28px 32px 32px' } },
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px 16px', marginBottom: '10px' } },
+              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Vitesse moyenne par fréquence cardiaque'),
+              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Rouge : ' + powLabel(hrRange) + ' · Gris : ' + powLabel(hrCompare) + ' précédents')
+            ),
+            h('p', { style: { margin: '0 0 18px', fontSize: '12px', color: '#605d5d', maxWidth: '90ch' } }, data.some(a => a.hr) ? 'Vitesse moyenne obtenue dans chaque plage de fréquence cardiaque. Une courbe qui monte à fréquence égale indique un gain d\'efficacité.' : 'Donnée manquante — aucune activité avec fréquence cardiaque.'),
+            h('div', { style: { height: 'calc(100vh - 320px)', minHeight: '380px' } }, h('canvas', { ref: hrRef }))
+          )
+        )
       ),
-    ),
+
+      // ── ACTIVITES ─────────────────────────────────────────────────────────
+      tab === 'activites' && h('div', null,
+        h('header', { style: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '32px', minHeight: '108px', boxSizing: 'border-box', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ec3013' } }, 'Activités'),
+            h('h1', { style: { margin: 0, fontSize: '30px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1' } }, "Analyse de l'activité")
+          ),
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Sélection'),
+            h('span', { style: { fontSize: '14px', fontWeight: '600' } }, acts.length ? acts.length + ' séances · ' + (sport === 'Tous' ? 'tous sports' : sport) : 'Donnée manquante'),
+            h('span', { style: { fontSize: '12px', color: '#605d5d' } }, acts.length ? fmtNum(Math.round(sum(acts, 'dist')), 0) + ' km · ' + Math.round(sum(acts, 'time') / 60) + ' h · +' + fmtNum(sum(acts, 'elev'), 0) + ' m' : status === 'loading' ? 'Import Strava en cours…' : 'Connecte Strava pour importer tes activités.')
+          )
+        ),
+        h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Sport'),
+            h(BtnRow, { options: mkOptions([{ label: 'Tous', value: 'Tous' }, { label: 'Course', value: 'Course' }, { label: 'Trail', value: 'Trail' }, { label: 'Vélo', value: 'Vélo' }, { label: 'Natation', value: 'Natation' }], sport, setSport) })
+          ),
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période · Range'),
+            h(BtnRow, { options: mkOptions([{ label: '30 j', value: 30 }, { label: '90 j', value: 90 }, { label: '6 mois', value: 180 }, { label: '12 mois', value: 365 }], range, setRange) })
+          )
+        ),
+        h('section', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', borderBottom: '2px solid #201e1d' } },
+          kpis.map((kpi, i) =>
+            h('div', { key: i, style: kpi.cellStyle },
+              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, kpi.label),
+              h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '8px', marginTop: '14px' } },
+                h('span', { style: kpi.valueStyle }, kpi.value),
+                kpi.unit && h('span', { style: { fontSize: '13px', fontWeight: '600', color: '#605d5d' } }, kpi.unit)
+              ),
+              h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginTop: '14px' } },
+                h('span', { style: kpi.deltaStyle }, kpi.delta),
+                h('span', { style: { fontSize: '12px', color: '#605d5d' } }, kpi.deltaNote)
+              )
+            )
+          )
+        ),
+        h('section', { style: { display: 'grid', gridTemplateColumns: '3fr 1fr', gridTemplateRows: 'auto auto', borderBottom: '2px solid #201e1d' } },
+          h('div', { style: { gridColumn: '1', gridRow: '1', minWidth: 0, padding: '28px 32px 32px', borderRight: '2px solid #201e1d', borderBottom: '2px solid #201e1d' } },
+            h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', marginBottom: '20px' } },
+              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, range <= 90 ? 'Volume par semaine' : 'Volume par mois'),
+              h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '12px' } },
+                h('button', { type: 'button', onClick: () => setShowElev(v => !v), style: { padding: '4px 10px', border: '2px solid ' + (showElev ? '#ec3013' : '#201e1d'), background: showElev ? '#ec3013' : 'transparent', color: showElev ? '#ffffff' : '#201e1d', fontFamily: 'inherit', fontSize: '10px', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer' } }, 'D+'),
+                h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, range <= 90 ? 'Abscisse en semaines' : 'Abscisse en mois')
+              )
+            ),
+            h('div', { style: { height: '252px' } }, h('canvas', { ref: lineRef }))
+          ),
+          h('div', { style: { gridColumn: '2', gridRow: '1 / span 2', minWidth: 0, padding: '28px 32px 32px' } },
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '4px 16px', marginBottom: '8px' } },
+              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Temps par zone cardiaque'),
+              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Répartition')
+            ),
+            h('p', { style: { margin: '0 0 14px', fontSize: '12px', color: '#605d5d', maxWidth: '42ch' } }, acts.some(a => a.hr) ? 'Minutes dans chaque zone de FC sur la période.' : 'Donnée manquante — aucune fréquence cardiaque.'),
+            h('div', { style: { height: '190px' } }, h('canvas', { ref: zoneRef })),
+            h('div', { style: { display: 'flex', flexDirection: 'column', marginTop: '16px' } },
+              zm.map((z, i) =>
+                h('div', { key: i, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 10px', padding: '6px 0', borderBottom: '1px solid #d7d3d3' } },
+                  h('span', { style: { flexShrink: 0, width: '12px', height: '12px', background: z.color, border: '1px solid #d7d3d3' } }),
+                  h('span', { style: { flex: '1 0 auto', fontSize: '12px', fontWeight: '600' } }, z.label),
+                  h('span', { style: { fontSize: '12px', fontVariantNumeric: 'tabular-nums' } }, fmtH(z.min)),
+                  h('span', { style: { fontSize: '12px', color: '#605d5d', fontVariantNumeric: 'tabular-nums' } }, Math.round((z.min / zmTotal) * 100) + ' %')
+                )
+              )
+            )
+          ),
+          h('div', { style: { gridColumn: '1', gridRow: '2', minWidth: 0, padding: '28px 32px 32px', borderRight: '2px solid #201e1d' } },
+            h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', marginBottom: '8px' } },
+              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Charge quotidienne'),
+              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, range >= 365 ? '12 mois' : range >= 180 ? '6 mois' : range + ' jours')
+            ),
+            h('p', { style: { margin: '0 0 14px', fontSize: '12px', color: '#605d5d', maxWidth: '62ch' } }, !acts.length ? 'Donnée manquante — aucune activité importée.' : 'Minutes d\'activité par jour. Les week-ends sont en gris.'),
+            h('div', { style: { height: '252px' } }, h('canvas', { ref: dailyRef }))
+          )
+        ),
+        h('section', { style: { padding: '28px 32px 48px' } },
+          h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', marginBottom: '20px' } },
+            h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Séances de la sélection'),
+            h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, (expanded ? Math.min(40, acts.length) : Math.min(8, acts.length)) + ' / ' + acts.length)
+          ),
+          h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '14px' } },
+            h('thead', null,
+              h('tr', { style: { borderTop: '2px solid #201e1d', borderBottom: '2px solid #201e1d' } },
+                ['Date', 'Sport', 'Distance', 'Temps', 'D+', 'Allure', 'Puissance'].map((col, i) =>
+                  h('th', { key: i, style: { padding: i === 0 ? '10px 12px 10px 0' : i === 6 ? '10px 0 10px 12px' : '10px 12px', textAlign: i > 1 ? 'right' : 'left', fontSize: '11px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, col)
+                )
+              )
+            ),
+            h('tbody', null,
+              rows.map((row, ri) =>
+                h('tr', { key: ri, style: { borderBottom: '1px solid #d7d3d3' } },
+                  h('td', { style: { padding: '12px 12px 12px 0', color: '#605d5d' } }, row.date),
+                  h('td', { style: { padding: '12px', fontWeight: '600' } }, row.sport),
+                  h('td', { style: { padding: '12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' } }, row.dist),
+                  h('td', { style: { padding: '12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' } }, row.time),
+                  h('td', { style: { padding: '12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' } }, row.elev),
+                  h('td', { style: { padding: '12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' } }, row.pace),
+                  h('td', { style: { padding: '12px 0 12px 12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#605d5d' } }, row.power)
+                )
+              )
+            )
+          ),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '16px', marginTop: '24px' } },
+            h('button', { type: 'button', onClick: () => setExpanded(v => !v), style: { minWidth: '200px', padding: '12px 16px', border: '2px solid #201e1d', background: 'transparent', color: '#201e1d', fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: 'pointer' }, onMouseEnter: e => { e.currentTarget.style.background = '#ffe0d9'; e.currentTarget.style.borderColor = '#ec3013'; }, onMouseLeave: e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = '#201e1d'; } }, expanded ? 'Réduire la liste' : 'Voir plus de séances'),
+            h('span', { style: { fontSize: '12px', color: '#605d5d' } }, acts.length ? 'Trié du plus récent au plus ancien.' : 'Donnée manquante — aucune activité importée.')
+          )
+        )
+      ),
+
+      // ── PROFIL ────────────────────────────────────────────────────────────
+      tab === 'profil' && h('div', null,
+        h('header', { style: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '24px', minHeight: '108px', boxSizing: 'border-box', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ec3013' } }, 'Profil'),
+            h('h1', { style: { margin: 0, fontSize: '30px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1' } }, profile.name || 'Donnée manquante')
+          ),
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Objectif'),
+            h('span', { style: { fontSize: '14px', fontWeight: '600' } }, race.type + ' · ' + (raceDateObj ? raceDateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'date à définir')),
+            h('span', { style: { fontSize: '12px', color: '#605d5d' } }, daysToRace === null ? 'Aucune date renseignée.' : daysToRace >= 0 ? 'Dans ' + daysToRace + ' jours · ' + Math.round(daysToRace / 7) + ' semaines restantes.' : 'Course passée il y a ' + Math.abs(daysToRace) + ' jours.')
+          )
+        ),
+        h('section', { style: { display: 'grid', gridTemplateColumns: '1fr 3fr', borderBottom: '2px solid #201e1d' } },
+          h('div', { style: { minWidth: 0, padding: '24px 32px 28px', borderRight: '2px solid #201e1d' } },
+            h('h2', { style: { margin: '0 0 4px', fontSize: '15px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Identité'),
+            h('p', { style: { margin: '0 0 18px', fontSize: '12px', color: '#605d5d' } }, 'Ces données servent aux zones, à la charge et aux estimations.'),
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr', gap: '16px 18px' } },
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
+                h('label', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Nom'),
+                h('input', { type: 'text', value: profile.name, onChange: e => setProfile(p => ({ ...p, name: e.target.value })), style: { width: '100%', padding: '10px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '14px', fontWeight: '600' } })
+              ),
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
+                h('label', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Genre'),
+                h('select', { value: profile.gender, onChange: e => setProfile(p => ({ ...p, gender: e.target.value })), style: { width: '100%', padding: '10px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '14px', fontWeight: '600', cursor: 'pointer' } },
+                  ['Femme', 'Homme', 'Non précisé'].map(g => h('option', { key: g, value: g }, g))
+                )
+              ),
+              [{ k: 'age', label: 'Âge (ans)', step: 1 }, { k: 'height', label: 'Taille (cm)', step: 1 }, { k: 'weight', label: 'Poids (kg)', step: 0.1 }, { k: 'fcMax', label: 'FC max (bpm)', step: 1 }, { k: 'fcRest', label: 'FC repos (bpm)', step: 1 }, { k: 'ftp', label: 'FTP vélo (W)', step: 1 }].map(f =>
+                h('div', { key: f.k, style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
+                  h('label', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, f.label),
+                  h('input', { type: 'number', step: f.step, value: profile[f.k] ?? '', onChange: e => { const v = e.target.value; setProfile(p => ({ ...p, [f.k]: v === '' ? '' : Number(v) })); }, style: { width: '100%', padding: '10px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '14px', fontWeight: '600', fontVariantNumeric: 'tabular-nums' } })
+                )
+              )
+            ),
+            h('p', { style: { margin: '18px 0 0', fontSize: '12px', color: '#605d5d' } }, 'IMC ' + (bmi ?? 'donnée manquante') + ' · rapport poids-puissance ' + (wkg ?? 'donnée manquante') + ' W/kg · réserve cardiaque ' + (p.fcMax && p.fcRest ? p.fcMax - p.fcRest + ' bpm' : 'donnée manquante') + '.')
+          ),
+          h('div', { style: { minWidth: 0, padding: '24px 32px 28px' } },
+            h('h2', { style: { margin: '0 0 4px', fontSize: '15px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Course visée'),
+            h('p', { style: { margin: '0 0 16px', fontSize: '12px', color: '#605d5d' } }, 'Le type de course pré-remplit les champs à compléter.'),
+            h('label', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Type de course'),
+            h('select', { value: race.type, onChange: e => { const t = e.target.value; setRace(r => ({ ...r, type: t, values: defaultValues(t) })); }, style: { width: '100%', marginTop: '8px', padding: '11px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '13px', fontWeight: '600', cursor: 'pointer' } },
+              Object.keys(RACE_CATALOG).map(rt => h('option', { key: rt, value: rt }, rt))
+            ),
+            h('label', { style: { display: 'block', marginTop: '16px', fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Date'),
+            h('input', { type: 'date', value: race.date, onChange: e => setRace(r => ({ ...r, date: e.target.value })), style: { width: '100%', marginTop: '8px', padding: '10px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '13px', fontWeight: '600' } }),
+            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '16px 20px', marginTop: '20px' } },
+              spec.fields.map(f =>
+                h('div', { key: f.k, style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
+                  h('label', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, f.label),
+                  h('input', { type: 'number', step: f.step || 1, value: race.values[f.k] ?? '', onChange: e => { const v = e.target.value; setRace(r => ({ ...r, values: { ...r.values, [f.k]: v === '' ? '' : Number(v) } })); }, style: { width: '100%', padding: '10px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '14px', fontWeight: '600', fontVariantNumeric: 'tabular-nums' } })
+                )
+              )
+            ),
+            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '16px', marginTop: '22px', paddingTop: '18px', borderTop: '2px solid #201e1d' } },
+              h('div', null,
+                h('span', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Estimation'),
+                h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '4px' } },
+                  h('span', { style: { fontSize: '30px', fontWeight: '800', letterSpacing: '-0.03em', lineHeight: '0.9' } }, data.length ? ready : '—'),
+                  h('span', { style: { fontSize: '13px', fontWeight: '600', color: '#605d5d' } }, '% prêt')
+                )
+              ),
+              h('div', { style: { paddingLeft: '20px', borderLeft: '2px solid #201e1d' } },
+                h('span', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Temps projeté'),
+                h('span', { style: { display: 'block', marginTop: '4px', fontSize: '24px', fontWeight: '800', letterSpacing: '-0.02em' } }, 'Donnée manquante')
+              )
+            )
+          )
+        ),
+        h('section', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: '2px solid #201e1d' } },
+          seasonStats.map((s, i) =>
+            h('div', { key: i, style: s.cellStyle },
+              h('span', { style: { display: 'block', fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, s.label),
+              h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '8px', marginTop: '8px' } },
+                h('span', { style: { fontSize: '28px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1' } }, s.value),
+                s.unit && h('span', { style: { fontSize: '13px', fontWeight: '600', color: '#605d5d' } }, s.unit)
+              ),
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px' } },
+                h('span', { style: s.arrowStyle }, s.arrow),
+                h('span', { style: s.deltaStyle }, s.delta)
+              )
+            )
+          )
+        )
+      )
+    )
   );
 }
 
-function render() {
-  const v = computeVals();
-  lineRef = null; dailyRef = null; zoneRef = null;
-
-  const main = el('div', null,
-    v.isProgramme ? renderProgramme(v) : null,
-    v.isAthlete ? renderAthlete(v) : null,
-    v.isActivites ? renderActivites(v) : null,
-    v.isProfil ? renderProfil(v) : null,
-  );
-
-  const root = document.getElementById('root');
-  root.innerHTML = '';
-  root.appendChild(renderSidebar(v));
-  const mainWrap = el('main', { style: 'flex: 1; min-width: 0;' });
-  mainWrap.appendChild(main);
-  root.appendChild(mainWrap);
-
-  if (v.isActivites) {
-    requestAnimationFrame(() => drawCharts(v));
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// BOOT
-// ═══════════════════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', () => {
-  render();
-  initStrava();
-});
+ReactDOM.createRoot(document.getElementById('root')).render(h(App));
 </script>
 </body>
 </html>
