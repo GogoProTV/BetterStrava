@@ -1051,7 +1051,7 @@ function App() {
         ),
         h('section',{style:{display:'flex',flexWrap:'wrap',alignItems:'flex-start',justifyContent:'space-between',gap:'20px 44px',padding:'18px 32px',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{display:'flex',flex:'1 1 520px',flexWrap:'wrap',gap:'20px 44px',minWidth:0}},
-            [{label:'Objectif',value:race.type,unit:'',delta:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}):'—',note:daysToRace===null?'':'J−'+daysToRace,good:null},{label:'Temps projeté',value:projDisplay,unit:'',delta:projResult?'Riegel + Minetti':'—',note:projNote,good:projResult?true:null},{label:'Prêt · Readiness',value:data.length?String(ready):'Donnée manquante',unit:data.length?'%':'',delta:data.length?(ready>=75?'En bonne voie':'À consolider'):'—',note:race.type,good:data.length?ready>=75:null},{label:'Semaines restantes',value:raceDateObj?String(weeksLeft):'Donnée manquante',unit:raceDateObj?'sem.':'',delta:raceDateObj?"jusqu'à la course":'—',note:'',good:null}].map((k,i)=>
+            [{label:'Objectif',value:race.type,unit:'',delta:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}):'—',note:daysToRace===null?'':'J−'+daysToRace,good:null,segNote:null},{label:'Temps projeté',value:projDisplay,unit:'',delta:projResult?'Riegel + Minetti':'—',note:projNote,good:projResult?true:null,segNote:projResult&&projResult.segments?projResult.segments:null},{label:'Prêt · Readiness',value:data.length?String(ready):'Donnée manquante',unit:data.length?'%':'',delta:data.length?(ready>=75?'En bonne voie':'À consolider'):'—',note:race.type,good:data.length?ready>=75:null,segNote:null},{label:'Semaines restantes',value:raceDateObj?String(weeksLeft):'Donnée manquante',unit:raceDateObj?'sem.':'',delta:raceDateObj?"jusqu'à la course":'—',note:'',good:null,segNote:null}].map((k,i)=>
               h('div',{key:i,style:{display:'flex',flexDirection:'column',gap:'6px',minWidth:0}},
                 h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},k.label),
                 h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px'}},
@@ -1060,7 +1060,15 @@ function App() {
                 ),
                 h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'8px'}},
                   h('span',{style:{padding:'3px 8px',fontSize:'12px',fontWeight:'600',letterSpacing:'0.04em',background:k.good?'#ffe0d9':'#eae9e9',color:k.good?'#ae1800':'#605d5d'}},k.delta),
-                  h('span',{style:{fontSize:'12px',color:'#605d5d'}},k.note)
+                  !k.segNote&&h('span',{style:{fontSize:'12px',color:'#605d5d'}},k.note)
+                ),
+                k.segNote&&h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginTop:'2px'}},
+                  [k.segNote.swim&&{label:'Nat.',res:k.segNote.swim},k.segNote.bike&&{label:'Vélo',res:k.segNote.bike},k.segNote.run&&{label:'Course',res:k.segNote.run}].filter(Boolean).map(({label,res})=>
+                    h('span',{key:label,style:{fontSize:'11px',color:'#605d5d'}},
+                      h('span',{style:{fontWeight:'700',color:'#ec3013'}},label+' '),
+                      fmtProjected(res.minutes)
+                    )
+                  )
                 )
               )
             )
@@ -1204,37 +1212,72 @@ function App() {
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période · Range'),h(BtnRow,{options:mkOptions([{label:'30 j',value:30},{label:'90 j',value:90},{label:'6 mois',value:180},{label:'12 mois',value:365}],range,setRange)}))
         ),
 
-        // ── PATCH 2 : grille KPIs — colonnes 1fr 2fr 1fr pour natation, delta chips inclus ──
-        h('section',{style:{display:'grid',gridTemplateColumns:isSwimFilter?'1fr 2fr 1fr':'repeat('+kpis.length+', minmax(0, 1fr))',borderBottom:'2px solid #201e1d'}},
-          kpis.map((kpi,i)=>{
-            const isPowCell = i===3 && sport==='Vélo';
-            const powMissing = isPowCell && kpi.value==='Donnée manquante';
-            const cellClick = powMissing ? ()=>setTab('profil') : undefined;
-            const isSwimTimeCell = isSwimFilter && kpi.def && kpi.def.swimWide;
-            const isSwimLastCell = isSwimFilter && !kpi.def.swimWide && i === kpis.length - 1;
-            return h('div',{key:i,style:{...kpi.cellStyle,borderRight:isSwimTimeCell?'none':kpi.cellStyle.borderRight,borderLeft:isSwimLastCell?'2px solid #201e1d':undefined,cursor:powMissing?'pointer':undefined,position:'relative'},
-              onClick:cellClick,
-              onMouseEnter:e=>{if(powMissing){e.currentTarget.style.background='#fdf1ee';}},
-              onMouseLeave:e=>{if(powMissing){e.currentTarget.style.background='transparent';}}
-            },
-              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},kpi.label),
-              h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'14px'}},
-                h('span',{style:kpi.valueStyle},kpi.value),
-                kpi.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},kpi.unit)
-              ),
-              h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'10px'}},
-                kpi.arrow&&h('span',{style:kpi.arrowStyle},kpi.arrow),
-                kpi.delta&&kpi.delta!=='—'&&h('span',{style:{...kpi.deltaStyle,padding:'2px 7px'}},kpi.delta),
-                h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},
-                  'S−1 : '+(kpi.prevTxt||'0')+(kpi.prevUnit?' '+kpi.prevUnit:'')
+        // ── Grille KPIs — 3fr/1fr pour natation (aligné sur le panneau FC en-dessous), sinon N colonnes égales ──
+        isSwimFilter
+          ? h('section',{style:{display:'grid',gridTemplateColumns:'3fr 1fr',borderBottom:'2px solid #201e1d'}},
+              // Colonne gauche 3fr : Distance + Temps côte à côte
+              h('div',{style:{display:'grid',gridTemplateColumns:'1fr 2fr',borderRight:'2px solid #201e1d'}},
+                kpis.filter((_,i)=>i<2).map((kpi,i)=>
+                  h('div',{key:i,style:{...kpi.cellStyle,borderRight:i===0?'2px solid #201e1d':undefined}},
+                    h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},kpi.label),
+                    h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'14px'}},
+                      h('span',{style:kpi.valueStyle},kpi.value),
+                      kpi.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},kpi.unit)
+                    ),
+                    h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'10px'}},
+                      kpi.arrow&&h('span',{style:kpi.arrowStyle},kpi.arrow),
+                      kpi.delta&&kpi.delta!=='—'&&h('span',{style:{...kpi.deltaStyle,padding:'2px 7px'}},kpi.delta),
+                      h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},
+                        'S−1 : '+(kpi.prevTxt||'0')+(kpi.prevUnit?' '+kpi.prevUnit:'')
+                      )
+                    )
+                  )
                 )
               ),
-              powMissing && h('div',{style:{marginTop:'6px',fontSize:'11px',color:'#ec3013',fontWeight:'600',letterSpacing:'0.04em'}},
-                '→ Renseigne le profil'
+              // Colonne droite 1fr : Allure moy.
+              h('div',{style:{...kpis[2].cellStyle,borderRight:undefined}},
+                h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},kpis[2].label),
+                h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'14px'}},
+                  h('span',{style:kpis[2].valueStyle},kpis[2].value),
+                  kpis[2].unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},kpis[2].unit)
+                ),
+                h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'10px'}},
+                  kpis[2].arrow&&h('span',{style:kpis[2].arrowStyle},kpis[2].arrow),
+                  kpis[2].delta&&kpis[2].delta!=='—'&&h('span',{style:{...kpis[2].deltaStyle,padding:'2px 7px'}},kpis[2].delta),
+                  h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},
+                    'S−1 : '+(kpis[2].prevTxt||'0')+(kpis[2].prevUnit?' '+kpis[2].prevUnit:'')
+                  )
+                )
               )
-            );
-          })
-        ),
+            )
+          : h('section',{style:{display:'grid',gridTemplateColumns:'repeat('+kpis.length+', minmax(0, 1fr))',borderBottom:'2px solid #201e1d'}},
+              kpis.map((kpi,i)=>{
+                const isPowCell = i===3 && sport==='Vélo';
+                const powMissing = isPowCell && kpi.value==='Donnée manquante';
+                const cellClick = powMissing ? ()=>setTab('profil') : undefined;
+                return h('div',{key:i,style:{...kpi.cellStyle,cursor:powMissing?'pointer':undefined,position:'relative'},
+                  onClick:cellClick,
+                  onMouseEnter:e=>{if(powMissing){e.currentTarget.style.background='#fdf1ee';}},
+                  onMouseLeave:e=>{if(powMissing){e.currentTarget.style.background='transparent';}}
+                },
+                  h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},kpi.label),
+                  h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'14px'}},
+                    h('span',{style:kpi.valueStyle},kpi.value),
+                    kpi.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},kpi.unit)
+                  ),
+                  h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'10px'}},
+                    kpi.arrow&&h('span',{style:kpi.arrowStyle},kpi.arrow),
+                    kpi.delta&&kpi.delta!=='—'&&h('span',{style:{...kpi.deltaStyle,padding:'2px 7px'}},kpi.delta),
+                    h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},
+                      'S−1 : '+(kpi.prevTxt||'0')+(kpi.prevUnit?' '+kpi.prevUnit:'')
+                    )
+                  ),
+                  powMissing && h('div',{style:{marginTop:'6px',fontSize:'11px',color:'#ec3013',fontWeight:'600',letterSpacing:'0.04em'}},
+                    '→ Renseigne le profil'
+                  )
+                );
+              })
+            ),
         h('section',{style:{display:'grid',gridTemplateColumns:'3fr 1fr',gridTemplateRows:'auto auto',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{gridColumn:'1',gridRow:'1',minWidth:0,padding:'28px 32px 32px',borderRight:'2px solid #201e1d',borderBottom:'2px solid #201e1d'}},
             h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'20px'}},
@@ -1395,7 +1438,26 @@ function App() {
               h('div',{style:{paddingLeft:'20px',borderLeft:'2px solid #201e1d'}},
                 h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Temps projeté'),
                 h('span',{style:{display:'block',marginTop:'4px',fontSize:'24px',fontWeight:'800',letterSpacing:'-0.02em'}},projDisplay),
-                projResult&&h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},projNote)
+                projResult&&projResult.segments
+                  ? h('div',{style:{marginTop:'8px',display:'flex',flexDirection:'column',gap:'3px'}},
+                      [
+                        projResult.segments.swim && { label:'Nat.', res: projResult.segments.swim },
+                        projResult.segments.bike && { label:'Vélo', res: projResult.segments.bike },
+                        projResult.segments.run  && { label:'Course', res: projResult.segments.run },
+                      ].filter(Boolean).map(({label, res}) =>
+                        h('div',{key:label,style:{display:'flex',alignItems:'baseline',gap:'8px'}},
+                          h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#ec3013',minWidth:'42px'}},label),
+                          h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.01em'}},fmtProjected(res.minutes)),
+                          h('span',{style:{fontSize:'11px',color:'#605d5d'}},
+                            res.refDist ? '· d\'après ' + fmtNum(res.refDist,1) + ' km' : ''
+                          )
+                        )
+                      ),
+                      h('div',{style:{marginTop:'4px',paddingTop:'4px',borderTop:'1px solid #d7d3d3',fontSize:'11px',color:'#605d5d'}},
+                        'Transitions estimées incluses · Riegel + Minetti'
+                      )
+                    )
+                  : projResult&&h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},projNote)
               )
             )
           )
