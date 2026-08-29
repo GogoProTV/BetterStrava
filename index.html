@@ -534,6 +534,24 @@ function App() {
     return HR_BINS.map(b => { const inBin=acts.filter(a=>a.hr>=b.min&&a.hr<b.max); if (!inBin.length) return null; const km=inBin.reduce((s,a)=>s+a.dist,0), hh=inBin.reduce((s,a)=>s+a.time,0)/60; return hh?Math.round((km/hh)*10)/10:null; });
   }
 
+  // ── FTP estimée — déclarée ici pour être disponible dans les useEffect ────
+  const ftpEstimated = (() => {
+    const totalMassFtp = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
+    if (!totalMassFtp) return null;
+    const rides = data.filter(a => a.sport==='Vélo' && a.dist && a.time && a.secs >= 1200);
+    if (!rides.length) return null;
+    const candidates = rides.map(a => {
+      const v = a.dist / (a.time / 60);
+      const slope = a.elev && a.dist ? (a.elev / (a.dist * 1000)) * 100 : 0;
+      const pEst = estimatePower(v, slope, totalMassFtp);
+      const confBonus = (a.time >= 20 && a.time <= 65) ? 1.05 : 1.0;
+      return pEst ? Math.round(pEst * confBonus) : null;
+    }).filter(Boolean);
+    if (!candidates.length) return null;
+    const best20min = Math.max(...candidates);
+    return Math.round(best20min * 0.95);
+  })();
+
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Condition physique') return;
     chartDefaults();
@@ -916,23 +934,6 @@ function App() {
   const noData=!data.length;
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
   const athleteSections=['Condition physique','Puissance','Allure','Fréquence cardiaque'];
-
-  const ftpEstimated = (() => {
-    const totalMassFtp = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
-    if (!totalMassFtp) return null;
-    const rides = data.filter(a => a.sport==='Vélo' && a.dist && a.time && a.secs >= 1200);
-    if (!rides.length) return null;
-    const candidates = rides.map(a => {
-      const v = a.dist / (a.time / 60);
-      const slope = a.elev && a.dist ? (a.elev / (a.dist * 1000)) * 100 : 0;
-      const pEst = estimatePower(v, slope, totalMassFtp);
-      const confBonus = (a.time >= 20 && a.time <= 65) ? 1.05 : 1.0;
-      return pEst ? Math.round(pEst * confBonus) : null;
-    }).filter(Boolean);
-    if (!candidates.length) return null;
-    const best20min = Math.max(...candidates);
-    return Math.round(best20min * 0.95);
-  })();
 
   function RowDetail({ act, id }) {
     const canvasRef = useRef(null);
