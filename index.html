@@ -292,10 +292,15 @@ function App() {
   const ago90Str = new Date(Date.now()-90*86400000).toISOString().slice(0,10);
   const ago180Str = new Date(Date.now()-180*86400000).toISOString().slice(0,10);
   const ago365Str = new Date(Date.now()-365*86400000).toISOString().slice(0,10);
-  const [powDateA0, setPowDateA0] = useState(ago90Str);  // période A : début
-  const [powDateA1, setPowDateA1] = useState(todayStr);  // période A : fin
-  const [powDateB0, setPowDateB0] = useState(ago365Str); // période B : début
-  const [powDateB1, setPowDateB1] = useState(ago180Str); // période B : fin
+  const [powDateA0, setPowDateA0] = useState(ago90Str);
+  const [powDateA1, setPowDateA1] = useState(todayStr);
+  const [powDateB0, setPowDateB0] = useState(ago365Str);
+  const [powDateB1, setPowDateB1] = useState(ago180Str);
+  // Cache streams watts : id → Float32Array (seconde par seconde) | 'error'
+  const [wattStreams, setWattStreams] = useState({});
+  const [wattFetchStatus, setWattFetchStatus] = useState('idle'); // 'idle'|'loading'|'ready'
+  const [wattFetchProgress, setWattFetchProgress] = useState({ done:0, total:0 });
+  const wattFetchAbort = useRef(false);
   const [paceRange, setPaceRange] = useState(90);
   const [paceCompare, setPaceCompare] = useState(365);
   const [hrRange, setHrRange] = useState(90);
@@ -491,35 +496,82 @@ function App() {
     return d.filter(a => a.date.getTime() >= start && a.date.getTime() < end && (sp === 'Tous' || a.sport === sp));
   }
 
-  // Durées en secondes pour la courbe de puissance — axe X log-like
+  // Durées en secondes pour la courbe de puissance
   const POWER_DURATIONS = [
     { s:5,l:'5 s' },{ s:10,l:'10 s' },{ s:15,l:'15 s' },{ s:30,l:'30 s' },{ s:60,l:'1 min' },
     { s:120,l:'2 min' },{ s:180,l:'3 min' },{ s:300,l:'5 min' },{ s:420,l:'7 min' },
     { s:600,l:'10 min' },{ s:1200,l:'20 min' },{ s:1800,l:'30 min' },
     { s:3600,l:'1 h' },{ s:5400,l:'1 h 30' },{ s:10800,l:'3 h' },
   ];
-  // powerCurveByDate : retourne { watts, joules } par durée, entre deux dates ISO
+
+  // Fenêtre glissante sur un Float32Array : meilleure moyenne sur `dur` secondes
+  function bestAvgWindow(arr, dur) {
+    if (!arr || arr.length < dur) return null;
+    let sum = 0;
+    for (let i = 0; i < dur; i++) sum += arr[i];
+    let best = sum;
+    for (let i = dur; i < arr.length; i++) {
+      sum += arr[i] - arr[i - dur];
+      if (sum > best) best = sum;
+    }
+    return Math.round(best / dur);
+  }
+
+  // Calcule la courbe de puissance réelle depuis les streams en cache
   function powerCurveByDate(d0, d1) {
     const start = new Date(d0).getTime(), end = new Date(d1).getTime() + 86400000;
-    const rides = data.filter(a => a.sport==='Vélo' && (a.power||a.maxPower) && a.secs && a.date.getTime()>=start && a.date.getTime()<end);
-    return POWER_DURATIONS.map(d => {
+    const rides = data.filter(a =>
+      a.sport === 'Vélo' && a.date.getTime() >= start && a.date.getTime() < end
+    );
+    return POWER_DURATIONS.map(({ s: dur }) => {
       let bestW = null;
-      rides.forEach(a => {
-        if (a.secs < d.s) {
-          if (d.s <= 60 && a.maxPower) bestW = Math.max(bestW||0, a.maxPower);
-          return;
+      for (const a of rides) {
+        const ws = wattStreams[a.id];
+        if (ws && ws instanceof Float32Array && ws.length >= dur) {
+          const v = bestAvgWindow(ws, dur);
+          if (v !== null) bestW = bestW === null ? v : Math.max(bestW, v);
         }
-        if (a.power) bestW = Math.max(bestW||0, a.power);
-        if (d.s <= 60 && a.maxPower) bestW = Math.max(bestW||0, a.maxPower);
-      });
-      return bestW !== null ? { w: bestW, j: Math.round(bestW * d.s) } : null;
+      }
+      return bestW !== null ? { w: bestW, j: Math.round(bestW * dur) } : null;
     });
   }
+
+  // Fetch des streams watts pour toutes les sorties vélo (avec cache)
+  async function fetchWattStreams() {
+    const token = localStorage.getItem('strava_token');
+    if (!token) return;
+    const rides = data.filter(a => a.sport === 'Vélo');
+    const toFetch = rides.filter(a => !wattStreams[a.id] || wattStreams[a.id] === 'error');
+    if (!toFetch.length) { setWattFetchStatus('ready'); return; }
+    setWattFetchStatus('loading');
+    setWattFetchProgress({ done: 0, total: toFetch.length });
+    wattFetchAbort.current = false;
+    const tk = await freshToken(token);
+    let done = 0;
+    for (const a of toFetch) {
+      if (wattFetchAbort.current) break;
+      try {
+        const res = await stravaApi('/activities/' + a.id + '/streams?keys=watts&key_by_type=true', tk);
+        if (res && res.watts && res.watts.data) {
+          const arr = new Float32Array(res.watts.data);
+          setWattStreams(prev => ({ ...prev, [a.id]: arr }));
+        } else {
+          setWattStreams(prev => ({ ...prev, [a.id]: 'error' }));
+        }
+      } catch(e) {
+        setWattStreams(prev => ({ ...prev, [a.id]: 'error' }));
+      }
+      done++;
+      setWattFetchProgress({ done, total: toFetch.length });
+      // Respecter le rate limit Strava : ~1 req/150ms max
+      await new Promise(r => setTimeout(r, 150));
+    }
+    setWattFetchStatus('ready');
+  }
+
   function powerCurve(days, offset) {
     const end = Date.now() - (offset||0)*days*86400000, start = end - days*86400000;
-    const d0 = new Date(start).toISOString().slice(0,10);
-    const d1 = new Date(end).toISOString().slice(0,10);
-    return powerCurveByDate(d0, d1).map(v => v ? v.w : 0);
+    return powerCurveByDate(new Date(start).toISOString().slice(0,10), new Date(end).toISOString().slice(0,10)).map(v => v ? v.w : 0);
   }
   const PACE_DISTANCES = [{ d:1,l:'1 km'},{d:2,l:'2 km'},{d:5,l:'5 km'},{d:10,l:'10 km'},{d:15,l:'15 km'},{d:21.1,l:'Semi'},{d:30,l:'30 km'},{d:42.2,l:'Marathon'}];
   const HR_BINS = [{ min:100,max:120,l:'100-120'},{min:120,max:130,l:'120-130'},{min:130,max:140,l:'130-140'},{min:140,max:150,l:'140-150'},{min:150,max:160,l:'150-160'},{min:160,max:170,l:'160-170'},{min:170,max:180,l:'170-180'},{min:180,max:200,l:'180+'}];
@@ -631,7 +683,7 @@ function App() {
       },
     });
     return () => destroyChart('power');
-  }, [tab, athleteSection, data, powDateA0, powDateA1, powDateB0, powDateB1, profile.ftp, profile.weight, ftpEstimated]);
+  }, [tab, athleteSection, data, wattStreams, powDateA0, powDateA1, powDateB0, powDateB1, profile.ftp, profile.weight, ftpEstimated]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Allure') return;
@@ -1305,12 +1357,51 @@ function App() {
             );
           })(),
           h('section',{style:{padding:'28px 32px 32px'}},
+            // Barre de chargement / bouton
+            (()=>{
+              const rides = data.filter(a => a.sport==='Vélo');
+              const cached = rides.filter(a => wattStreams[a.id] && wattStreams[a.id] !== 'error');
+              const withData = rides.filter(a => wattStreams[a.id] instanceof Float32Array);
+              const isLoading = wattFetchStatus === 'loading';
+              return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
+                h('div',null,
+                  h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
+                    isLoading
+                      ? 'Chargement… ' + wattFetchProgress.done + ' / ' + wattFetchProgress.total + ' sorties'
+                      : withData.length
+                        ? withData.length + ' / ' + rides.length + ' sorties avec streams watts'
+                        : 'Streams watts non chargés — courbe indisponible'
+                  ),
+                  isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
+                    h('div',{style:{height:'100%',background:'#ec3013',width: Math.round((wattFetchProgress.done/Math.max(1,wattFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
+                  ),
+                  !isLoading && withData.length>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
+                    'Courbe de puissance calculée par fenêtre glissante seconde par seconde'
+                  )
+                ),
+                h('div',{style:{display:'flex',gap:'8px'}},
+                  !isLoading && h('button',{type:'button',
+                    onClick: fetchWattStreams,
+                    disabled: isLoading || !localStorage.getItem('strava_token'),
+                    style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor: isLoading ? 'not-allowed':'pointer'}
+                  }, withData.length ? 'Actualiser' : 'Charger les streams'),
+                  isLoading && h('button',{type:'button',
+                    onClick:()=>{ wattFetchAbort.current = true; setWattFetchStatus('idle'); },
+                    style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
+                  }, 'Annuler')
+                )
+              );
+            })(),
             h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
               h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Courbe de puissance'),
               h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Axe droit pointillé : énergie (kJ)')
             ),
-            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},data.some(a=>a.sport==='Vélo'&&(a.power||a.maxPower))?"Meilleure puissance par durée d'effort. Survole pour voir la puissance, les joules et les W/kg.":'Donnée manquante — aucune sortie vélo avec capteur de puissance.'),
-            h('div',{style:{height:'calc(100vh - 380px)',minHeight:'360px'}},h('canvas',{ref:powerRef}))
+            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
+              data.filter(a=>a.sport==='Vélo').some(a=>wattStreams[a.id] instanceof Float32Array)
+                ? "Meilleure puissance moyenne par fenêtre glissante. Survole pour voir W, kJ et W/kg."
+                : "Clique sur « Charger les streams » pour calculer la vraie courbe de puissance depuis les données seconde par seconde."
+            ),
+            h('div',{style:{height:'calc(100vh - 480px)',minHeight:'320px'}},h('canvas',{ref:powerRef}))
           )
         ),
         athleteSection==='Allure'&&h('div',null,
