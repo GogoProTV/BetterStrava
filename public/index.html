@@ -391,23 +391,16 @@ function App() {
     const altMin = altData.length ? Math.floor(Math.min(...altData) / 10) * 10 : 0;
     const altMax = altMin + 1000;
     const datasets = [];
-    if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(hrData), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'rgba(236,48,19,0.07)', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
     if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(altData), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
     if (velData.length && vis.vel) {
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => v > 0 ? Math.round((1000 / 60 / v) * 100) / 100 : null;
       datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
-    if (estPowData.length && vis.pow) {
-      const smooth = arr => arr.map((_, i) => { const w=arr.slice(Math.max(0,i-7),i+8).filter(v=>v!==null&&v>=0); return w.length?Math.round(w.reduce((s,v)=>s+v,0)/w.length):null; });
-      datasets.push({ label: 'Puissance estimée (W)', data: smooth(thin(estPowData)), borderColor: '#605d5d', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
-    }
     const scales = { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } } };
-    if (hrData.length && vis.fc)  scales.yHr  = { position: 'left',  grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
     if (altData.length && vis.alt) scales.yAlt = { position: 'right', min: altMin, max: altMax, grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
     if (velData.length && vis.vel) {
-      scales.yPace = { position: 'right', reverse: !isBike, grid: { display: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#3d3a3a' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
+      scales.yPace = { position: 'left', reverse: !isBike, grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#3d3a3a' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
     }
-    if (estPowData.length && vis.pow) scales.yPow = { position: 'left', grid: { display: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'W estimés', color: '#605d5d' } };
     rowChartInsts.current[id] = new Chart(canvasEl, {
       type: 'line', plugins: [crosshairPlugin],
       data: { labels: xLabels, datasets },
@@ -446,7 +439,7 @@ function App() {
     return POWER_DURATIONS.map(d => {
       let best = null;
       rides.forEach(a => { if (a.secs<d.s) { if (d.s<=60&&a.maxPower) best=Math.max(best||0,a.maxPower); return; } best=Math.max(best||0,a.power); if (d.s<=60&&a.maxPower) best=Math.max(best,a.maxPower); });
-      return best;
+      return best !== null ? best : 0;
     });
   }
   const PACE_DISTANCES = [{ d:1,l:'1 km'},{d:2,l:'2 km'},{d:5,l:'5 km'},{d:10,l:'10 km'},{d:15,l:'15 km'},{d:21.1,l:'Semi'},{d:30,l:'30 km'},{d:42.2,l:'Marathon'}];
@@ -560,9 +553,34 @@ function App() {
     });
     const showEstPow = sport==='Vélo' && totalMass > 0 && powVals.some(v=>v!==null);
     const datasets = [{ label:'Distance (km)', data:vals, borderColor:'#ec3013', borderWidth:2, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.25, pointRadius:3.5, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, yAxisID:'y' }];
-    if (showElev) datasets.push({ label:'D+ (m)', data:elevVals, borderColor:'#201e1d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#201e1d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y1' });
-    if (showEstPow) datasets.push({ label:'Puissance estimée (W)', data:powVals, borderColor:'#605d5d', borderWidth:2, borderDash:[3,3], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#605d5d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y2', spanGaps:true });
-    upsert('line', lineRef, { type:'line', data:{labels,datasets}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:showEstPow||showElev,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:showEstPow||showElev,callbacks:{label:c=>c.dataset.label+' · '+c.parsed.y}}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Distance (km)',color:'#605d5d'}},y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}},y2:{display:showEstPow,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'W estimés (moy.)',color:'#605d5d'}}} } });
+    if (showElev) datasets.push({ label:'D+ (m)', data:elevVals, borderColor:'#201e1d', borderWidth:2, backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#201e1d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y1' });
+    if (showEstPow) datasets.push({ label:'Puissance estimée (W)', data:powVals, borderColor:'#605d5d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#605d5d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y2', spanGaps:true });
+    // Index activités par bucket pour le tooltip
+    const bucketActsMap = new Map([...buckets.keys()].map(k => [k, acts.filter(a => keyOf(a.date)===k)]));
+    const bucketKeys = [...buckets.keys()];
+    upsert('line', lineRef, { type:'line', data:{labels,datasets}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
+      plugins:{
+        legend:{display:showEstPow||showElev,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:14}},
+        tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:showEstPow||showElev,
+          callbacks:{
+            title: items => labels[items[0].dataIndex] || '',
+            label: c => c.dataset.label+' · '+c.parsed.y,
+            afterBody: items => {
+              const idx = items[0].dataIndex;
+              const k = bucketKeys[idx];
+              const list = bucketActsMap.get(k) || [];
+              if (!list.length) return ['— Aucune activité'];
+              return list.slice(0,6).map(a => {
+                const t = Math.floor(a.time/60)+'h'+String(a.time%60).padStart(2,'0');
+                const d = fmtNum(a.dist,1)+' km';
+                return (a.name||a.sport)+' · '+t+' · '+d;
+              }).concat(list.length>6?['+ '+(list.length-6)+' activité(s)']:[]);
+            }
+          }
+        }
+      },
+      scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Distance (km)',color:'#605d5d'}},y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}},y2:{display:showEstPow,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'W estimés (moy.)',color:'#605d5d'}}}
+    } });
     const days=[]; const dayStart=new Date(); dayStart.setHours(0,0,0,0);
     for(let i=range-1;i>=0;i--) days.push(new Date(dayStart.getTime()-i*86400000));
     const perDay=new Map();
@@ -597,7 +615,7 @@ function App() {
       const cur=agg(s); const prev=agg(new Date(s.getTime()-7*86400000));
       const isCurrent=s.getTime()===thisWeek.getTime();
       const pct=(a,b)=>b>0?Math.round(((a-b)/b)*100):null;
-      const mkStat=(label,value,pctv)=>{const chip=deltaChip(pctv,true);return{label,value:value||'0',arrow:chip.arrow,arrowStyle:chip.arrowStyle,delta:chip.text,deltaStyle:chip.style};};
+      const mkStat=(label,value,pctv,prevVal)=>{const chip=deltaChip(pctv,true);return{label,value:value||'0',arrow:chip.arrow,arrowStyle:chip.arrowStyle,delta:chip.text,deltaStyle:chip.style,prevVal:prevVal||'0'};};
       const daysList=dows.map((dow,i)=>{
         const d=new Date(s.getTime()+i*86400000);
         const sessions=cur.list.filter(a=>a.date.toDateString()===d.toDateString()).map(a=>{
@@ -616,7 +634,7 @@ function App() {
         title:'Semaine '+wkNum,span,tag:isCurrent?'En cours':'',
         tagStyle:{padding:'2px 8px',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',background:'#ec3013',color:'#fff',display:isCurrent?undefined:'none'},
         blockNote:cur.n+' séance'+(cur.n>1?'s':''),
-        stats:[mkStat('Temps',cur.min?fmtH(cur.min):'',pct(cur.min,prev.min)),mkStat('Distance',cur.km?fmtNum(Math.round(cur.km),0)+' km':'',pct(cur.km,prev.km)),mkStat('D+',cur.elev?'+'+fmtNum(Math.round(cur.elev),0)+' m':'',pct(cur.elev,prev.elev)),mkStat('Séances',String(cur.n),pct(cur.n,prev.n))],
+        stats:[mkStat('Temps',cur.min?fmtH(cur.min):'',pct(cur.min,prev.min),prev.min?fmtH(prev.min):'0'),mkStat('Distance',cur.km?fmtNum(Math.round(cur.km),0)+' km':'',pct(cur.km,prev.km),prev.km?fmtNum(Math.round(prev.km),0)+' km':'0'),mkStat('D+',cur.elev?'+'+fmtNum(Math.round(cur.elev),0)+' m':'',pct(cur.elev,prev.elev),prev.elev?'+'+fmtNum(Math.round(prev.elev),0)+' m':'0'),mkStat('Séances',String(cur.n),pct(cur.n,prev.n),String(prev.n))],
         days:daysList,
       };
     }).reverse();
@@ -699,7 +717,7 @@ function App() {
       : sport==='Tous'
         ? {label:'BPM moyen',unit:'bpm',get:l=>{const h2=l.filter(a=>a.hr);return h2.length?h2.reduce((s,a)=>s+a.hr,0)/h2.length:0;},pace:false}
         : sport==='Natation'
-          ? {label:'Allure moy.',unit:'/km',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d:0;},pace:true}
+          ? {label:'Allure moy.',unit:'/100m',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d/10:0;},pace:true}
           : {label:'Allure moy.',unit:'/km',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d:0;},pace:true},
   ];
   const kpis=kpiDef.map((k,i)=>{
@@ -964,6 +982,10 @@ function App() {
                         h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.02em',fontVariantNumeric:'tabular-nums'}},st.value),
                         h('span',{style:st.arrowStyle},st.arrow),
                         h('span',{style:st.deltaStyle},st.delta)
+                      ),
+                      h('div',{style:{display:'flex',alignItems:'baseline',gap:'6px',marginTop:'3px'}},
+                        h('span',{style:{fontSize:'10px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},'S−1 : '+st.prevVal),
+                        st.delta&&st.delta!=='—'&&h('span',{style:{fontSize:'10px',color:'#605d5d'}},st.delta+' vs S−1')
                       )
                     ))
                   )
