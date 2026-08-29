@@ -742,7 +742,28 @@ function App() {
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
   const athleteSections=['Condition physique','Puissance','Allure','Fréquence cardiaque'];
 
-  // ── Composant accordéon d'une ligne ──────────────────────────────────────
+  // ── Estimation FTP depuis les données ────────────────────────────────────
+  // FTP = meilleure puissance estimée sur 20 min × 0.95
+  // On utilise les sorties vélo avec vitesse + dénivelé + masse système
+  const ftpEstimated = (() => {
+    const totalMassFtp = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
+    if (!totalMassFtp) return null;
+    const rides = data.filter(a => a.sport==='Vélo' && a.dist && a.time && a.secs >= 1200);
+    if (!rides.length) return null;
+    // Pour chaque sortie de ≥20 min, estimer la puissance moyenne (proxy 20 min ≈ puissance moyenne de la sortie)
+    // Pour les sorties longues on pondère par la durée (effort soutenu)
+    const candidates = rides.map(a => {
+      const v = a.dist / (a.time / 60);
+      const slope = a.elev && a.dist ? (a.elev / (a.dist * 1000)) * 100 : 0;
+      const pEst = estimatePower(v, slope, totalMassFtp);
+      // Coefficient de confiance : sorties entre 20 et 60 min sont les meilleures proxies
+      const confBonus = (a.time >= 20 && a.time <= 65) ? 1.05 : 1.0;
+      return pEst ? Math.round(pEst * confBonus) : null;
+    }).filter(Boolean);
+    if (!candidates.length) return null;
+    const best20min = Math.max(...candidates);
+    return Math.round(best20min * 0.95);
+  })();
   function RowDetail({ act, id }) {
     const canvasRef = useRef(null);
     const st = rowStreams[id];
@@ -1091,17 +1112,30 @@ function App() {
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période · Range'),h(BtnRow,{options:mkOptions([{label:'30 j',value:30},{label:'90 j',value:90},{label:'6 mois',value:180},{label:'12 mois',value:365}],range,setRange)}))
         ),
         h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4, minmax(0, 1fr))',borderBottom:'2px solid #201e1d'}},
-          kpis.map((kpi,i)=>h('div',{key:i,style:kpi.cellStyle},
-            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},kpi.label),
-            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'14px'}},
-              h('span',{style:kpi.valueStyle},kpi.value),
-              kpi.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},kpi.unit)
-            ),
-            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'8px',marginTop:'14px'}},
-              h('span',{style:kpi.deltaStyle},kpi.delta),
-              h('span',{style:{fontSize:'12px',color:'#605d5d'}},kpi.deltaNote)
-            )
-          ))
+          kpis.map((kpi,i)=>{
+            // Case puissance vélo : cliquable si données manquantes
+            const isPowCell = i===3 && sport==='Vélo';
+            const powMissing = isPowCell && kpi.value==='Donnée manquante';
+            const cellClick = powMissing ? ()=>setTab('profil') : undefined;
+            return h('div',{key:i,style:{...kpi.cellStyle,cursor:powMissing?'pointer':undefined,position:'relative'},
+              onClick:cellClick,
+              onMouseEnter:e=>{if(powMissing){e.currentTarget.style.background='#fdf1ee';}},
+              onMouseLeave:e=>{if(powMissing){e.currentTarget.style.background='transparent';}}
+            },
+              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},kpi.label),
+              h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'14px'}},
+                h('span',{style:kpi.valueStyle},kpi.value),
+                kpi.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},kpi.unit)
+              ),
+              h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'8px',marginTop:'14px'}},
+                h('span',{style:kpi.deltaStyle},kpi.delta),
+                h('span',{style:{fontSize:'12px',color:'#605d5d'}},kpi.deltaNote)
+              ),
+              powMissing && h('div',{style:{marginTop:'8px',fontSize:'11px',color:'#ec3013',fontWeight:'600',letterSpacing:'0.04em'}},
+                '→ Renseigne le profil'
+              )
+            );
+          })
         ),
         h('section',{style:{display:'grid',gridTemplateColumns:'3fr 1fr',gridTemplateRows:'auto auto',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{gridColumn:'1',gridRow:'1',minWidth:0,padding:'28px 32px 32px',borderRight:'2px solid #201e1d',borderBottom:'2px solid #201e1d'}},
@@ -1219,8 +1253,20 @@ function App() {
               ),
               [{k:'age',label:'Âge (ans)',step:1},{k:'height',label:'Taille (cm)',step:1},{k:'weight',label:'Poids cycliste (kg)',step:0.1},{k:'bikeMass',label:'Poids vélo (kg)',step:0.1},{k:'fcMax',label:'FC max (bpm)',step:1},{k:'fcRest',label:'FC repos (bpm)',step:1},{k:'ftp',label:'FTP vélo (W)',step:1}].map(f=>
                 h('div',{key:f.k,style:{display:'flex',flexDirection:'column',gap:'7px'}},
-                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},f.label),
-                  h('input',{type:'number',step:f.step,value:profile[f.k]??'',onChange:e=>{const v=e.target.value;setProfile(p=>({...p,[f.k]:v===''?'':Number(v)}));},style:{width:'100%',padding:'10px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600',fontVariantNumeric:'tabular-nums'}})
+                  h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px'}},
+                    h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},f.label),
+                    f.k==='ftp'&&ftpEstimated&&h('button',{type:'button',
+                      onClick:()=>setProfile(p=>({...p,ftp:ftpEstimated})),
+                      style:{padding:'2px 8px',border:'2px solid #ec3013',background:'transparent',color:'#ec3013',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer',whiteSpace:'nowrap'},
+                      title:'Appliquer la FTP estimée depuis tes données vélo',
+                      onMouseEnter:e=>{e.currentTarget.style.background='#fdf1ee';},
+                      onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
+                    },'Est. '+ftpEstimated+' W →')
+                  ),
+                  h('input',{type:'number',step:f.step,value:profile[f.k]??'',onChange:e=>{const v=e.target.value;setProfile(p=>({...p,[f.k]:v===''?'':Number(v)}));},style:{width:'100%',padding:'10px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600',fontVariantNumeric:'tabular-nums'}}),
+                  f.k==='ftp'&&ftpEstimated&&h('p',{style:{margin:'4px 0 0',fontSize:'11px',color:'#605d5d'}},
+                    'Estimé d\'après la meilleure sortie vélo 20–60 min × 0.95 · masse '+((Number(profile.weight)||0)+(Number(profile.bikeMass)||0)).toFixed(1)+' kg'
+                  )
                 )
               )
             ),
