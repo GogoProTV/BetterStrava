@@ -218,13 +218,10 @@ function App() {
   const [profile, setProfile] = useState({ name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '' });
   const [race, setRace] = useState({ type: 'Marathon', date: '2026-09-12', values: defaultValues('Marathon') });
 
-  // ── Activity detail (streams) ────────────────────────────────────────────
-  const [selectedActivity, setSelectedActivity] = useState(null);
-  const [streams, setStreams] = useState(null);
-  const [streamsLoading, setStreamsLoading] = useState(false);
-  const [streamsError, setStreamsError] = useState('');
-  const streamChartRef = useRef(null);
-  const streamChartInst = useRef(null);
+  // ── Accordéon inline ─────────────────────────────────────────────────────
+  const [openRowId, setOpenRowId] = useState(null);
+  const [rowStreams, setRowStreams] = useState({}); // id → streams | 'loading' | { error: msg }
+  const rowChartInsts = useRef({});
 
   const lineRef = useRef(null); const barRef = useRef(null); const dailyRef = useRef(null);
   const zoneRef = useRef(null); const powerRef = useRef(null); const paceRef = useRef(null);
@@ -311,105 +308,70 @@ function App() {
     loadLocal();
   }, []);
 
-  // ── Load streams for selected activity ───────────────────────────────────
-  async function loadStreams(act) {
-    setSelectedActivity(act); setStreams(null); setStreamsError(''); setStreamsLoading(true);
+  // ── Toggle accordéon + chargement streams ────────────────────────────────
+  async function toggleRow(act) {
+    const id = act.id;
+    if (openRowId === id) {
+      setOpenRowId(null);
+      if (rowChartInsts.current[id]) { rowChartInsts.current[id].destroy(); delete rowChartInsts.current[id]; }
+      return;
+    }
+    setOpenRowId(id);
+    if (rowStreams[id] && rowStreams[id] !== 'loading') return;
+    setRowStreams(prev => ({ ...prev, [id]: 'loading' }));
     const token = localStorage.getItem('strava_token');
     if (!token) {
-      setStreamsLoading(false);
-      setStreamsError('Connecte Strava pour charger les données seconde par seconde.');
+      setRowStreams(prev => ({ ...prev, [id]: { error: 'Connecte Strava pour charger les données seconde par seconde.' } }));
       return;
     }
     try {
       const tk = await freshToken(token);
       const keys = 'heartrate,altitude,velocity_smooth,distance,time';
-      const res = await stravaApi('/activities/' + act.id + '/streams?keys=' + encodeURIComponent(keys) + '&key_by_type=true', tk);
+      const res = await stravaApi('/activities/' + id + '/streams?keys=' + encodeURIComponent(keys) + '&key_by_type=true', tk);
       if (!res || res.errors) throw new Error((res && res.message) ? res.message : 'Streams indisponibles');
-      setStreams(res);
+      setRowStreams(prev => ({ ...prev, [id]: res }));
     } catch (e) {
-      setStreamsError('Donnée manquante — ' + e.message);
-    } finally {
-      setStreamsLoading(false);
+      setRowStreams(prev => ({ ...prev, [id]: { error: 'Donnée manquante — ' + e.message } }));
     }
   }
 
-  function closeDetail() { setSelectedActivity(null); setStreams(null); setStreamsError(''); }
-
-  // ── Draw stream chart ────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!selectedActivity || !streams) return;
-    if (streamChartInst.current) { streamChartInst.current.destroy(); streamChartInst.current = null; }
-    if (!streamChartRef.current) return;
+  // ── Dessiner le graphique accordéon ──────────────────────────────────────
+  function drawRowChart(id, act, streamsData, canvasEl) {
+    if (!canvasEl) return;
+    if (rowChartInsts.current[id]) { rowChartInsts.current[id].destroy(); delete rowChartInsts.current[id]; }
     chartDefaults();
-
-    const timeData = (streams.time && streams.time.data) || [];
-    const hrData = (streams.heartrate && streams.heartrate.data) || [];
-    const altData = (streams.altitude && streams.altitude.data) || [];
-    const velData = (streams.velocity_smooth && streams.velocity_smooth.data) || [];
-    const distData = (streams.distance && streams.distance.data) || [];
-
-    // Thin to max ~800 pts for performance
+    const timeData = (streamsData.time && streamsData.time.data) || [];
+    const hrData = (streamsData.heartrate && streamsData.heartrate.data) || [];
+    const altData = (streamsData.altitude && streamsData.altitude.data) || [];
+    const velData = (streamsData.velocity_smooth && streamsData.velocity_smooth.data) || [];
+    const distData = (streamsData.distance && streamsData.distance.data) || [];
     const N = Math.max(1, Math.floor(timeData.length / 800));
     const thin = arr => arr.filter((_, i) => i % N === 0);
     const thinDist = thin(distData);
     const thinTime = thin(timeData);
     const usesDist = thinDist.length === thinTime.length && thinDist.length > 0;
-    const xLabels = usesDist
-      ? thinDist.map(d => (d / 1000).toFixed(2))
-      : thinTime.map(t => (t / 60).toFixed(1));
-
+    const xLabels = usesDist ? thinDist.map(d => (d / 1000).toFixed(2)) : thinTime.map(t => (t / 60).toFixed(1));
     const datasets = [];
-    if (hrData.length) datasets.push({
-      label: 'FC (bpm)', data: thin(hrData),
-      borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'rgba(236,48,19,0.07)',
-      fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true,
-    });
-    if (altData.length) datasets.push({
-      label: 'Altitude (m)', data: thin(altData),
-      borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)',
-      fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true,
-    });
+    if (hrData.length) datasets.push({ label: 'FC (bpm)', data: thin(hrData), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'rgba(236,48,19,0.07)', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
+    if (altData.length) datasets.push({ label: 'Altitude (m)', data: thin(altData), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
     if (velData.length) {
-      const isBike = selectedActivity.sport === 'Vélo';
-      const conv = isBike
-        ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null
-        : v => v > 0 ? Math.round((1000 / 60 / v) * 100) / 100 : null;
-      datasets.push({
-        label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv),
-        borderColor: '#bab6b6', borderWidth: 1.5, backgroundColor: 'transparent',
-        fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true,
-      });
+      const isBike = act.sport === 'Vélo';
+      const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => v > 0 ? Math.round((1000 / 60 / v) * 100) / 100 : null;
+      datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv), borderColor: '#bab6b6', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
-
-    const scales = {
-      x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } },
-    };
+    const scales = { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } } };
     if (hrData.length) scales.yHr = { position: 'left', grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
     if (altData.length) scales.yAlt = { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
     if (velData.length) {
-      const isBike = selectedActivity.sport === 'Vélo';
-      scales.yPace = {
-        position: 'right', reverse: !isBike, grid: { display: false }, border: { display: false },
-        title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#bab6b6' },
-        ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {},
-      };
+      const isBike = act.sport === 'Vélo';
+      scales.yPace = { position: 'right', reverse: !isBike, grid: { display: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#bab6b6' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
     }
-
-    streamChartInst.current = new Chart(streamChartRef.current, {
+    rowChartInsts.current[id] = new Chart(canvasEl, {
       type: 'line', plugins: [crosshairPlugin],
       data: { labels: xLabels, datasets },
-      options: {
-        responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
-        interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 },
-        plugins: {
-          legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } },
-          tooltip: { enabled: true, animation: false, backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true },
-        },
-        scales,
-      },
+      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 }, plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } }, tooltip: { enabled: true, animation: false, backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true } }, scales },
     });
-    return () => { if (streamChartInst.current) { streamChartInst.current.destroy(); streamChartInst.current = null; } };
-  }, [selectedActivity, streams]);
+  }
 
   // ── Export CSV ────────────────────────────────────────────────────────────
   function exportCsv() {
@@ -421,7 +383,6 @@ function App() {
     URL.revokeObjectURL(url);
   }
 
-  // ── Charts helpers ────────────────────────────────────────────────────────
   function filtered(d, rangeDays, sp) {
     const cutoff = Date.now() - rangeDays * 86400000;
     return d.filter(a => a.date.getTime() >= cutoff && (sp === 'Tous' || a.sport === sp));
@@ -446,10 +407,8 @@ function App() {
       return best;
     });
   }
-
   const PACE_DISTANCES = [{ d:1,l:'1 km'},{d:2,l:'2 km'},{d:5,l:'5 km'},{d:10,l:'10 km'},{d:15,l:'15 km'},{d:21.1,l:'Semi'},{d:30,l:'30 km'},{d:42.2,l:'Marathon'}];
   const HR_BINS = [{ min:100,max:120,l:'100-120'},{min:120,max:130,l:'120-130'},{min:130,max:140,l:'130-140'},{min:140,max:150,l:'140-150'},{min:150,max:160,l:'150-160'},{min:160,max:170,l:'160-170'},{min:170,max:180,l:'170-180'},{min:180,max:200,l:'180+'}];
-
   function paceCurve(days, offset) {
     const end = Date.now()-(offset||0)*days*86400000, start = end-days*86400000;
     const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail')&&a.pace&&a.dist&&a.date.getTime()>=start&&a.date.getTime()<end);
@@ -461,7 +420,6 @@ function App() {
     return HR_BINS.map(b => { const inBin=acts.filter(a=>a.hr>=b.min&&a.hr<b.max); if (!inBin.length) return null; const km=inBin.reduce((s,a)=>s+a.dist,0), hh=inBin.reduce((s,a)=>s+a.time,0)/60; return hh?Math.round((km/hh)*10)/10:null; });
   }
 
-  // Fitness chart — vide (calcul CTL/ATL supprimé)
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Condition physique') return;
     chartDefaults();
@@ -532,7 +490,6 @@ function App() {
     return () => destroyChart('hr');
   }, [tab, athleteSection, data, hrRange, hrCompare]);
 
-  // Activities charts
   useEffect(() => {
     if (tab!=='activites') return;
     chartDefaults();
@@ -550,22 +507,18 @@ function App() {
     const datasets = [{ label:'Distance (km)', data:vals, borderColor:'#ec3013', borderWidth:2, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.25, pointRadius:3.5, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, yAxisID:'y' }];
     if (showElev) datasets.push({ label:'D+ (m)', data:elevVals, borderColor:'#201e1d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#201e1d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y1' });
     upsert('line', lineRef, { type:'line', data:{labels,datasets}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:false}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Distance (km)',color:'#605d5d'}},y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}}} } });
-
     const days=[]; const dayStart=new Date(); dayStart.setHours(0,0,0,0);
     for(let i=range-1;i>=0;i--) days.push(new Date(dayStart.getTime()-i*86400000));
     const perDay=new Map();
     data.forEach(a=>{if(sport!=='Tous'&&a.sport!==sport)return;const k=a.date.toDateString();perDay.set(k,(perDay.get(k)||0)+a.time);});
     upsert('daily', dailyRef, { type:'bar', data:{labels:days.map(d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})),datasets:[{data:days.map(d=>Math.round(perDay.get(d.toDateString())||0)),backgroundColor:days.map(d=>d.getDay()===0||d.getDay()===6?'#605d5d':'#ec3013'),borderWidth:0,barPercentage:1,categoryPercentage:0.82}]}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:false,callbacks:{label:c=>c.parsed.y+' min'}}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,autoSkipPadding:28},title:{display:true,text:'Jours',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Minutes / jour',color:'#605d5d'}}} } });
-
     const sports=['Course','Trail','Vélo','Natation'];
     const shades={Course:'#ec3013',Trail:'#ff9783','Vélo':'#605d5d',Natation:'#bab6b6'};
     const zoneMin=zoneMinutes(acts,profile.fcMax);
     upsert('zone', zoneRef, { type:'doughnut', data:{labels:zoneMin.map(z=>z.label),datasets:[{data:zoneMin.map(z=>z.min),backgroundColor:zoneMin.map(z=>z.color),borderColor:'#f3f2f2',borderWidth:2}]}, options:{ responsive:true, maintainAspectRatio:false, cutout:'46%', plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.label+' · '+Math.round(c.parsed/60)+' h ('+Math.round((c.parsed/zoneMin.reduce((s,z)=>s+z.min,0))*100)+' %)'}}} } });
-
     const splitKeys=[...buckets.keys()];
     const shown=sport==='Tous'?sports:[sport];
     upsert('bar', barRef, { type:'bar', data:{labels,datasets:shown.map(sp=>({label:sp,backgroundColor:shades[sp],borderWidth:0,data:splitKeys.map(k=>Math.round(acts.filter(a=>a.sport===sp&&keyOf(a.date)===k).reduce((s,a)=>s+a.time/60,0)*10)/10)}))}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:shown.length>1,position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true}}, scales:{x:{stacked:true,grid:{display:false},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{stacked:true,grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Heures',color:'#605d5d'}}} } });
-
     return () => { destroyChart('line'); destroyChart('daily'); destroyChart('zone'); destroyChart('bar'); };
   }, [tab, data, range, sport, showElev, profile.fcMax]);
 
@@ -593,11 +546,7 @@ function App() {
         const d=new Date(s.getTime()+i*86400000);
         const sessions=cur.list.filter(a=>a.date.toDateString()===d.toDateString()).map(a=>{
           const short={Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'};
-          return {
-            sport:short[a.sport]||a.sport, time:fmtH(a.time), workout:a.name||'Donnée manquante',
-            detail:a.dist?fmtNum(a.dist,1)+' km':'',
-            style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px solid #d7d3d3',background:'#eae9e9',color:'#201e1d'},
-          };
+          return { sport:short[a.sport]||a.sport, time:fmtH(a.time), workout:a.name||'Donnée manquante', detail:a.dist?fmtNum(a.dist,1)+' km':'', style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px solid #d7d3d3',background:'#eae9e9',color:'#201e1d'} };
         });
         const isToday=d.toDateString()===today.toDateString();
         return{dow,num:d.getDate(),sessions,empty:sessions.length===0,numStyle:{fontSize:'12px',fontWeight:'800',...(isToday?{padding:'1px 6px',background:'#201e1d',color:'#ffffff'}:{color:'#201e1d'})},cellStyle:{minWidth:0,padding:'8px 6px 8px',borderRight:'1px solid #d7d3d3',borderLeft:i>0?'0':undefined}};
@@ -639,11 +588,9 @@ function App() {
     );
   }
 
-  // ── Computed values ───────────────────────────────────────────────────────
   const powPeriods=[{label:'1 mois',value:30},{label:'3 mois',value:90},{label:'6 mois',value:180},{label:'1 an',value:365}];
   const powLabel=v=>(powPeriods.find(p=>p.value===v)||{}).label||'';
   const mkOptions=(list,current,setter)=>list.map(o=>({label:o.label,active:current===o.value,onClick:()=>setter(o.value)}));
-
   const now=Date.now();
   const cur90=data.filter(a=>a.date.getTime()>=now-90*86400000);
   const prev90=data.filter(a=>a.date.getTime()>=now-455*86400000&&a.date.getTime()<now-365*86400000);
@@ -653,14 +600,11 @@ function App() {
   const plan=24; const weeksDone=Math.max(0,plan-weeksLeft);
   const load90=sum(cur90,'time')/60, loadPrev=sum(prev90,'time')/60;
   const ready=Math.max(0,Math.min(99,Math.round(52+(weeksDone/plan)*34+(loadPrev>0?Math.min(12,((load90-loadPrev)/loadPrev)*30):0))));
-
   const acts=filtered(data,range,sport);
   const curW=window2(data,0,range,sport);
   const prevW=window2(data,1,range,sport);
-
   const smallStat={marginTop:'6px',fontSize:'14px',fontWeight:'600',color:'#605d5d',overflowWrap:'anywhere'};
   const fitStats=['Condition physique','Fatigue','Forme','Ratio charge'].map(l=>({label:l,value:'Donnée manquante',valueStyle:smallStat,sub:''}));
-
   const rows=acts.slice(0,expanded?40:8).map(a=>({
     id:a.id, act:a,
     date:a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}),
@@ -669,7 +613,6 @@ function App() {
     pace:!a.pace?'Donnée manquante':a.sport==='Natation'?fmtPace(a.pace/10)+'/100m':fmtPace(a.pace)+'/km',
     power:a.power?a.power+' W':'Donnée manquante',
   }));
-
   const zm=zoneMinutes(acts,profile.fcMax);
   const zmTotal=zm.reduce((s,z)=>s+z.min,0)||1;
 
@@ -678,7 +621,6 @@ function App() {
       options.map(o=>h('button',{key:o.label,type:'button',onClick:o.onClick,style:btnStyle(o.active),onMouseEnter:e=>e.currentTarget.style.background=o.active?'#ec3013':'#ffe0d9',onMouseLeave:e=>e.currentTarget.style.background=o.active?'#ec3013':'transparent'},o.label))
     );
   }
-
   const kpiDef=[
     {label:'Distance',unit:'km',get:l=>sum(l,'dist'),pace:false},
     {label:'Temps',unit:'h',get:l=>sum(l,'time')/60,pace:false},
@@ -692,7 +634,6 @@ function App() {
     const txt=!curW.length||!isFinite(c)||c===0?'Donnée manquante':k.pace?fmtPace(c):fmtNum(Math.round(c),0);
     return{label:k.label,unit:txt==='Donnée manquante'?'':k.unit,value:txt,delta:chip.text,deltaNote:'vs période précédente',deltaStyle:chip.style,valueStyle:{fontSize:txt.length>10?'15px':txt.length>5?'30px':'38px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'0.95'},cellStyle:{minWidth:0,padding:'24px 24px 28px',borderRight:i<3?'2px solid #201e1d':undefined}};
   });
-
   const p=profile;
   const bmi=p.height>0&&p.weight>0?Math.round((p.weight/Math.pow(p.height/100,2))*10)/10:null;
   const wkg=p.weight>0&&p.ftp>0?Math.round((p.ftp/p.weight)*100)/100:null;
@@ -703,60 +644,62 @@ function App() {
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
   const athleteSections=['Condition physique','Puissance','Allure','Fréquence cardiaque'];
 
-  // ── Activity detail panel ─────────────────────────────────────────────────
-  function ActivityDetail() {
-    if (!selectedActivity) return null;
-    const a=selectedActivity;
-    const hasStreams=streams&&!streamsLoading&&!streamsError;
-    const hrArr=hasStreams&&streams.heartrate&&streams.heartrate.data?streams.heartrate.data:[];
-    const altArr=hasStreams&&streams.altitude&&streams.altitude.data?streams.altitude.data:[];
-    const velArr=hasStreams&&streams.velocity_smooth&&streams.velocity_smooth.data?streams.velocity_smooth.data:[];
-    const totalSecs=hasStreams&&streams.time&&streams.time.data?streams.time.data[streams.time.data.length-1]:0;
-    const totalDistM=hasStreams&&streams.distance&&streams.distance.data?streams.distance.data[streams.distance.data.length-1]:0;
-    const totalDistKm=totalDistM?totalDistM/1000:0;
-    const avgHr=hrArr.length?Math.round(hrArr.reduce((s,v)=>s+v,0)/hrArr.length):null;
-    const maxHr=hrArr.length?Math.max(...hrArr):null;
-    const elevGain=altArr.length?Math.round(altArr.reduce((s,v,i)=>i>0&&v>altArr[i-1]?s+(v-altArr[i-1]):s,0)):null;
-    const hasHr=hrArr.length>0, hasAlt=altArr.length>0, hasVel=velArr.length>0;
+  // ── Composant accordéon d'une ligne ──────────────────────────────────────
+  function RowDetail({ act, id }) {
+    const canvasRef = useRef(null);
+    const st = rowStreams[id];
+    const isLoading = st === 'loading';
+    const isError = st && typeof st === 'object' && st.error;
+    const hasData = st && typeof st === 'object' && !st.error;
 
-    const kpis=[
-      {label:'Distance',value:fmtNum(totalDistKm||a.dist,1),unit:'km'},
-      {label:'Durée',value:Math.floor(a.time/60)+'h'+String(a.time%60).padStart(2,'0'),unit:''},
-      {label:'D+',value:elevGain!==null?'+'+fmtNum(elevGain,0):(a.elev?'+'+fmtNum(a.elev,0):'Donnée manquante'),unit:elevGain!==null||a.elev?'m':''},
-      {label:'FC moyenne',value:avgHr!==null?String(avgHr):(a.hr?String(a.hr):'Donnée manquante'),unit:avgHr!==null||a.hr?'bpm':''},
-      {label:'FC max',value:maxHr!==null?String(maxHr):'Donnée manquante',unit:maxHr!==null?'bpm':''},
-      {label:'Allure moy.',value:a.pace?fmtPace(a.pace):'Donnée manquante',unit:a.pace?'/km':''},
+    useEffect(() => {
+      if (!hasData || !canvasRef.current) return;
+      drawRowChart(id, act, st, canvasRef.current);
+      return () => {
+        if (rowChartInsts.current[id]) { rowChartInsts.current[id].destroy(); delete rowChartInsts.current[id]; }
+      };
+    }, [hasData]);
+
+    const hrArr = hasData && st.heartrate && st.heartrate.data ? st.heartrate.data : [];
+    const altArr = hasData && st.altitude && st.altitude.data ? st.altitude.data : [];
+    const velArr = hasData && st.velocity_smooth && st.velocity_smooth.data ? st.velocity_smooth.data : [];
+    const distArr = hasData && st.distance && st.distance.data ? st.distance.data : [];
+    const avgHr = hrArr.length ? Math.round(hrArr.reduce((s,v)=>s+v,0)/hrArr.length) : null;
+    const maxHr = hrArr.length ? Math.max(...hrArr) : null;
+    const elevGain = altArr.length ? Math.round(altArr.reduce((s,v,i)=>i>0&&v>altArr[i-1]?s+(v-altArr[i-1]):s,0)) : null;
+    const legendTxt = [hrArr.length&&'Rouge · FC', altArr.length&&'Noir · Altitude', velArr.length&&'Gris · Allure'].filter(Boolean).join(' · ');
+
+    const detailKpis = [
+      { label:'FC moyenne', value: avgHr!==null ? String(avgHr) : (act.hr ? String(act.hr) : 'Donnée manquante'), unit: avgHr!==null||act.hr ? 'bpm' : '' },
+      { label:'FC max', value: maxHr!==null ? String(maxHr) : 'Donnée manquante', unit: maxHr!==null ? 'bpm' : '' },
+      { label:'D+ streams', value: elevGain!==null ? '+'+fmtNum(elevGain,0) : 'Donnée manquante', unit: elevGain!==null ? 'm' : '' },
+      { label:'Allure moy.', value: act.pace ? fmtPace(act.pace) : 'Donnée manquante', unit: act.pace ? '/km' : '' },
+      { label:'Puissance', value: act.power ? act.power+' W' : 'Donnée manquante', unit: '' },
+      { label:'Charge', value: act.trainingLoad ? String(act.trainingLoad) : 'Donnée manquante', unit: '' },
     ];
-    const legendTxt=[hasHr&&'Rouge · FC',hasAlt&&'Noir · Altitude',hasVel&&'Gris · Allure'].filter(Boolean).join(' · ');
-    const descTxt=streamsLoading?'Chargement des données…':streamsError?streamsError:!hasStreams?'Donnée manquante — streams indisponibles pour cette activité.':[hasHr&&'Fréquence cardiaque',hasAlt&&'altitude',hasVel&&'allure'].filter(Boolean).join(', ')+' enregistrés.'+(totalSecs?' '+Math.round(totalSecs/60)+' min de données.':'');
 
-    return h('div',{style:{position:'fixed',inset:0,zIndex:200,display:'flex',flexDirection:'column',background:'#f3f2f2'}},
-      h('header',{style:{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'24px',minHeight:'108px',boxSizing:'border-box',padding:'24px 32px',borderBottom:'2px solid #201e1d',flexShrink:0}},
-        h('div',{style:{display:'flex',flexDirection:'column',gap:'4px',minWidth:0}},
-          h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.14em',textTransform:'uppercase',color:'#ec3013'}},a.sport+' · '+a.date.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})),
-          h('h1',{style:{margin:0,fontSize:'26px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.05',overflowWrap:'anywhere'}},a.name||'Donnée manquante')
-        ),
-        h('button',{type:'button',onClick:closeDetail,style:{flexShrink:0,padding:'10px 18px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'},onMouseEnter:e=>{e.currentTarget.style.background='#ffe0d9';e.currentTarget.style.borderColor='#ec3013';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.borderColor='#201e1d';}},'← Retour')
-      ),
-      h('section',{style:{display:'grid',gridTemplateColumns:'repeat(6, minmax(0,1fr))',borderBottom:'2px solid #201e1d',flexShrink:0}},
-        kpis.map((kpi,i)=>h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<5?'1px solid #d7d3d3':undefined}},
-          h('span',{style:{display:'block',fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},kpi.label),
-          h('div',{style:{display:'flex',alignItems:'baseline',gap:'6px',marginTop:'10px'}},
-            h('span',{style:{fontSize:kpi.value.length>10?'16px':'26px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},kpi.value),
-            kpi.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},kpi.unit)
-          )
-        ))
-      ),
-      h('div',{style:{flex:1,minHeight:0,padding:'28px 32px 32px',overflow:'auto'}},
-        h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'10px'}},
-          h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Données seconde par seconde'),
-          h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},legendTxt)
-        ),
-        h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},descTxt),
-        h('div',{style:{height:'calc(100vh - 400px)',minHeight:'320px'}},
-          streamsLoading
-            ?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',fontSize:'13px',color:'#605d5d'}},'Chargement des streams Strava…')
-            :h('canvas',{ref:streamChartRef})
+    return h('tr', { style:{ background:'#fdf1ee' } },
+      h('td', { colSpan: 7, style:{ padding:'0', borderBottom:'2px solid #201e1d' } },
+        h('div', { style:{ padding:'20px 0 24px 28px', borderTop:'1px solid #d7d3d3' } },
+          h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:'0', borderBottom:'1px solid #d7d3d3', marginBottom:'20px', marginRight:'0' } },
+            detailKpis.map((kpi,i) =>
+              h('div', { key:i, style:{ padding:'10px 14px 12px', borderRight: i<5 ? '1px solid #d7d3d3' : undefined } },
+                h('span', { style:{ display:'block', fontSize:'10px', fontWeight:'600', letterSpacing:'0.1em', textTransform:'uppercase', color:'#605d5d' } }, kpi.label),
+                h('div', { style:{ display:'flex', alignItems:'baseline', gap:'5px', marginTop:'6px' } },
+                  h('span', { style:{ fontSize:'18px', fontWeight:'800', letterSpacing:'-0.02em', lineHeight:'1' } }, kpi.value),
+                  kpi.unit && h('span', { style:{ fontSize:'12px', fontWeight:'600', color:'#605d5d' } }, kpi.unit)
+                )
+              )
+            )
+          ),
+          h('div', { style:{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:'16px', marginBottom:'8px', paddingRight:'32px' } },
+            h('span', { style:{ fontSize:'12px', fontWeight:'700', letterSpacing:'0.06em', textTransform:'uppercase' } }, 'Données seconde par seconde'),
+            h('span', { style:{ fontSize:'11px', letterSpacing:'0.08em', textTransform:'uppercase', color:'#605d5d' } }, legendTxt)
+          ),
+          isLoading && h('div', { style:{ height:'180px', display:'flex', alignItems:'center', fontSize:'12px', color:'#605d5d' } }, 'Chargement des streams Strava…'),
+          isError && h('div', { style:{ padding:'12px 0', fontSize:'12px', color:'#605d5d' } }, st.error),
+          !isLoading && !isError && !hasData && h('div', { style:{ padding:'12px 0', fontSize:'12px', color:'#605d5d' } }, 'Donnée manquante'),
+          hasData && h('div', { style:{ height:'200px', paddingRight:'32px' } }, h('canvas', { ref: canvasRef }))
         )
       )
     );
@@ -764,7 +707,6 @@ function App() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return h('div',{style:{display:'flex',alignItems:'flex-start',minHeight:'100vh',background:'#f3f2f2'}},
-    selectedActivity&&h(ActivityDetail),
 
     // ASIDE
     h('aside',{style:{flex:'0 0 260px',width:'260px',height:'100vh',position:'sticky',top:0,display:'flex',flexDirection:'column',borderRight:'2px solid #201e1d'}},
@@ -897,10 +839,7 @@ function App() {
         ),
         athleteSection==='Condition physique'&&h('div',null,
           h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
-            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},
-              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période de calcul'),
-              h(BtnRow,{options:mkOptions(powPeriods,fitRange,setFitRange)})
-            )
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période de calcul'),h(BtnRow,{options:mkOptions(powPeriods,fitRange,setFitRange)}))
           ),
           h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',borderBottom:'2px solid #201e1d'}},
             fitStats.map((st,i)=>h('div',{key:i,style:{minWidth:0,padding:'20px 32px 22px',borderRight:i<3?'1px solid #d7d3d3':undefined}},
@@ -910,10 +849,7 @@ function App() {
             ))
           ),
           h('section',{style:{padding:'28px 32px 32px'}},
-            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
-              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Condition physique, fatigue et forme'),
-              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : condition physique · Noir : fatigue · Gris : forme')
-            ),
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Condition physique, fatigue et forme'),h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : condition physique · Noir : fatigue · Gris : forme')),
             h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},'Donnée manquante — aucune activité importée.'),
             h('div',{style:{height:'calc(100vh - 440px)',minHeight:'340px'}},h('canvas',{ref:fitRef}))
           )
@@ -1019,6 +955,8 @@ function App() {
             h('div',{style:{height:'252px'}},h('canvas',{ref:dailyRef}))
           )
         ),
+
+        // ── Table des séances — accordéon inline ─────────────────────────────
         h('section',{style:{padding:'28px 32px 48px'}},
           h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'20px'}},
             h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Séances de la sélection'),
@@ -1027,31 +965,37 @@ function App() {
           h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'14px'}},
             h('thead',null,
               h('tr',{style:{borderTop:'2px solid #201e1d',borderBottom:'2px solid #201e1d'}},
-                ['Date','Sport','Distance','Temps','D+','Allure','Puissance',''].map((col,i)=>
-                  h('th',{key:i,style:{padding:i===0?'10px 12px 10px 0':i===7?'10px 0 10px 12px':'10px 12px',textAlign:i>1&&i<7?'right':'left',fontSize:'11px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},col)
+                ['Date','Sport','Distance','Temps','D+','Allure','Puissance'].map((col,i)=>
+                  h('th',{key:i,style:{padding:i===0?'10px 12px 10px 0':'10px 12px',textAlign:i>1?'right':'left',fontSize:'11px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},col)
                 )
               )
             ),
             h('tbody',null,
-              rows.map((row,ri)=>h('tr',{key:ri,style:{borderBottom:'1px solid #d7d3d3',cursor:'pointer'},
-                onMouseEnter:e=>{e.currentTarget.style.background='#fdf1ee';},
-                onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
-              },
-                h('td',{style:{padding:'12px 12px 12px 0',color:'#605d5d'}},row.date),
-                h('td',{style:{padding:'12px',fontWeight:'600'}},row.sport),
-                h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.dist),
-                h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.time),
-                h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.elev),
-                h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.pace),
-                h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums',color:'#605d5d'}},row.power),
-                h('td',{style:{padding:'12px 0 12px 12px'}},
-                  h('button',{type:'button',onClick:()=>loadStreams(row.act),
-                    style:{padding:'4px 10px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer',whiteSpace:'nowrap'},
-                    onMouseEnter:e=>{e.currentTarget.style.background='#ffe0d9';e.currentTarget.style.borderColor='#ec3013';e.currentTarget.style.color='#ec3013';},
-                    onMouseLeave:e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.borderColor='#201e1d';e.currentTarget.style.color='#201e1d';},
-                  },'Détail →')
-                )
-              ))
+              rows.flatMap((row,ri) => {
+                const isOpen = openRowId === row.id;
+                const items = [
+                  h('tr',{
+                    key:'row-'+ri,
+                    style:{borderBottom: isOpen?'0':'1px solid #d7d3d3', cursor:'pointer', background: isOpen?'#fdf1ee':'transparent'},
+                    onClick:() => toggleRow(row.act),
+                    onMouseEnter:e=>{ if(!isOpen) e.currentTarget.style.background='#fdf1ee'; },
+                    onMouseLeave:e=>{ if(!isOpen) e.currentTarget.style.background='transparent'; },
+                  },
+                    h('td',{style:{padding:'12px 12px 12px 0',color:'#605d5d'}},
+                      h('span',{style:{display:'inline-block',marginRight:'6px',fontSize:'9px',color:'#bab6b6',transition:'transform 0.15s',transform:isOpen?'rotate(90deg)':'rotate(0deg)',verticalAlign:'middle'}},'▶'),
+                      row.date
+                    ),
+                    h('td',{style:{padding:'12px',fontWeight:'600'}},row.sport),
+                    h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.dist),
+                    h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.time),
+                    h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.elev),
+                    h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.pace),
+                    h('td',{style:{padding:'12px 0 12px 12px',textAlign:'right',fontVariantNumeric:'tabular-nums',color:'#605d5d'}},row.power)
+                  )
+                ];
+                if (isOpen) items.push(h(RowDetail,{key:'detail-'+ri,act:row.act,id:row.id}));
+                return items;
+              })
             )
           ),
           h('div',{style:{display:'flex',alignItems:'center',gap:'16px',marginTop:'24px'}},
