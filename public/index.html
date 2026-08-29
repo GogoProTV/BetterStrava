@@ -387,22 +387,25 @@ function App() {
     const thinTime = thin(timeData);
     const usesDist = thinDist.length === thinTime.length && thinDist.length > 0;
     const xLabels = usesDist ? thinDist.map(d => (d / 1000).toFixed(2)) : thinTime.map(t => (t / 60).toFixed(1));
+    // Échelle altitude : min du tracé → min+1000 (fixe pour comparaison inter-activités)
+    const altMin = altData.length ? Math.floor(Math.min(...altData) / 10) * 10 : 0;
+    const altMax = altMin + 1000;
     const datasets = [];
     if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(hrData), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'rgba(236,48,19,0.07)', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
     if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(altData), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
     if (velData.length && vis.vel) {
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => v > 0 ? Math.round((1000 / 60 / v) * 100) / 100 : null;
-      datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv), borderColor: '#bab6b6', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
+      datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
     if (estPowData.length && vis.pow) {
       const smooth = arr => arr.map((_, i) => { const w=arr.slice(Math.max(0,i-7),i+8).filter(v=>v!==null&&v>=0); return w.length?Math.round(w.reduce((s,v)=>s+v,0)/w.length):null; });
-      datasets.push({ label: 'Puissance estimée (W)', data: smooth(thin(estPowData)), borderColor: '#605d5d', borderWidth: 1.5, borderDash: [4,3], backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
+      datasets.push({ label: 'Puissance estimée (W)', data: smooth(thin(estPowData)), borderColor: '#605d5d', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
     }
     const scales = { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } } };
     if (hrData.length && vis.fc)  scales.yHr  = { position: 'left',  grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
-    if (altData.length && vis.alt) scales.yAlt = { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
+    if (altData.length && vis.alt) scales.yAlt = { position: 'right', min: altMin, max: altMax, grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
     if (velData.length && vis.vel) {
-      scales.yPace = { position: 'right', reverse: !isBike, grid: { display: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#bab6b6' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
+      scales.yPace = { position: 'right', reverse: !isBike, grid: { display: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#3d3a3a' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
     }
     if (estPowData.length && vis.pow) scales.yPow = { position: 'left', grid: { display: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'W estimés', color: '#605d5d' } };
     rowChartInsts.current[id] = new Chart(canvasEl, {
@@ -683,14 +686,33 @@ function App() {
     {label:'Distance',unit:'km',get:l=>sum(l,'dist'),pace:false},
     {label:'Temps',unit:'h',get:l=>sum(l,'time')/60,pace:false},
     {label:'Dénivelé',unit:'m',get:l=>sum(l,'elev'),pace:false},
-    sport==='Vélo'?{label:'Puissance moy.',unit:'W',get:l=>{const p2=l.filter(a=>a.power);return p2.length?sum(p2,'power')/p2.length:0;},pace:false}:{label:'Allure moy.',unit:'/km',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d:0;},pace:true},
+    sport==='Vélo'
+      ? {label:'Puissance moy.',unit:'W',get:l=>{
+          const totalMassKpi=(Number(profile.weight)||0)+(Number(profile.bikeMass)||0);
+          if(totalMassKpi>0){
+            const rides=l.filter(a=>a.sport==='Vélo'&&a.dist&&a.time);
+            const pList=rides.map(a=>{const v=a.dist/(a.time/60);const slope=a.elev&&a.dist?(a.elev/(a.dist*1000))*100:0;return estimatePower(v,slope,totalMassKpi);}).filter(v=>v!==null);
+            return pList.length?pList.reduce((s,v)=>s+v,0)/pList.length:0;
+          }
+          const p2=l.filter(a=>a.power);return p2.length?sum(p2,'power')/p2.length:0;
+        },pace:false}
+      : sport==='Tous'
+        ? {label:'BPM moyen',unit:'bpm',get:l=>{const h2=l.filter(a=>a.hr);return h2.length?h2.reduce((s,a)=>s+a.hr,0)/h2.length:0;},pace:false}
+        : sport==='Natation'
+          ? {label:'Allure moy.',unit:'/km',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d:0;},pace:true}
+          : {label:'Allure moy.',unit:'/km',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d:0;},pace:true},
   ];
   const kpis=kpiDef.map((k,i)=>{
     const c=k.get(curW),pv=k.get(prevW);
     const pctv=pv>0?Math.round(((c-pv)/pv)*100):null;
     const chip=deltaChip(pctv,!k.pace);
-    const txt=!curW.length||!isFinite(c)||c===0?'Donnée manquante':k.pace?fmtPace(c):fmtNum(Math.round(c),0);
-    return{label:k.label,unit:txt==='Donnée manquante'?'':k.unit,value:txt,delta:chip.text,deltaNote:'vs période précédente',deltaStyle:chip.style,valueStyle:{fontSize:txt.length>10?'15px':txt.length>5?'30px':'38px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'0.95'},cellStyle:{minWidth:0,padding:'24px 24px 28px',borderRight:i<3?'2px solid #201e1d':undefined}};
+    const hasDelta = chip.text && chip.text!=='—' && chip.text!=='';
+    let txt;
+    if (!curW.length||!isFinite(c)||c===0) txt='Donnée manquante';
+    else if (k.unit==='bpm') txt=fmtNum(Math.round(c),0);
+    else if (k.pace) txt=fmtPace(c);
+    else txt=fmtNum(Math.round(c),0);
+    return{label:k.label,unit:txt==='Donnée manquante'?'':k.unit,value:txt,delta:chip.text,deltaNote:hasDelta?'vs période précédente':'',deltaStyle:chip.style,valueStyle:{fontSize:'30px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'0.95'},cellStyle:{minWidth:0,padding:'24px 24px 28px',borderRight:i<3?'2px solid #201e1d':undefined}};
   });
   const p=profile;
   const bmi=p.height>0&&p.weight>0?Math.round((p.weight/Math.pow(p.height/100,2))*10)/10:null;
@@ -761,7 +783,6 @@ function App() {
         { label:'D+ streams',    value: elevGain!==null?'+'+fmtNum(elevGain,0):'Donnée manquante', unit: elevGain!==null?'m':'' },
         { label:'Vitesse moy.',  value: act.dist&&act.time?fmtNum(act.dist/(act.time/60),1):'Donnée manquante', unit: act.dist&&act.time?'km/h':'' },
         { label:'W estimés moy.',value: avgEstPow!==null?String(avgEstPow):(act.power?String(act.power):'Donnée manquante'), unit: avgEstPow!==null?'W':'' },
-        { label:'W max estimés', value: maxEstPow!==null&&maxEstPow>0?String(maxEstPow):'Donnée manquante', unit: maxEstPow!==null&&maxEstPow>0?'W':'' },
         { label:'W/kg estimés',  value: wPerKg!==null?String(wPerKg):(wkg?String(wkg):'Donnée manquante'), unit: wPerKg!==null||wkg?'W/kg':'' },
         { label:'Charge',        value: act.trainingLoad?String(act.trainingLoad):'Donnée manquante', unit:'' },
       ];
@@ -787,7 +808,7 @@ function App() {
     const serieBtns = [
       hrArr.length   && { k:'fc',  label:'FC',        color:'#ec3013' },
       altArr.length  && { k:'alt', label:'Altitude',  color:'#201e1d' },
-      velArr.length  && { k:'vel', label: isBike?'Vitesse':'Allure', color:'#bab6b6' },
+      velArr.length  && { k:'vel', label: isBike?'Vitesse':'Allure', color:'#3d3a3a' },
       estPowArr.length && { k:'pow', label:'Puissance', color:'#605d5d' },
     ].filter(Boolean);
 
@@ -1065,7 +1086,7 @@ function App() {
             h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'20px'}},
               h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},range<=90?'Volume par semaine':'Volume par mois'),
               h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px'}},
-                h('button',{type:'button',onClick:()=>setShowElev(v=>!v),style:{padding:'4px 10px',border:'2px solid '+(showElev?'#ec3013':'#201e1d'),background:showElev?'#ec3013':'transparent',color:showElev?'#ffffff':'#201e1d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',cursor:'pointer'}},'D+'),
+                sport!=='Natation'&&h('button',{type:'button',onClick:()=>setShowElev(v=>!v),style:{padding:'4px 10px',border:'2px solid '+(showElev?'#ec3013':'#201e1d'),background:showElev?'#ec3013':'transparent',color:showElev?'#ffffff':'#201e1d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',cursor:'pointer'}},'D+'),
                 h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},range<=90?'Abscisse en semaines':'Abscisse en mois')
               )
             ),
