@@ -26,7 +26,7 @@ button { font-family: inherit; }
 <script>
 const { createElement: h, useState, useEffect, useRef, useCallback } = React;
 
-// ── helpers ─────────────────────────────────────────────────────────────────
+// ── helpers ──────────────────────────────────────────────────────────────────
 function weekStart(d) {
   const x = new Date(d);
   const day = (x.getDay() + 6) % 7;
@@ -42,8 +42,6 @@ function fmtPace(min) {
   return Math.floor(total / 60) + "'" + String(total % 60).padStart(2, '0') + '"';
 }
 function fmtH(min) { const h = Math.floor(min / 60); return h + 'h' + String(Math.round(min % 60)).padStart(2, '0'); }
-function fatigueColor(f) { return ['#ffe0d9', '#ffb3a3', '#f97a60', '#ec3013', '#ae1800'][Math.max(1, Math.min(5, f)) - 1]; }
-function fatigueInk(f) { return f >= 4 ? '#ffffff' : '#201e1d'; }
 function btnStyle(active) {
   return {
     padding: '9px 14px', border: '2px solid ' + (active ? '#ec3013' : '#201e1d'),
@@ -67,7 +65,6 @@ function deltaChip(pct, betterHigh) {
   const good = betterHigh ? pct > 0 : pct < 0;
   const flat = pct === 0;
   const bad = !good && !flat;
-  // Flèche vers le bas et texte négatif masqués — on n'affiche rien si mauvais
   return {
     text: bad ? '' : flat ? '—' : '+' + pct + '%',
     style: { padding: bad ? '0' : '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ffe0d9' : 'transparent', color: flat ? '#605d5d' : good ? '#ae1800' : 'transparent' },
@@ -88,8 +85,8 @@ function mapActivity(a) {
   const dist = (a.distance || 0) / 1000;
   const time = Math.round((a.moving_time || a.elapsed_time || 0) / 60);
   if (!time) return null;
-  const effort = a.suffer_score;
   return {
+    id: a.id,
     date: new Date(a.start_date_local || a.start_date),
     name: a.name || null, sport, dist: Math.round(dist * 10) / 10, time,
     elev: Math.round(a.total_elevation_gain || 0),
@@ -98,8 +95,7 @@ function mapActivity(a) {
     maxPower: a.max_watts ? Math.round(a.max_watts) : null,
     secs: a.moving_time || a.elapsed_time || 0,
     hr: a.average_heartrate ? Math.round(a.average_heartrate) : null,
-    fatigue: effort ? Math.max(1, Math.min(5, Math.ceil(effort / 40))) : null,
-    trainingLoad: effort || Math.round(time * 0.85),
+    trainingLoad: a.suffer_score || Math.round(time * 0.85),
     planned: false,
   };
 }
@@ -122,7 +118,6 @@ const RACE_CATALOG = {
   'Contre-la-montre vélo': { fields: [{k:'bike',label:'Distance (km)',v:40},{k:'bikeElev',label:'Dénivelé D+ (m)',v:250,step:10}]},
   'Natation eau libre': { fields: [{k:'swim',label:'Distance (km)',v:5,step:0.1},{k:'swimTemp',label:'Température (°C)',v:18}]},
 };
-
 function defaultValues(type) {
   const out = {};
   (RACE_CATALOG[type] || { fields: [] }).fields.forEach(f => { out[f.k] = f.v; });
@@ -131,25 +126,17 @@ function defaultValues(type) {
 
 // ── Strava API ────────────────────────────────────────────────────────────────
 const BASE = '/.netlify/functions';
-// client_id est public — hardcodé pour éviter la dépendance réseau au chargement
 const STRAVA_CLIENT_ID = '274766';
 const STRAVA_REDIRECT = 'https://betterstrava.netlify.app/';
 
 async function resolveClientId() {
   if (STRAVA_CLIENT_ID) return STRAVA_CLIENT_ID;
-  try {
-    const cfg = await fetch(BASE + '/strava-config').then(r => r.json());
-    if (cfg && cfg.client_id) return String(cfg.client_id);
-  } catch (e) {}
+  try { const cfg = await fetch(BASE + '/strava-config').then(r => r.json()); if (cfg && cfg.client_id) return String(cfg.client_id); } catch (e) {}
   return '';
 }
-
 function stravaApi(path, token) {
-  return fetch(BASE + '/strava-api?path=' + encodeURIComponent(path), {
-    headers: { authorization: 'Bearer ' + token },
-  }).then(r => r.json());
+  return fetch(BASE + '/strava-api?path=' + encodeURIComponent(path), { headers: { authorization: 'Bearer ' + token } }).then(r => r.json());
 }
-
 async function freshToken(token) {
   const exp = Number(localStorage.getItem('strava_expires_at') || 0);
   const refresh = localStorage.getItem('strava_refresh_token');
@@ -182,7 +169,6 @@ const crosshairPlugin = {
     ctx.lineWidth = 1; ctx.strokeStyle = '#201e1d'; ctx.stroke(); ctx.restore();
   },
 };
-
 function chartDefaults() {
   Chart.defaults.font.family = 'Archivo, system-ui, sans-serif';
   Chart.defaults.font.size = 11;
@@ -208,29 +194,6 @@ function zoneMinutes(list, fcMax) {
   return defs;
 }
 
-// ── fitness series ───────────────────────────────────────────────────────────
-function fitnessSeries(data, days) {
-  const end = new Date(); end.setHours(0, 0, 0, 0);
-  const warmup = 42;
-  const startCalc = new Date(end.getTime() - (days + warmup) * 86400000);
-  const daily = new Map();
-  data.forEach(a => {
-    if (a.date < startCalc) return;
-    const k = new Date(a.date); k.setHours(0, 0, 0, 0);
-    const key = k.getTime();
-    daily.set(key, (daily.get(key) || 0) + (a.trainingLoad || 0));
-  });
-  let ctl = 0, atl = 0;
-  const out = [];
-  for (let t = startCalc.getTime(); t <= end.getTime(); t += 86400000) {
-    const load = daily.get(t) || 0;
-    ctl = ctl + (load - ctl) / 42;
-    atl = atl + (load - atl) / 7;
-    out.push({ t, ctl: Math.round(ctl * 10) / 10, atl: Math.round(atl * 10) / 10, tsb: Math.round((ctl - atl) * 10) / 10 });
-  }
-  return out.slice(warmup);
-}
-
 // ── Main App ─────────────────────────────────────────────────────────────────
 function App() {
   const [tab, setTab] = useState('programme');
@@ -242,70 +205,60 @@ function App() {
   const [range, setRange] = useState(180);
   const [showElev, setShowElev] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [powRange, setPowRange] = useState(90);
+  const [powCompare, setPowCompare] = useState(365);
+  const [paceRange, setPaceRange] = useState(90);
+  const [paceCompare, setPaceCompare] = useState(365);
+  const [hrRange, setHrRange] = useState(90);
+  const [hrCompare, setHrCompare] = useState(365);
   const [fitRange, setFitRange] = useState(90);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const [data, setData] = useState([]);
-  const [profile, setProfile] = useState(() => {
-    try {
-      const saved = localStorage.getItem('bs_profile');
-      if (saved) return { name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '', ...JSON.parse(saved) };
-    } catch (e) {}
-    return { name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '' };
-  });
+  const [profile, setProfile] = useState({ name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '' });
   const [race, setRace] = useState({ type: 'Marathon', date: '2026-09-12', values: defaultValues('Marathon') });
 
-  // Persistance automatique du profil dans localStorage
-  useEffect(() => {
-    try { localStorage.setItem('bs_profile', JSON.stringify(profile)); } catch (e) {}
-  }, [profile]);
+  // ── Activity detail (streams) ────────────────────────────────────────────
+  const [selectedActivity, setSelectedActivity] = useState(null);
+  const [streams, setStreams] = useState(null);
+  const [streamsLoading, setStreamsLoading] = useState(false);
+  const [streamsError, setStreamsError] = useState('');
+  const streamChartRef = useRef(null);
+  const streamChartInst = useRef(null);
 
-  const lineRef = useRef(null);
-  const barRef = useRef(null);
-  const dailyRef = useRef(null);
-  const zoneRef = useRef(null);
-  const fitRef = useRef(null);
+  const lineRef = useRef(null); const barRef = useRef(null); const dailyRef = useRef(null);
+  const zoneRef = useRef(null); const powerRef = useRef(null); const paceRef = useRef(null);
+  const hrRef = useRef(null); const fitRef = useRef(null);
   const charts = useRef({});
 
-  function destroyChart(key) {
-    if (charts.current[key]) { charts.current[key].destroy(); charts.current[key] = null; }
-  }
-  function upsert(key, ref, cfg) {
-    if (!ref.current) return;
-    destroyChart(key);
-    charts.current[key] = new Chart(ref.current, cfg);
-  }
+  function destroyChart(key) { if (charts.current[key]) { charts.current[key].destroy(); charts.current[key] = null; } }
+  function upsert(key, ref, cfg) { if (!ref.current) return; destroyChart(key); charts.current[key] = new Chart(ref.current, cfg); }
 
   function applyAthlete(a) {
     setProfile(p => ({
       ...p,
       name: [a.firstname, a.lastname].filter(Boolean).join(' ') || p.name,
       gender: a.sex === 'F' ? 'Femme' : a.sex === 'M' ? 'Homme' : p.gender,
-      weight: a.weight || p.weight,
-      ftp: a.ftp || p.ftp,
+      weight: a.weight || p.weight, ftp: a.ftp || p.ftp,
     }));
   }
 
-  // ── Strava OAuth ───────────────────────────────────────────────────────────
+  // ── Strava OAuth ─────────────────────────────────────────────────────────
   const connect = useCallback(async () => {
     setStatus('loading'); setError('');
     const id = await resolveClientId();
     if (!id) { setStatus('error'); setError('Identifiant client Strava indisponible côté serveur.'); return; }
-    // Redirect URI fixe vers Netlify — Strava exige que ça corresponde exactement à l'URL enregistrée
-    const redirect = STRAVA_REDIRECT;
     window.location.href = 'https://www.strava.com/oauth/authorize?client_id=' + encodeURIComponent(id) +
-      '&response_type=code&redirect_uri=' + encodeURIComponent(redirect) +
+      '&response_type=code&redirect_uri=' + encodeURIComponent(STRAVA_REDIRECT) +
       '&approval_prompt=auto&scope=activity:read_all,profile:read_all';
   }, []);
 
   const disconnect = useCallback(() => {
-    localStorage.removeItem('strava_token');
-    localStorage.removeItem('strava_refresh_token');
-    localStorage.removeItem('strava_expires_at');
+    localStorage.removeItem('strava_token'); localStorage.removeItem('strava_refresh_token'); localStorage.removeItem('strava_expires_at');
     setData([]); setStatus('idle'); setError('');
   }, []);
 
-  // ── Init Strava (OAuth callback + token refresh) ───────────────────────────
+  // ── Init Strava ───────────────────────────────────────────────────────────
   useEffect(() => {
     async function init() {
       const params = new URLSearchParams(window.location.search);
@@ -338,18 +291,11 @@ function App() {
           acts.push(...batch);
           if (batch.length < 200) break;
         }
-        const mapped = acts.map(a => {
-          const m = mapActivity(a);
-          if (m) m.id = a.id; // conserver l'id Strava pour les streams
-          return m;
-        }).filter(Boolean).sort((x, y) => y.date - x.date);
+        const mapped = acts.map(a => mapActivity(a)).filter(Boolean).sort((x, y) => y.date - x.date);
         setData(mapped); setStatus(mapped.length ? 'ready' : 'empty');
-        // Lancer le chargement des streams en arrière-plan
-        if (mapped.length) loadStreams(mapped, token);
       } catch (e) { setStatus('error'); setError(e.message); }
     }
     init();
-    // Try local file if no Strava
     async function loadLocal() {
       try {
         const res = await fetch('donnees-strava.json', { cache: 'no-store' });
@@ -365,736 +311,823 @@ function App() {
     loadLocal();
   }, []);
 
-  // ── Export CSV ─────────────────────────────────────────────────────────────
+  // ── Load streams for selected activity ───────────────────────────────────
+  async function loadStreams(act) {
+    setSelectedActivity(act); setStreams(null); setStreamsError(''); setStreamsLoading(true);
+    const token = localStorage.getItem('strava_token');
+    if (!token) {
+      setStreamsLoading(false);
+      setStreamsError('Connecte Strava pour charger les données seconde par seconde.');
+      return;
+    }
+    try {
+      const tk = await freshToken(token);
+      const keys = 'heartrate,altitude,velocity_smooth,distance,time';
+      const res = await stravaApi('/activities/' + act.id + '/streams?keys=' + encodeURIComponent(keys) + '&key_by_type=true', tk);
+      if (!res || res.errors) throw new Error((res && res.message) ? res.message : 'Streams indisponibles');
+      setStreams(res);
+    } catch (e) {
+      setStreamsError('Donnée manquante — ' + e.message);
+    } finally {
+      setStreamsLoading(false);
+    }
+  }
+
+  function closeDetail() { setSelectedActivity(null); setStreams(null); setStreamsError(''); }
+
+  // ── Draw stream chart ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedActivity || !streams) return;
+    if (streamChartInst.current) { streamChartInst.current.destroy(); streamChartInst.current = null; }
+    if (!streamChartRef.current) return;
+    chartDefaults();
+
+    const timeData = (streams.time && streams.time.data) || [];
+    const hrData = (streams.heartrate && streams.heartrate.data) || [];
+    const altData = (streams.altitude && streams.altitude.data) || [];
+    const velData = (streams.velocity_smooth && streams.velocity_smooth.data) || [];
+    const distData = (streams.distance && streams.distance.data) || [];
+
+    // Thin to max ~800 pts for performance
+    const N = Math.max(1, Math.floor(timeData.length / 800));
+    const thin = arr => arr.filter((_, i) => i % N === 0);
+    const thinDist = thin(distData);
+    const thinTime = thin(timeData);
+    const usesDist = thinDist.length === thinTime.length && thinDist.length > 0;
+    const xLabels = usesDist
+      ? thinDist.map(d => (d / 1000).toFixed(2))
+      : thinTime.map(t => (t / 60).toFixed(1));
+
+    const datasets = [];
+    if (hrData.length) datasets.push({
+      label: 'FC (bpm)', data: thin(hrData),
+      borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'rgba(236,48,19,0.07)',
+      fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true,
+    });
+    if (altData.length) datasets.push({
+      label: 'Altitude (m)', data: thin(altData),
+      borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)',
+      fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true,
+    });
+    if (velData.length) {
+      const isBike = selectedActivity.sport === 'Vélo';
+      const conv = isBike
+        ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null
+        : v => v > 0 ? Math.round((1000 / 60 / v) * 100) / 100 : null;
+      datasets.push({
+        label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv),
+        borderColor: '#bab6b6', borderWidth: 1.5, backgroundColor: 'transparent',
+        fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true,
+      });
+    }
+
+    const scales = {
+      x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } },
+    };
+    if (hrData.length) scales.yHr = { position: 'left', grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
+    if (altData.length) scales.yAlt = { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
+    if (velData.length) {
+      const isBike = selectedActivity.sport === 'Vélo';
+      scales.yPace = {
+        position: 'right', reverse: !isBike, grid: { display: false }, border: { display: false },
+        title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#bab6b6' },
+        ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {},
+      };
+    }
+
+    streamChartInst.current = new Chart(streamChartRef.current, {
+      type: 'line', plugins: [crosshairPlugin],
+      data: { labels: xLabels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
+        interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 },
+        plugins: {
+          legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } },
+          tooltip: { enabled: true, animation: false, backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true },
+        },
+        scales,
+      },
+    });
+    return () => { if (streamChartInst.current) { streamChartInst.current.destroy(); streamChartInst.current = null; } };
+  }, [selectedActivity, streams]);
+
+  // ── Export CSV ────────────────────────────────────────────────────────────
   function exportCsv() {
     const acts = filtered(data, range, sport);
-    const head = 'date,sport,distance_km,duree_min,denivele_m,allure_min_km,puissance_w,fc_moy,fatigue\n';
-    const body = acts.map(a => [a.date.toISOString().slice(0, 10), a.sport, a.dist, a.time, a.elev, Math.round(a.pace * 100) / 100, a.power || '', a.hr, a.fatigue].join(',')).join('\n');
+    const head = 'date,sport,distance_km,duree_min,denivele_m,allure_min_km,puissance_w,fc_moy\n';
+    const body = acts.map(a => [a.date.toISOString().slice(0, 10), a.sport, a.dist, a.time, a.elev, Math.round(a.pace * 100) / 100, a.power || '', a.hr].join(',')).join('\n');
     const url = URL.createObjectURL(new Blob([head + body], { type: 'text/csv' }));
-    const link = document.createElement('a');
-    link.href = url; link.download = 'analyse-entrainement.csv'; link.click();
+    const link = document.createElement('a'); link.href = url; link.download = 'analyse-entrainement.csv'; link.click();
     URL.revokeObjectURL(url);
   }
 
-  // ── Charts ─────────────────────────────────────────────────────────────────
+  // ── Charts helpers ────────────────────────────────────────────────────────
   function filtered(d, rangeDays, sp) {
     const cutoff = Date.now() - rangeDays * 86400000;
     return d.filter(a => a.date.getTime() >= cutoff && (sp === 'Tous' || a.sport === sp));
   }
-
   function window2(d, offset, rangeDays, sp) {
     const end = Date.now() - offset * rangeDays * 86400000;
     const start = end - rangeDays * 86400000;
     return d.filter(a => a.date.getTime() >= start && a.date.getTime() < end && (sp === 'Tous' || a.sport === sp));
   }
 
-  // ── Streams Strava (allure sec/sec, BPM, altitude) ─────────────────────────
-  // Appelé après le chargement des activités quand Strava est connecté.
-  // Fetche les streams des 30 activités les plus récentes et les stocke.
-  async function loadStreams(acts, token) {
-    setStreamsStatus('loading');
-    const recent = acts.slice(0, 30);
-    const result = {};
-    let loaded = 0;
-    for (const a of recent) {
-      try {
-        const raw = await stravaApi(
-          '/activities/' + a.id + '/streams?keys=velocity_smooth,heartrate,altitude,time&key_by_type=true',
-          token
-        );
-        if (raw && !raw.errors) {
-          result[a.id] = {
-            time:     (raw.time     || raw['time'])     ? (raw.time     || raw['time']).data     : [],
-            velocity: (raw.velocity_smooth             ) ? raw.velocity_smooth.data               : [],
-            heartrate:(raw.heartrate                   ) ? raw.heartrate.data                     : [],
-            altitude: (raw.altitude                    ) ? raw.altitude.data                      : [],
-          };
-        }
-      } catch (e) { /* stream indisponible pour cette activité */ }
-      loaded++;
-      if (loaded % 5 === 0) setStreams({ ...result }); // mise à jour progressive
-    }
-    setStreams({ ...result });
-    setStreamsStatus('done');
+  const POWER_DURATIONS = [
+    { s:5,l:'5 s' },{ s:15,l:'15 s' },{ s:30,l:'30 s' },{ s:60,l:'1 min' },
+    { s:120,l:'2 min' },{ s:300,l:'5 min' },{ s:600,l:'10 min' },{ s:1200,l:'20 min' },
+    { s:1800,l:'30 min' },{ s:3600,l:'1 h' },{ s:5400,l:'1 h 30' },{ s:10800,l:'3 h' },
+  ];
+  function powerCurve(days, offset) {
+    const end = Date.now() - (offset||0)*days*86400000, start = end - days*86400000;
+    const rides = data.filter(a => a.sport==='Vélo' && a.power && a.secs && a.date.getTime()>=start && a.date.getTime()<end);
+    return POWER_DURATIONS.map(d => {
+      let best = null;
+      rides.forEach(a => { if (a.secs<d.s) { if (d.s<=60&&a.maxPower) best=Math.max(best||0,a.maxPower); return; } best=Math.max(best||0,a.power); if (d.s<=60&&a.maxPower) best=Math.max(best,a.maxPower); });
+      return best;
+    });
   }
 
-  // Draw fitness chart
+  const PACE_DISTANCES = [{ d:1,l:'1 km'},{d:2,l:'2 km'},{d:5,l:'5 km'},{d:10,l:'10 km'},{d:15,l:'15 km'},{d:21.1,l:'Semi'},{d:30,l:'30 km'},{d:42.2,l:'Marathon'}];
+  const HR_BINS = [{ min:100,max:120,l:'100-120'},{min:120,max:130,l:'120-130'},{min:130,max:140,l:'130-140'},{min:140,max:150,l:'140-150'},{min:150,max:160,l:'150-160'},{min:160,max:170,l:'160-170'},{min:170,max:180,l:'170-180'},{min:180,max:200,l:'180+'}];
+
+  function paceCurve(days, offset) {
+    const end = Date.now()-(offset||0)*days*86400000, start = end-days*86400000;
+    const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail')&&a.pace&&a.dist&&a.date.getTime()>=start&&a.date.getTime()<end);
+    return PACE_DISTANCES.map(x => { let best=null; runs.forEach(a => { if (a.dist>=x.d&&(best===null||a.pace<best)) best=a.pace; }); return best===null?null:Math.round(best*100)/100; });
+  }
+  function hrSpeedCurve(days, offset) {
+    const end = Date.now()-(offset||0)*days*86400000, start = end-days*86400000;
+    const acts = data.filter(a => a.hr&&a.dist&&a.time&&a.date.getTime()>=start&&a.date.getTime()<end);
+    return HR_BINS.map(b => { const inBin=acts.filter(a=>a.hr>=b.min&&a.hr<b.max); if (!inBin.length) return null; const km=inBin.reduce((s,a)=>s+a.dist,0), hh=inBin.reduce((s,a)=>s+a.time,0)/60; return hh?Math.round((km/hh)*10)/10:null; });
+  }
+
+  // Fitness chart — vide (calcul CTL/ATL supprimé)
   useEffect(() => {
-    if (tab !== 'athlete' || athleteSection !== 'Condition physique') return;
+    if (tab!=='athlete'||athleteSection!=='Condition physique') return;
     chartDefaults();
-    const series = fitnessSeries(data, fitRange);
-    const labels = series.map(p => new Date(p.t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }));
     upsert('fitness', fitRef, {
-      type: 'line', plugins: [crosshairPlugin],
-      data: { labels, datasets: [
-        { label: 'Forme', data: series.map(p => p.tsb), borderColor: '#bab6b6', borderWidth: 2, backgroundColor: 'rgba(186,182,182,0.22)', fill: 'origin', tension: 0.25, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'y1' },
-        { label: 'Fatigue', data: series.map(p => p.atl), borderColor: '#201e1d', borderWidth: 2, borderDash: [5, 4], backgroundColor: 'transparent', fill: false, tension: 0.25, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'y' },
-        { label: 'Condition physique', data: series.map(p => p.ctl), borderColor: '#ec3013', borderWidth: 2.5, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.25, pointRadius: 0, pointHoverRadius: 5, yAxisID: 'y' },
+      type:'line', plugins:[crosshairPlugin],
+      data:{ labels:[], datasets:[
+        { label:'Forme', data:[], borderColor:'#bab6b6', borderWidth:2, backgroundColor:'rgba(186,182,182,0.22)', fill:'origin', tension:0.25, pointRadius:0, yAxisID:'y1' },
+        { label:'Fatigue', data:[], borderColor:'#201e1d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:0, yAxisID:'y' },
+        { label:'Condition physique', data:[], borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.25, pointRadius:0, yAxisID:'y' },
       ]},
-      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 },
-        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } }, tooltip: { enabled: true, animation: false, backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, position: 'nearest', titleFont: { weight: '700' }, callbacks: { label: c => c.dataset.label + ' · ' + c.parsed.y } } },
-        scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 24 } }, y: { grid: { color: 'rgba(32,30,29,0.12)', drawTicks: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Charge (CTL / ATL)', color: '#605d5d' } }, y1: { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'Forme (TSB)', color: '#605d5d' } } },
+      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:0},
+        plugins:{ legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}}, tooltip:{enabled:false} },
+        scales:{ x:{grid:{display:false}}, y:{grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Charge (CTL / ATL)',color:'#605d5d'}}, y1:{position:'right',grid:{display:false},border:{display:false},title:{display:true,text:'Forme (TSB)',color:'#605d5d'}} },
       },
     });
     return () => destroyChart('fitness');
-  }, [tab, athleteSection, data, fitRange]);
+  }, [tab, athleteSection]);
+
+  useEffect(() => {
+    if (tab!=='athlete'||athleteSection!=='Puissance') return;
+    chartDefaults();
+    upsert('power', powerRef, {
+      type:'line', plugins:[crosshairPlugin],
+      data:{ labels:POWER_DURATIONS.map(d=>d.l), datasets:[
+        { label:'Comparaison', data:powerCurve(powCompare,1), borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true },
+        { label:'Actuel', data:powerCurve(powRange,0), borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false,axis:'x'}, hover:{animationDuration:0},
+        plugins:{ legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:false}}, tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,position:'nearest',titleFont:{weight:'700'},callbacks:{title:items=>'Effort '+items[0].label,label:c=>c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':c.parsed.y+' W')}} },
+        scales:{ x:{grid:{display:false},title:{display:true,text:"Durée d'effort",color:'#605d5d'}}, y:{grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Puissance (W)',color:'#605d5d'}} },
+      },
+    });
+    return () => destroyChart('power');
+  }, [tab, athleteSection, data, powRange, powCompare]);
+
+  useEffect(() => {
+    if (tab!=='athlete'||athleteSection!=='Allure') return;
+    chartDefaults();
+    const fmtP = v => Math.floor(v)+':'+String(Math.round((v%1)*60)).padStart(2,'0');
+    upsert('pace', paceRef, {
+      type:'line',
+      data:{ labels:PACE_DISTANCES.map(x=>x.l), datasets:[
+        { label:'Comparaison', data:paceCurve(paceCompare,1), borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true },
+        { label:'Actuel', data:paceCurve(paceRange,0), borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
+        plugins:{ legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}}, tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':fmtP(c.parsed.y)+' /km')}} },
+        scales:{ x:{grid:{display:false},title:{display:true,text:'Distance',color:'#605d5d'}}, y:{reverse:true,grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},ticks:{callback:v=>fmtP(v)},title:{display:true,text:'Allure (min/km)',color:'#605d5d'}} },
+      },
+    });
+    return () => destroyChart('pace');
+  }, [tab, athleteSection, data, paceRange, paceCompare]);
+
+  useEffect(() => {
+    if (tab!=='athlete'||athleteSection!=='Fréquence cardiaque') return;
+    chartDefaults();
+    upsert('hr', hrRef, {
+      type:'line',
+      data:{ labels:HR_BINS.map(b=>b.l), datasets:[
+        { label:'Comparaison', data:hrSpeedCurve(hrCompare,1), borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true },
+        { label:'Actuel', data:hrSpeedCurve(hrRange,0), borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
+        plugins:{ legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}}, tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':c.parsed.y+' km/h')}} },
+        scales:{ x:{grid:{display:false},title:{display:true,text:'Fréquence cardiaque moyenne (bpm)',color:'#605d5d'}}, y:{grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Vitesse moyenne (km/h)',color:'#605d5d'}} },
+      },
+    });
+    return () => destroyChart('hr');
+  }, [tab, athleteSection, data, hrRange, hrCompare]);
 
   // Activities charts
   useEffect(() => {
-    if (tab !== 'activites') return;
+    if (tab!=='activites') return;
     chartDefaults();
-    const grid = { color: 'rgba(32,30,29,0.12)', drawTicks: false };
+    const grid = { color:'rgba(32,30,29,0.12)', drawTicks:false };
     const acts = filtered(data, range, sport);
-    const byWeek = range <= 90;
+    const byWeek = range<=90;
     const buckets = new Map();
-    const keyOf = d => byWeek ? weekStart(d).getTime() : new Date(d.getFullYear(), d.getMonth(), 1).getTime();
-    if (byWeek) {
-      const nWeeks = Math.ceil(range / 7);
-      for (let i = nWeeks - 1; i >= 0; i--) buckets.set(keyOf(new Date(Date.now() - i * 7 * 86400000)), { km: 0, h: 0, elev: 0 });
-    } else {
-      const nMonths = Math.max(3, Math.round(range / 30));
-      for (let i = nMonths - 1; i >= 0; i--) { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); buckets.set(keyOf(d), { km: 0, h: 0, elev: 0 }); }
-    }
-    acts.forEach(a => { const w = buckets.get(keyOf(a.date)); if (w) { w.km += a.dist; w.h += a.time / 60; w.elev += a.elev; } });
-    const labels = [...buckets.keys()].map(k => new Date(k).toLocaleDateString('fr-FR', byWeek ? { day: 'numeric', month: 'short' } : { month: 'short', year: '2-digit' }));
-    const vals = [...buckets.values()].map(w => Math.round(w.km * 10) / 10);
-    const elevVals = [...buckets.values()].map(w => Math.round(w.elev));
-    const datasets = [{ label: 'Distance (km)', data: vals, borderColor: '#ec3013', borderWidth: 2, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.25, pointRadius: 3.5, pointBackgroundColor: '#ec3013', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, pointHoverRadius: 6, yAxisID: 'y' }];
-    if (showElev) datasets.push({ label: 'D+ (m)', data: elevVals, borderColor: '#201e1d', borderWidth: 2, borderDash: [5, 4], backgroundColor: 'transparent', fill: false, tension: 0.25, pointRadius: 3, pointBackgroundColor: '#201e1d', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, pointHoverRadius: 5, yAxisID: 'y1' });
-    upsert('line', lineRef, { type: 'line', data: { labels, datasets }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: false } }, scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 18 }, title: { display: true, text: byWeek ? 'Semaines' : 'Mois', color: '#605d5d' } }, y: { grid, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Distance (km)', color: '#605d5d' } }, y1: { display: showElev, position: 'right', grid: { display: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Dénivelé D+ (m)', color: '#605d5d' } } } } });
+    const keyOf = d => byWeek ? weekStart(d).getTime() : new Date(d.getFullYear(),d.getMonth(),1).getTime();
+    if (byWeek) { const nW=Math.ceil(range/7); for(let i=nW-1;i>=0;i--) buckets.set(keyOf(new Date(Date.now()-i*7*86400000)),{km:0,h:0,elev:0}); }
+    else { const nM=Math.max(3,Math.round(range/30)); for(let i=nM-1;i>=0;i--){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);buckets.set(keyOf(d),{km:0,h:0,elev:0});} }
+    acts.forEach(a => { const w=buckets.get(keyOf(a.date)); if(w){w.km+=a.dist;w.h+=a.time/60;w.elev+=a.elev;} });
+    const labels = [...buckets.keys()].map(k=>new Date(k).toLocaleDateString('fr-FR',byWeek?{day:'numeric',month:'short'}:{month:'short',year:'2-digit'}));
+    const vals = [...buckets.values()].map(w=>Math.round(w.km*10)/10);
+    const elevVals = [...buckets.values()].map(w=>Math.round(w.elev));
+    const datasets = [{ label:'Distance (km)', data:vals, borderColor:'#ec3013', borderWidth:2, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.25, pointRadius:3.5, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, yAxisID:'y' }];
+    if (showElev) datasets.push({ label:'D+ (m)', data:elevVals, borderColor:'#201e1d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#201e1d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y1' });
+    upsert('line', lineRef, { type:'line', data:{labels,datasets}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:false}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Distance (km)',color:'#605d5d'}},y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}}} } });
 
-    const days = []; const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-    for (let i = range - 1; i >= 0; i--) days.push(new Date(dayStart.getTime() - i * 86400000));
-    const perDay = new Map();
-    data.forEach(a => { if (sport !== 'Tous' && a.sport !== sport) return; const k = a.date.toDateString(); perDay.set(k, (perDay.get(k) || 0) + a.time); });
-    upsert('daily', dailyRef, { type: 'bar', data: { labels: days.map(d => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })), datasets: [{ data: days.map(d => Math.round(perDay.get(d.toDateString()) || 0)), backgroundColor: days.map(d => d.getDay() === 0 || d.getDay() === 6 ? '#605d5d' : '#ec3013'), borderWidth: 0, barPercentage: 1, categoryPercentage: 0.82 }] }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: false, callbacks: { label: c => c.parsed.y + ' min' } } }, scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 28 }, title: { display: true, text: 'Jours', color: '#605d5d' } }, y: { grid, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Minutes / jour', color: '#605d5d' } } } } });
+    const days=[]; const dayStart=new Date(); dayStart.setHours(0,0,0,0);
+    for(let i=range-1;i>=0;i--) days.push(new Date(dayStart.getTime()-i*86400000));
+    const perDay=new Map();
+    data.forEach(a=>{if(sport!=='Tous'&&a.sport!==sport)return;const k=a.date.toDateString();perDay.set(k,(perDay.get(k)||0)+a.time);});
+    upsert('daily', dailyRef, { type:'bar', data:{labels:days.map(d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})),datasets:[{data:days.map(d=>Math.round(perDay.get(d.toDateString())||0)),backgroundColor:days.map(d=>d.getDay()===0||d.getDay()===6?'#605d5d':'#ec3013'),borderWidth:0,barPercentage:1,categoryPercentage:0.82}]}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:false,callbacks:{label:c=>c.parsed.y+' min'}}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,autoSkipPadding:28},title:{display:true,text:'Jours',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Minutes / jour',color:'#605d5d'}}} } });
 
-    const sports = ['Course', 'Trail', 'Vélo', 'Natation'];
-    const shades = { Course: '#ec3013', Trail: '#ff9783', 'Vélo': '#605d5d', Natation: '#bab6b6' };
-    const zoneMin = zoneMinutes(acts, profile.fcMax);
-    upsert('zone', zoneRef, { type: 'doughnut', data: { labels: zoneMin.map(z => z.label), datasets: [{ data: zoneMin.map(z => z.min), backgroundColor: zoneMin.map(z => z.color), borderColor: '#f3f2f2', borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '46%', plugins: { legend: { display: false }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true, callbacks: { label: c => c.label + ' · ' + Math.round(c.parsed / 60) + ' h (' + Math.round((c.parsed / zoneMin.reduce((s, z) => s + z.min, 0)) * 100) + ' %)' } } } } });
+    const sports=['Course','Trail','Vélo','Natation'];
+    const shades={Course:'#ec3013',Trail:'#ff9783','Vélo':'#605d5d',Natation:'#bab6b6'};
+    const zoneMin=zoneMinutes(acts,profile.fcMax);
+    upsert('zone', zoneRef, { type:'doughnut', data:{labels:zoneMin.map(z=>z.label),datasets:[{data:zoneMin.map(z=>z.min),backgroundColor:zoneMin.map(z=>z.color),borderColor:'#f3f2f2',borderWidth:2}]}, options:{ responsive:true, maintainAspectRatio:false, cutout:'46%', plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.label+' · '+Math.round(c.parsed/60)+' h ('+Math.round((c.parsed/zoneMin.reduce((s,z)=>s+z.min,0))*100)+' %)'}}} } });
 
-    const splitKeys = [...buckets.keys()];
-    const shown = sport === 'Tous' ? sports : [sport];
-    upsert('bar', barRef, { type: 'bar', data: { labels, datasets: shown.map(sp => ({ label: sp, backgroundColor: shades[sp], borderWidth: 0, data: splitKeys.map(k => Math.round(acts.filter(a => a.sport === sp && keyOf(a.date) === k).reduce((s, a) => s + a.time / 60, 0) * 10) / 10) })) }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, plugins: { legend: { display: shown.length > 1, position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, padding: 14 } }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true } }, scales: { x: { stacked: true, grid: { display: false }, title: { display: true, text: byWeek ? 'Semaines' : 'Mois', color: '#605d5d' } }, y: { stacked: true, grid, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Heures', color: '#605d5d' } } } } });
+    const splitKeys=[...buckets.keys()];
+    const shown=sport==='Tous'?sports:[sport];
+    upsert('bar', barRef, { type:'bar', data:{labels,datasets:shown.map(sp=>({label:sp,backgroundColor:shades[sp],borderWidth:0,data:splitKeys.map(k=>Math.round(acts.filter(a=>a.sport===sp&&keyOf(a.date)===k).reduce((s,a)=>s+a.time/60,0)*10)/10)}))}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:shown.length>1,position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true}}, scales:{x:{stacked:true,grid:{display:false},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{stacked:true,grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Heures',color:'#605d5d'}}} } });
 
     return () => { destroyChart('line'); destroyChart('daily'); destroyChart('zone'); destroyChart('bar'); };
   }, [tab, data, range, sport, showElev, profile.fcMax]);
 
-  // ── Build weeks ────────────────────────────────────────────────────────────
+  // ── Build weeks ───────────────────────────────────────────────────────────
   function buildWeeks() {
-    const thisWeek = weekStart(new Date());
-    const oldest = data.length ? weekStart(data[data.length - 1].date) : thisWeek;
-    const allWeeks = Math.max(1, Math.round((thisWeek.getTime() - oldest.getTime()) / (7 * 86400000)) + 1);
-    const n = view === 'saison' ? allWeeks : Math.min(allWeeks, view);
-    const starts = [];
-    for (let i = n - 1; i >= 0; i--) starts.push(new Date(thisWeek.getTime() - i * 7 * 86400000));
-    const dows = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const fLabels = { 1: 'Facile', 2: 'Modéré', 3: 'Difficile', 4: 'Très dur', 5: 'Extrême' };
-    const agg = s => {
-      const end = s.getTime() + 7 * 86400000;
-      const list = data.filter(a => a.date.getTime() >= s.getTime() && a.date.getTime() < end && !a.planned);
-      return { list, min: sum(list, 'time'), km: sum(list, 'dist'), elev: sum(list, 'elev'), n: list.length };
+    const thisWeek=weekStart(new Date());
+    const oldest=data.length?weekStart(data[data.length-1].date):thisWeek;
+    const allWeeks=Math.max(1,Math.round((thisWeek.getTime()-oldest.getTime())/(7*86400000))+1);
+    const n=view==='saison'?allWeeks:Math.min(allWeeks,view);
+    const starts=[];
+    for(let i=n-1;i>=0;i--) starts.push(new Date(thisWeek.getTime()-i*7*86400000));
+    const dows=['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+    const today=new Date(); today.setHours(0,0,0,0);
+    const agg=s=>{
+      const end=s.getTime()+7*86400000;
+      const list=data.filter(a=>a.date.getTime()>=s.getTime()&&a.date.getTime()<end&&!a.planned);
+      return {list,min:sum(list,'time'),km:sum(list,'dist'),elev:sum(list,'elev'),n:list.length};
     };
-    return starts.map(s => {
-      const cur = agg(s); const prev = agg(new Date(s.getTime() - 7 * 86400000));
-      const isCurrent = s.getTime() === thisWeek.getTime();
-      const pct = (a, b) => b > 0 ? Math.round(((a - b) / b) * 100) : null;
-      const mkStat = (label, value, pctv) => {
-        const chip = deltaChip(pctv, true);
-        return { label, value: value || '0', arrow: chip.arrow, arrowStyle: chip.arrowStyle, delta: chip.text, deltaStyle: chip.style };
-      };
-      const avgF = cur.list.length ? cur.list.reduce((s, a) => s + (a.fatigue || 3), 0) / cur.list.length : 0;
-      const daysList = dows.map((dow, i) => {
-        const d = new Date(s.getTime() + i * 86400000);
-        const sessions = cur.list.filter(a => a.date.toDateString() === d.toDateString()).map(a => {
-          const c = fatigueColor(a.fatigue);
-          const short = { Course: 'Course', Trail: 'Trail', 'Vélo': 'Vélo', Natation: 'Nat.' };
+    return starts.map(s=>{
+      const cur=agg(s); const prev=agg(new Date(s.getTime()-7*86400000));
+      const isCurrent=s.getTime()===thisWeek.getTime();
+      const pct=(a,b)=>b>0?Math.round(((a-b)/b)*100):null;
+      const mkStat=(label,value,pctv)=>{const chip=deltaChip(pctv,true);return{label,value:value||'0',arrow:chip.arrow,arrowStyle:chip.arrowStyle,delta:chip.text,deltaStyle:chip.style};};
+      const daysList=dows.map((dow,i)=>{
+        const d=new Date(s.getTime()+i*86400000);
+        const sessions=cur.list.filter(a=>a.date.toDateString()===d.toDateString()).map(a=>{
+          const short={Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'};
           return {
-            sport: short[a.sport] || a.sport,
-            time: fmtH(a.time),
-            workout: a.name || 'Donnée manquante',
-            detail: a.dist ? fmtNum(a.dist, 1) + ' km' : '',
-            ifLabel: a.fatigue ? 'IF ' + a.fatigue : 'IF',
-            ifStyle: { alignSelf: 'flex-start', marginTop: '4px', padding: '1px 5px', fontSize: '10px', fontWeight: '800', letterSpacing: '0.06em', background: 'rgba(255,255,255,0.35)', border: '1px solid currentColor' },
-            style: { flex: '1 1 0', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '6px 3px', border: '2px solid ' + c, background: c, color: fatigueInk(a.fatigue) },
+            sport:short[a.sport]||a.sport, time:fmtH(a.time), workout:a.name||'Donnée manquante',
+            detail:a.dist?fmtNum(a.dist,1)+' km':'',
+            style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px solid #d7d3d3',background:'#eae9e9',color:'#201e1d'},
           };
         });
-        const isToday = d.toDateString() === today.toDateString();
-        return { dow, num: d.getDate(), sessions, empty: sessions.length === 0, numStyle: { fontSize: '12px', fontWeight: '800', ...(isToday ? { padding: '1px 6px', background: '#201e1d', color: '#ffffff' } : { color: '#201e1d' }) }, cellStyle: { minWidth: 0, padding: '8px 6px 8px', borderRight: '1px solid #d7d3d3', borderLeft: i > 0 ? '0' : undefined } };
+        const isToday=d.toDateString()===today.toDateString();
+        return{dow,num:d.getDate(),sessions,empty:sessions.length===0,numStyle:{fontSize:'12px',fontWeight:'800',...(isToday?{padding:'1px 6px',background:'#201e1d',color:'#ffffff'}:{color:'#201e1d'})},cellStyle:{minWidth:0,padding:'8px 6px 8px',borderRight:'1px solid #d7d3d3',borderLeft:i>0?'0':undefined}};
       });
-      const wkDate = new Date(s);
-      const wkEnd = new Date(s.getTime() + 6 * 86400000);
-      const span = wkDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + ' – ' + wkEnd.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-      const wkNum = (() => { const d = new Date(s); d.setHours(0,0,0,0); d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7); const w = new Date(d.getFullYear(), 0, 4); return 1 + Math.round(((d.getTime() - w.getTime()) / 86400000 - 3 + (w.getDay() + 6) % 7) / 7); })();
+      const wkDate=new Date(s); const wkEnd=new Date(s.getTime()+6*86400000);
+      const span=wkDate.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})+' – '+wkEnd.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
+      const wkNum=(()=>{const d=new Date(s);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-(d.getDay()+6)%7);const w=new Date(d.getFullYear(),0,4);return 1+Math.round(((d.getTime()-w.getTime())/86400000-3+(w.getDay()+6)%7)/7);})();
       return {
         isCurrent,
-        rowStyle: { borderTop: isCurrent ? '2px solid #ec3013' : undefined, borderBottom: '2px solid #201e1d', borderLeft: isCurrent ? '6px solid #ec3013' : undefined, background: isCurrent ? '#fdf1ee' : undefined },
-        title: 'Semaine ' + wkNum, span, tag: isCurrent ? 'En cours' : '',
-        tagStyle: { padding: '2px 8px', fontSize: '11px', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase', background: '#ec3013', color: '#fff', display: isCurrent ? undefined : 'none' },
-        blockNote: cur.n + ' séance' + (cur.n > 1 ? 's' : ''),
-        stats: [
-          mkStat('Temps', cur.min ? fmtH(cur.min) : '', pct(cur.min, prev.min)),
-          mkStat('Distance', cur.km ? fmtNum(Math.round(cur.km), 0) + ' km' : '', pct(cur.km, prev.km)),
-          mkStat('D+', cur.elev ? '+' + fmtNum(Math.round(cur.elev), 0) + ' m' : '', pct(cur.elev, prev.elev)),
-          mkStat('Séances', String(cur.n), pct(cur.n, prev.n)),
-        ],
-        fatigueDots: [1, 2, 3, 4, 5].map(i => ({ style: { width: '14px', height: '14px', background: i <= Math.round(avgF) ? fatigueColor(Math.round(avgF)) : '#eae9e9', border: '1px solid #d7d3d3' } })),
-        fatigueLabel: fLabels[Math.round(avgF)] || 'Donnée manquante',
-        days: daysList,
+        rowStyle:{borderTop:isCurrent?'2px solid #ec3013':undefined,borderBottom:'2px solid #201e1d',borderLeft:isCurrent?'6px solid #ec3013':undefined,background:isCurrent?'#fdf1ee':undefined},
+        title:'Semaine '+wkNum,span,tag:isCurrent?'En cours':'',
+        tagStyle:{padding:'2px 8px',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',background:'#ec3013',color:'#fff',display:isCurrent?undefined:'none'},
+        blockNote:cur.n+' séance'+(cur.n>1?'s':''),
+        stats:[mkStat('Temps',cur.min?fmtH(cur.min):'',pct(cur.min,prev.min)),mkStat('Distance',cur.km?fmtNum(Math.round(cur.km),0)+' km':'',pct(cur.km,prev.km)),mkStat('D+',cur.elev?'+'+fmtNum(Math.round(cur.elev),0)+' m':'',pct(cur.elev,prev.elev)),mkStat('Séances',String(cur.n),pct(cur.n,prev.n))],
+        days:daysList,
       };
     }).reverse();
   }
 
-  // ── Sports dynamiques (top 3 de l'athlète) ───────────────────────────────
-  const sportCounts = {};
-  data.forEach(a => { sportCounts[a.sport] = (sportCounts[a.sport] || 0) + a.time; });
-  const sortedSports = Object.keys(sportCounts).sort((a, b) => sportCounts[b] - sportCounts[a]);
-  const topSports = sortedSports.slice(0, 3);
-  const otherSports = sortedSports.slice(3);
+  // ── Sport selector ────────────────────────────────────────────────────────
+  const sportCounts={};
+  data.forEach(a=>{sportCounts[a.sport]=(sportCounts[a.sport]||0)+a.time;});
+  const sortedSports=Object.keys(sportCounts).sort((a,b)=>sportCounts[b]-sportCounts[a]);
+  const topSports=sortedSports.slice(0,3); const otherSports=sortedSports.slice(3);
 
   function SportSelector() {
-    const btnBase = { padding: '9px 14px', border: '2px solid #201e1d', fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: 'pointer' };
-    const activeSt = { ...btnBase, background: '#ec3013', borderColor: '#ec3013', color: '#ffffff' };
-    const inactiveSt = { ...btnBase, background: 'transparent', color: '#201e1d' };
-
-    return h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', position: 'relative', alignItems: 'flex-start' } },
-      // Bouton Tous
-      h('button', {
-        type: 'button', onClick: () => { setSport('Tous'); setDropdownOpen(false); },
-        style: sport === 'Tous' ? activeSt : inactiveSt,
-        onMouseEnter: e => { if (sport !== 'Tous') e.currentTarget.style.background = '#ffe0d9'; },
-        onMouseLeave: e => { if (sport !== 'Tous') e.currentTarget.style.background = 'transparent'; },
-      }, 'Tous'),
-      // Boutons top sports
-      topSports.map(sp =>
-        h('button', {
-          key: sp, type: 'button', onClick: () => { setSport(sp); setDropdownOpen(false); },
-          style: sport === sp ? activeSt : inactiveSt,
-          onMouseEnter: e => { if (sport !== sp) e.currentTarget.style.background = '#ffe0d9'; },
-          onMouseLeave: e => { if (sport !== sp) e.currentTarget.style.background = 'transparent'; },
-        }, sp)
-      ),
-      // Bouton Autre avec menu déroulant si nécessaire
-      otherSports.length > 0 && h('div', { style: { position: 'relative' } },
-        h('button', {
-          type: 'button', onClick: () => setDropdownOpen(o => !o),
-          style: otherSports.includes(sport) ? activeSt : inactiveSt,
-          onMouseEnter: e => { if (!otherSports.includes(sport)) e.currentTarget.style.background = '#ffe0d9'; },
-          onMouseLeave: e => { if (!otherSports.includes(sport)) e.currentTarget.style.background = 'transparent'; },
-        }, otherSports.includes(sport) ? sport : 'Autre ▾'),
-        dropdownOpen && h('div', {
-          style: { position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 100, display: 'flex', flexDirection: 'column', border: '2px solid #201e1d', background: '#f3f2f2', minWidth: '140px' },
-        },
-          otherSports.map(sp =>
-            h('button', {
-              key: sp, type: 'button',
-              onClick: () => { setSport(sp); setDropdownOpen(false); },
-              style: { padding: '10px 14px', border: '0', borderBottom: '1px solid #d7d3d3', background: sport === sp ? '#ec3013' : 'transparent', color: sport === sp ? '#ffffff' : '#201e1d', fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: 'pointer' },
-              onMouseEnter: e => { if (sport !== sp) e.currentTarget.style.background = '#ffe0d9'; },
-              onMouseLeave: e => { if (sport !== sp) e.currentTarget.style.background = sport === sp ? '#ec3013' : 'transparent'; },
-            }, sp)
-          )
+    const btnBase={padding:'9px 14px',border:'2px solid #201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',letterSpacing:'0.08em',textTransform:'uppercase',textAlign:'left',cursor:'pointer'};
+    const activeSt={...btnBase,background:'#ec3013',borderColor:'#ec3013',color:'#ffffff'};
+    const inactiveSt={...btnBase,background:'transparent',color:'#201e1d'};
+    return h('div',{style:{display:'flex',flexWrap:'wrap',gap:'8px',position:'relative',alignItems:'flex-start'}},
+      h('button',{type:'button',onClick:()=>{setSport('Tous');setDropdownOpen(false);},style:sport==='Tous'?activeSt:inactiveSt,onMouseEnter:e=>{if(sport!=='Tous')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(sport!=='Tous')e.currentTarget.style.background='transparent';}},'Tous'),
+      topSports.map(sp=>h('button',{key:sp,type:'button',onClick:()=>{setSport(sp);setDropdownOpen(false);},style:sport===sp?activeSt:inactiveSt,onMouseEnter:e=>{if(sport!==sp)e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(sport!==sp)e.currentTarget.style.background='transparent';}},sp)),
+      otherSports.length>0&&h('div',{style:{position:'relative'}},
+        h('button',{type:'button',onClick:()=>setDropdownOpen(o=>!o),style:otherSports.includes(sport)?activeSt:inactiveSt,onMouseEnter:e=>{if(!otherSports.includes(sport))e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(!otherSports.includes(sport))e.currentTarget.style.background='transparent';}},otherSports.includes(sport)?sport:'Autre ▾'),
+        dropdownOpen&&h('div',{style:{position:'absolute',top:'calc(100% + 4px)',left:0,zIndex:100,display:'flex',flexDirection:'column',border:'2px solid #201e1d',background:'#f3f2f2',minWidth:'140px'}},
+          otherSports.map(sp=>h('button',{key:sp,type:'button',onClick:()=>{setSport(sp);setDropdownOpen(false);},style:{padding:'10px 14px',border:'0',borderBottom:'1px solid #d7d3d3',background:sport===sp?'#ec3013':'transparent',color:sport===sp?'#ffffff':'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',letterSpacing:'0.08em',textTransform:'uppercase',textAlign:'left',cursor:'pointer'},onMouseEnter:e=>{if(sport!==sp)e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(sport!==sp)e.currentTarget.style.background=sport===sp?'#ec3013':'transparent';}},sp))
         )
       )
     );
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-  const powPeriods = [{ label: '1 mois', value: 30 }, { label: '3 mois', value: 90 }, { label: '6 mois', value: 180 }, { label: '1 an', value: 365 }];
-  const mkOptions = (list, current, setter) => list.map(o => ({ label: o.label, active: current === o.value, onClick: () => setter(o.value) }));
+  // ── Computed values ───────────────────────────────────────────────────────
+  const powPeriods=[{label:'1 mois',value:30},{label:'3 mois',value:90},{label:'6 mois',value:180},{label:'1 an',value:365}];
+  const powLabel=v=>(powPeriods.find(p=>p.value===v)||{}).label||'';
+  const mkOptions=(list,current,setter)=>list.map(o=>({label:o.label,active:current===o.value,onClick:()=>setter(o.value)}));
 
-  const now = Date.now();
-  const cur90 = data.filter(a => a.date.getTime() >= now - 90 * 86400000);
-  const prev90 = data.filter(a => a.date.getTime() >= now - 455 * 86400000 && a.date.getTime() < now - 365 * 86400000);
-  const wStart = weekStart(new Date()).getTime();
-  const curWeekActs = data.filter(a => a.date.getTime() >= wStart - 7 * 86400000 && a.date.getTime() < wStart);
-  const prevWeekActs = data.filter(a => a.date.getTime() >= wStart - 14 * 86400000 && a.date.getTime() < wStart - 7 * 86400000);
+  const now=Date.now();
+  const cur90=data.filter(a=>a.date.getTime()>=now-90*86400000);
+  const prev90=data.filter(a=>a.date.getTime()>=now-455*86400000&&a.date.getTime()<now-365*86400000);
+  const raceDateObj=race.date?new Date(race.date+'T12:00:00'):null;
+  const daysToRace=raceDateObj?Math.round((raceDateObj.getTime()-now)/86400000):null;
+  const weeksLeft=Math.max(0,Math.round(((raceDateObj?raceDateObj.getTime():now)-now)/(7*86400000)));
+  const plan=24; const weeksDone=Math.max(0,plan-weeksLeft);
+  const load90=sum(cur90,'time')/60, loadPrev=sum(prev90,'time')/60;
+  const ready=Math.max(0,Math.min(99,Math.round(52+(weeksDone/plan)*34+(loadPrev>0?Math.min(12,((load90-loadPrev)/loadPrev)*30):0))));
 
-  const raceDateObj = race.date ? new Date(race.date + 'T12:00:00') : null;
-  const daysToRace = raceDateObj ? Math.round((raceDateObj.getTime() - now) / 86400000) : null;
-  const weeksLeft = Math.max(0, Math.round(((raceDateObj ? raceDateObj.getTime() : now) - now) / (7 * 86400000)));
-  const plan = 24; const weeksDone = Math.max(0, plan - weeksLeft);
-  const load90 = sum(cur90, 'time') / 60, loadPrev = sum(prev90, 'time') / 60;
-  const ready = Math.max(0, Math.min(99, Math.round(52 + (weeksDone / plan) * 34 + (loadPrev > 0 ? Math.min(12, ((load90 - loadPrev) / loadPrev) * 30) : 0))));
+  const acts=filtered(data,range,sport);
+  const curW=window2(data,0,range,sport);
+  const prevW=window2(data,1,range,sport);
 
-  const acts = filtered(data, range, sport);
-  const byWeek = range <= 90;
-  const curW = window2(data, 0, range, sport);
-  const prevW = window2(data, 1, range, sport);
+  const smallStat={marginTop:'6px',fontSize:'14px',fontWeight:'600',color:'#605d5d',overflowWrap:'anywhere'};
+  const fitStats=['Condition physique','Fatigue','Forme','Ratio charge'].map(l=>({label:l,value:'Donnée manquante',valueStyle:smallStat,sub:''}));
 
-  const fitSeries = (tab === 'athlete' && athleteSection === 'Condition physique') ? fitnessSeries(data, fitRange) : [];
-  const lastFit = fitSeries[fitSeries.length - 1];
-  const prevFit = fitSeries.length > 7 ? fitSeries[fitSeries.length - 8] : null;
-  const hasFit = fitSeries.some(p => p.ctl > 0);
-  const bigStat = { marginTop: '6px', fontSize: '34px', fontWeight: '800', letterSpacing: '-0.03em', lineHeight: '1' };
-  const smallStat = { marginTop: '6px', fontSize: '14px', fontWeight: '600', color: '#605d5d', overflowWrap: 'anywhere' };
-  const delta = (a, b) => b == null ? '' : (a - b >= 0 ? '+' : '') + Math.round((a - b) * 10) / 10 + ' sur 7 j';
-  const fitStats = !hasFit
-    ? ['Condition physique', 'Fatigue', 'Forme', 'Ratio charge'].map(l => ({ label: l, value: 'Donnée manquante', valueStyle: smallStat, sub: '' }))
-    : [
-      { label: 'Condition physique', valueStyle: bigStat, value: String(Math.round(lastFit.ctl)), sub: delta(lastFit.ctl, prevFit && prevFit.ctl) },
-      { label: 'Fatigue', valueStyle: bigStat, value: String(Math.round(lastFit.atl)), sub: delta(lastFit.atl, prevFit && prevFit.atl) },
-      { label: 'Forme', valueStyle: bigStat, value: (lastFit.tsb >= 0 ? '+' : '') + Math.round(lastFit.tsb), sub: lastFit.tsb > 5 ? 'Affûté' : lastFit.tsb < -20 ? 'Surcharge' : 'Charge productive' },
-      { label: 'Ratio charge', valueStyle: lastFit.ctl ? bigStat : smallStat, value: lastFit.ctl ? String(Math.round((lastFit.atl / lastFit.ctl) * 100) / 100) : 'Donnée manquante', sub: 'Fatigue / condition physique' },
-    ];
-
-  const rows = acts.slice(0, expanded ? 40 : 8).map(a => ({
-    date: a.date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: '2-digit' }),
-    sport: a.sport, dist: fmtNum(a.dist, 1) + ' km', time: Math.floor(a.time / 60) + 'h' + String(a.time % 60).padStart(2, '0'),
-    elev: a.elev ? '+' + fmtNum(a.elev, 0) + ' m' : 'Donnée manquante',
-    pace: !a.pace ? 'Donnée manquante' : a.sport === 'Natation' ? fmtPace(a.pace / 10) + '/100m' : fmtPace(a.pace) + '/km',
-    power: a.power ? a.power + ' W' : 'Donnée manquante',
+  const rows=acts.slice(0,expanded?40:8).map(a=>({
+    id:a.id, act:a,
+    date:a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}),
+    sport:a.sport, dist:fmtNum(a.dist,1)+' km', time:Math.floor(a.time/60)+'h'+String(a.time%60).padStart(2,'0'),
+    elev:a.elev?'+'+fmtNum(a.elev,0)+' m':'Donnée manquante',
+    pace:!a.pace?'Donnée manquante':a.sport==='Natation'?fmtPace(a.pace/10)+'/100m':fmtPace(a.pace)+'/km',
+    power:a.power?a.power+' W':'Donnée manquante',
   }));
 
-  const zm = zoneMinutes(acts, profile.fcMax);
-  const zmTotal = zm.reduce((s, z) => s + z.min, 0) || 1;
+  const zm=zoneMinutes(acts,profile.fcMax);
+  const zmTotal=zm.reduce((s,z)=>s+z.min,0)||1;
 
-  const seasonStats = [
-    { label: 'Heures saison', unit: 'h', c: sum(cur90, 'time') / 60, pv: sum(prev90, 'time') / 60 },
-    { label: 'Distance', unit: 'km', c: sum(cur90, 'dist'), pv: sum(prev90, 'dist') },
-    { label: 'Dénivelé', unit: 'm', c: sum(cur90, 'elev'), pv: sum(prev90, 'elev') },
-    { label: 'Séances', unit: '', c: cur90.length, pv: prev90.length },
-  ].map((s, i) => {
-    const chip = deltaChip(s.pv > 0 ? Math.round(((s.c - s.pv) / s.pv) * 100) : null, true);
-    return { label: s.label, unit: s.unit, value: fmtNum(Math.round(s.c), 0), delta: chip.text, deltaStyle: chip.style, arrow: chip.arrow, arrowStyle: chip.arrowStyle, cellStyle: { padding: '22px 32px 26px', borderRight: i < 3 ? '2px solid #201e1d' : undefined } };
-  });
-
-  const p = profile;
-  const bmi = p.height > 0 && p.weight > 0 ? Math.round((p.weight / Math.pow(p.height / 100, 2)) * 10) / 10 : null;
-  const wkg = p.weight > 0 && p.ftp > 0 ? Math.round((p.ftp / p.weight) * 100) / 100 : null;
-  const spec = RACE_CATALOG[race.type];
-
-  const stravaStatus = status === 'loading' ? 'Import des activités…'
-    : status === 'ready' ? data.length + ' activités importées'
-    : status === 'empty' ? 'Aucune activité trouvée sur ce compte.'
-    : status === 'error' ? 'Erreur : ' + error
-    : 'Non connecté — aucune donnée.';
-  const stravaBtnLabel = status === 'ready' ? 'Déconnecter' : status === 'loading' ? 'Chargement…' : 'Connecter Strava';
-
-  const noData = !data.length;
-  const noDataMsg = status === 'loading' ? 'Import des activités Strava…'
-    : status === 'error' ? 'Erreur Strava : ' + error
-    : status === 'empty' ? 'Aucune activité trouvée sur ce compte Strava.'
-    : 'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
-
-  const athleteSections = ['Condition physique', 'Outils'];
-
-  function BtnRow({ options }) {
-    return h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
-      options.map(o => h('button', {
-        key: o.label, type: 'button', onClick: o.onClick,
-        style: btnStyle(o.active),
-        onMouseEnter: e => e.currentTarget.style.background = o.active ? '#ec3013' : '#ffe0d9',
-        onMouseLeave: e => e.currentTarget.style.background = o.active ? '#ec3013' : 'transparent',
-      }, o.label))
+  function BtnRow({options}) {
+    return h('div',{style:{display:'flex',flexWrap:'wrap',gap:'8px'}},
+      options.map(o=>h('button',{key:o.label,type:'button',onClick:o.onClick,style:btnStyle(o.active),onMouseEnter:e=>e.currentTarget.style.background=o.active?'#ec3013':'#ffe0d9',onMouseLeave:e=>e.currentTarget.style.background=o.active?'#ec3013':'transparent'},o.label))
     );
   }
 
-  const kpiDef = [
-    { label: 'Distance', unit: 'km', get: l => sum(l, 'dist'), pace: false },
-    { label: 'Temps', unit: 'h', get: l => sum(l, 'time') / 60, pace: false },
-    { label: 'Dénivelé', unit: 'm', get: l => sum(l, 'elev'), pace: false },
-    sport === 'Vélo'
-      ? { label: 'Puissance moy.', unit: 'W', get: l => { const p2 = l.filter(a => a.power); return p2.length ? sum(p2, 'power') / p2.length : 0; }, pace: false }
-      : { label: 'Allure moy.', unit: '/km', get: l => { const d = sum(l, 'dist'), t = sum(l, 'time'); return d ? t / d : 0; }, pace: true },
+  const kpiDef=[
+    {label:'Distance',unit:'km',get:l=>sum(l,'dist'),pace:false},
+    {label:'Temps',unit:'h',get:l=>sum(l,'time')/60,pace:false},
+    {label:'Dénivelé',unit:'m',get:l=>sum(l,'elev'),pace:false},
+    sport==='Vélo'?{label:'Puissance moy.',unit:'W',get:l=>{const p2=l.filter(a=>a.power);return p2.length?sum(p2,'power')/p2.length:0;},pace:false}:{label:'Allure moy.',unit:'/km',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d:0;},pace:true},
   ];
-  const kpis = kpiDef.map((k, i) => {
-    const c = k.get(curW), pv = k.get(prevW);
-    const pctv = pv > 0 ? Math.round(((c - pv) / pv) * 100) : null;
-    const chip = deltaChip(pctv, !k.pace);
-    const txt = !curW.length || !isFinite(c) || c === 0 ? 'Donnée manquante'
-      : k.pace ? fmtPace(c) : fmtNum(Math.round(c), 0);
-    return { label: k.label, unit: txt === 'Donnée manquante' ? '' : k.unit, value: txt, delta: chip.text, deltaNote: chip.text ? 'vs période précédente' : '', deltaStyle: chip.style, valueStyle: { fontSize: txt.length > 10 ? '15px' : txt.length > 5 ? '30px' : '38px', fontWeight: '800', letterSpacing: '-0.03em', lineHeight: '0.95' }, cellStyle: { minWidth: 0, padding: '24px 24px 28px', borderRight: i < 3 ? '2px solid #201e1d' : undefined } };
+  const kpis=kpiDef.map((k,i)=>{
+    const c=k.get(curW),pv=k.get(prevW);
+    const pctv=pv>0?Math.round(((c-pv)/pv)*100):null;
+    const chip=deltaChip(pctv,!k.pace);
+    const txt=!curW.length||!isFinite(c)||c===0?'Donnée manquante':k.pace?fmtPace(c):fmtNum(Math.round(c),0);
+    return{label:k.label,unit:txt==='Donnée manquante'?'':k.unit,value:txt,delta:chip.text,deltaNote:'vs période précédente',deltaStyle:chip.style,valueStyle:{fontSize:txt.length>10?'15px':txt.length>5?'30px':'38px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'0.95'},cellStyle:{minWidth:0,padding:'24px 24px 28px',borderRight:i<3?'2px solid #201e1d':undefined}};
   });
 
-  // ── Render structure ───────────────────────────────────────────────────────
-  return h('div', { style: { display: 'flex', alignItems: 'flex-start', minHeight: '100vh', background: '#f3f2f2' } },
+  const p=profile;
+  const bmi=p.height>0&&p.weight>0?Math.round((p.weight/Math.pow(p.height/100,2))*10)/10:null;
+  const wkg=p.weight>0&&p.ftp>0?Math.round((p.ftp/p.weight)*100)/100:null;
+  const spec=RACE_CATALOG[race.type];
+  const stravaStatus=status==='loading'?'Import des activités…':status==='ready'?data.length+' activités importées':status==='empty'?'Aucune activité trouvée sur ce compte.':status==='error'?'Erreur : '+error:'Non connecté — aucune donnée.';
+  const stravaBtnLabel=status==='ready'?'Déconnecter':status==='loading'?'Chargement…':'Connecter Strava';
+  const noData=!data.length;
+  const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
+  const athleteSections=['Condition physique','Puissance','Allure','Fréquence cardiaque'];
+
+  // ── Activity detail panel ─────────────────────────────────────────────────
+  function ActivityDetail() {
+    if (!selectedActivity) return null;
+    const a=selectedActivity;
+    const hasStreams=streams&&!streamsLoading&&!streamsError;
+    const hrArr=hasStreams&&streams.heartrate&&streams.heartrate.data?streams.heartrate.data:[];
+    const altArr=hasStreams&&streams.altitude&&streams.altitude.data?streams.altitude.data:[];
+    const velArr=hasStreams&&streams.velocity_smooth&&streams.velocity_smooth.data?streams.velocity_smooth.data:[];
+    const totalSecs=hasStreams&&streams.time&&streams.time.data?streams.time.data[streams.time.data.length-1]:0;
+    const totalDistM=hasStreams&&streams.distance&&streams.distance.data?streams.distance.data[streams.distance.data.length-1]:0;
+    const totalDistKm=totalDistM?totalDistM/1000:0;
+    const avgHr=hrArr.length?Math.round(hrArr.reduce((s,v)=>s+v,0)/hrArr.length):null;
+    const maxHr=hrArr.length?Math.max(...hrArr):null;
+    const elevGain=altArr.length?Math.round(altArr.reduce((s,v,i)=>i>0&&v>altArr[i-1]?s+(v-altArr[i-1]):s,0)):null;
+    const hasHr=hrArr.length>0, hasAlt=altArr.length>0, hasVel=velArr.length>0;
+
+    const kpis=[
+      {label:'Distance',value:fmtNum(totalDistKm||a.dist,1),unit:'km'},
+      {label:'Durée',value:Math.floor(a.time/60)+'h'+String(a.time%60).padStart(2,'0'),unit:''},
+      {label:'D+',value:elevGain!==null?'+'+fmtNum(elevGain,0):(a.elev?'+'+fmtNum(a.elev,0):'Donnée manquante'),unit:elevGain!==null||a.elev?'m':''},
+      {label:'FC moyenne',value:avgHr!==null?String(avgHr):(a.hr?String(a.hr):'Donnée manquante'),unit:avgHr!==null||a.hr?'bpm':''},
+      {label:'FC max',value:maxHr!==null?String(maxHr):'Donnée manquante',unit:maxHr!==null?'bpm':''},
+      {label:'Allure moy.',value:a.pace?fmtPace(a.pace):'Donnée manquante',unit:a.pace?'/km':''},
+    ];
+    const legendTxt=[hasHr&&'Rouge · FC',hasAlt&&'Noir · Altitude',hasVel&&'Gris · Allure'].filter(Boolean).join(' · ');
+    const descTxt=streamsLoading?'Chargement des données…':streamsError?streamsError:!hasStreams?'Donnée manquante — streams indisponibles pour cette activité.':[hasHr&&'Fréquence cardiaque',hasAlt&&'altitude',hasVel&&'allure'].filter(Boolean).join(', ')+' enregistrés.'+(totalSecs?' '+Math.round(totalSecs/60)+' min de données.':'');
+
+    return h('div',{style:{position:'fixed',inset:0,zIndex:200,display:'flex',flexDirection:'column',background:'#f3f2f2'}},
+      h('header',{style:{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'24px',minHeight:'108px',boxSizing:'border-box',padding:'24px 32px',borderBottom:'2px solid #201e1d',flexShrink:0}},
+        h('div',{style:{display:'flex',flexDirection:'column',gap:'4px',minWidth:0}},
+          h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.14em',textTransform:'uppercase',color:'#ec3013'}},a.sport+' · '+a.date.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})),
+          h('h1',{style:{margin:0,fontSize:'26px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.05',overflowWrap:'anywhere'}},a.name||'Donnée manquante')
+        ),
+        h('button',{type:'button',onClick:closeDetail,style:{flexShrink:0,padding:'10px 18px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'},onMouseEnter:e=>{e.currentTarget.style.background='#ffe0d9';e.currentTarget.style.borderColor='#ec3013';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.borderColor='#201e1d';}},'← Retour')
+      ),
+      h('section',{style:{display:'grid',gridTemplateColumns:'repeat(6, minmax(0,1fr))',borderBottom:'2px solid #201e1d',flexShrink:0}},
+        kpis.map((kpi,i)=>h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<5?'1px solid #d7d3d3':undefined}},
+          h('span',{style:{display:'block',fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},kpi.label),
+          h('div',{style:{display:'flex',alignItems:'baseline',gap:'6px',marginTop:'10px'}},
+            h('span',{style:{fontSize:kpi.value.length>10?'16px':'26px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},kpi.value),
+            kpi.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},kpi.unit)
+          )
+        ))
+      ),
+      h('div',{style:{flex:1,minHeight:0,padding:'28px 32px 32px',overflow:'auto'}},
+        h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'10px'}},
+          h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Données seconde par seconde'),
+          h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},legendTxt)
+        ),
+        h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},descTxt),
+        h('div',{style:{height:'calc(100vh - 400px)',minHeight:'320px'}},
+          streamsLoading
+            ?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',fontSize:'13px',color:'#605d5d'}},'Chargement des streams Strava…')
+            :h('canvas',{ref:streamChartRef})
+        )
+      )
+    );
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return h('div',{style:{display:'flex',alignItems:'flex-start',minHeight:'100vh',background:'#f3f2f2'}},
+    selectedActivity&&h(ActivityDetail),
 
     // ASIDE
-    h('aside', { style: { flex: '0 0 260px', width: '260px', height: '100vh', position: 'sticky', top: 0, display: 'flex', flexDirection: 'column', borderRight: '2px solid #201e1d' } },
-      h('div', { style: { display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: '6px', height: '108px', boxSizing: 'border-box', padding: '24px 24px 22px', borderBottom: '2px solid #201e1d' } },
-        h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ec3013' } }, 'Data explorer'),
-        h('span', { style: { fontSize: '20px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1.05' } }, 'Analyse', h('br'), "d'entraînement")
+    h('aside',{style:{flex:'0 0 260px',width:'260px',height:'100vh',position:'sticky',top:0,display:'flex',flexDirection:'column',borderRight:'2px solid #201e1d'}},
+      h('div',{style:{display:'flex',flexDirection:'column',justifyContent:'flex-end',gap:'6px',height:'108px',boxSizing:'border-box',padding:'24px 24px 22px',borderBottom:'2px solid #201e1d'}},
+        h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.14em',textTransform:'uppercase',color:'#ec3013'}},'Data explorer'),
+        h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.05'}},'Analyse',h('br'),"d'entraînement")
       ),
-      h('nav', { style: { display: 'flex', flexDirection: 'column', borderBottom: '2px solid #201e1d' } },
-        h('button', { type: 'button', onClick: () => setTab('programme'), style: navStyle(tab === 'programme'), onMouseEnter: e => { if (tab !== 'programme') e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { if (tab !== 'programme') e.currentTarget.style.background = 'transparent'; } }, 'Programme'),
-        h('button', { type: 'button', onClick: () => { setAthleteOpen(o => !o); setTab('athlete'); }, style: navStyle(tab === 'athlete'), onMouseEnter: e => { if (tab !== 'athlete') e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { if (tab !== 'athlete') e.currentTarget.style.background = 'transparent'; } },
-          h('span', { style: { flex: '1' } }, 'Athlète'),
-          h('span', { style: { fontSize: '12px', lineHeight: '1', transform: athleteOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' } }, '▾')
+      h('nav',{style:{display:'flex',flexDirection:'column',borderBottom:'2px solid #201e1d'}},
+        h('button',{type:'button',onClick:()=>setTab('programme'),style:navStyle(tab==='programme'),onMouseEnter:e=>{if(tab!=='programme')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='programme')e.currentTarget.style.background='transparent';}},'Programme'),
+        h('button',{type:'button',onClick:()=>{setAthleteOpen(true);setTab('athlete');},style:navStyle(tab==='athlete'),onMouseEnter:e=>{if(tab!=='athlete')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='athlete')e.currentTarget.style.background='transparent';}},
+          h('span',{style:{flex:'1'}},'Athlète'),
+          h('span',{style:{fontSize:'12px',lineHeight:'1',transform:(athleteOpen||tab==='athlete')?'rotate(180deg)':'rotate(0deg)',transition:'transform 0.2s'}},'▾')
         ),
-        athleteOpen && h('div', { style: { display: 'flex', flexDirection: 'column', background: '#eae9e9', borderBottom: '2px solid #201e1d' } },
-          athleteSections.map(s =>
-            h('button', { key: s, type: 'button', onClick: () => { setAthleteSection(s); setTab('athlete'); }, style: navStyle(tab === 'athlete' && athleteSection === s, true), onMouseEnter: e => { if (athleteSection !== s) e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { if (athleteSection !== s) e.currentTarget.style.background = 'transparent'; } }, s)
-          )
+        (athleteOpen||tab==='athlete')&&h('div',{style:{display:'flex',flexDirection:'column',background:'#eae9e9',borderBottom:'2px solid #201e1d'}},
+          athleteSections.map(s=>h('button',{key:s,type:'button',onClick:()=>{setAthleteSection(s);setTab('athlete');},style:navStyle(tab==='athlete'&&athleteSection===s,true),onMouseEnter:e=>{if(athleteSection!==s)e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(athleteSection!==s)e.currentTarget.style.background='transparent';}},s))
         ),
-        h('button', { type: 'button', onClick: () => setTab('activites'), style: navStyle(tab === 'activites'), onMouseEnter: e => { if (tab !== 'activites') e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { if (tab !== 'activites') e.currentTarget.style.background = 'transparent'; } }, 'Activités')
+        h('button',{type:'button',onClick:()=>setTab('activites'),style:navStyle(tab==='activites'),onMouseEnter:e=>{if(tab!=='activites')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='activites')e.currentTarget.style.background='transparent';}},'Activités')
       ),
-      h('div', { style: { marginTop: 'auto', padding: '20px 24px 8px' } },
-        h('span', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Strava'),
-        h('p', { style: { margin: '8px 0 12px', fontSize: '12px', color: '#605d5d' } }, stravaStatus),
-        h('button', { type: 'button', onClick: status === 'ready' ? disconnect : connect, style: { display: 'flex', alignItems: 'center', width: '100%', padding: '11px 14px', border: '2px solid #201e1d', background: 'transparent', color: '#201e1d', fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: 'pointer' }, onMouseEnter: e => { e.currentTarget.style.background = '#ffe0d9'; e.currentTarget.style.borderColor = '#ec3013'; }, onMouseLeave: e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = '#201e1d'; } }, stravaBtnLabel)
+      h('div',{style:{marginTop:'auto',padding:'20px 24px 8px'}},
+        h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Strava'),
+        h('p',{style:{margin:'8px 0 12px',fontSize:'12px',color:'#605d5d'}},stravaStatus),
+        h('button',{type:'button',onClick:status==='ready'?disconnect:connect,style:{display:'flex',alignItems:'center',width:'100%',padding:'11px 14px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',letterSpacing:'0.08em',textTransform:'uppercase',textAlign:'left',cursor:'pointer'},onMouseEnter:e=>{e.currentTarget.style.background='#ffe0d9';e.currentTarget.style.borderColor='#ec3013';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.borderColor='#201e1d';}},stravaBtnLabel)
       ),
-      h('div', { style: { padding: '8px 24px 20px' } },
-        h('button', { type: 'button', onClick: exportCsv, disabled: noData, style: { display: 'flex', alignItems: 'center', width: '100%', padding: '12px 14px', border: '2px solid ' + (data.length ? '#ec3013' : '#bab6b6'), background: data.length ? '#ec3013' : 'transparent', color: data.length ? '#ffffff' : '#bab6b6', fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: data.length ? 'pointer' : 'not-allowed' } }, 'Exporter CSV')
+      h('div',{style:{padding:'8px 24px 20px'}},
+        h('button',{type:'button',onClick:exportCsv,disabled:noData,style:{display:'flex',alignItems:'center',width:'100%',padding:'12px 14px',border:'2px solid '+(data.length?'#ec3013':'#bab6b6'),background:data.length?'#ec3013':'transparent',color:data.length?'#ffffff':'#bab6b6',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',letterSpacing:'0.08em',textTransform:'uppercase',textAlign:'left',cursor:data.length?'pointer':'not-allowed'}},'Exporter CSV')
       ),
-      h('button', { type: 'button', onClick: () => setTab('profil'), style: { display: 'block', width: '100%', padding: '16px 24px 18px', border: '0', borderTop: '2px solid #201e1d', background: tab === 'profil' ? '#ffe0d9' : 'transparent', fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer' }, onMouseEnter: e => { if (tab !== 'profil') e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { if (tab !== 'profil') e.currentTarget.style.background = tab === 'profil' ? '#ffe0d9' : 'transparent'; } },
-        h('span', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Athlète · voir le profil'),
-        h('span', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px', marginTop: '6px' } },
-          h('span', { style: { fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, profile.name || 'Donnée manquante'),
-          h('span', { style: { fontSize: '14px', color: '#ec3013' } }, '→')
+      h('button',{type:'button',onClick:()=>setTab('profil'),style:{display:'block',width:'100%',padding:'16px 24px 18px',border:'0',borderTop:'2px solid #201e1d',background:tab==='profil'?'#ffe0d9':'transparent',fontFamily:'inherit',textAlign:'left',cursor:'pointer'},onMouseEnter:e=>{if(tab!=='profil')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='profil')e.currentTarget.style.background=tab==='profil'?'#ffe0d9':'transparent';}},
+        h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Athlète · voir le profil'),
+        h('span',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'10px',marginTop:'6px'}},
+          h('span',{style:{fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},profile.name||'Donnée manquante'),
+          h('span',{style:{fontSize:'14px',color:'#ec3013'}},'→')
         ),
-        h('span', { style: { display: 'block', marginTop: '4px', fontSize: '12px', color: '#605d5d' } },
-          p.height || p.weight || p.ftp ? [p.height ? p.height + ' cm' : null, p.weight ? p.weight + ' kg' : null, p.ftp ? 'FTP ' + p.ftp + ' W' : null].filter(Boolean).join(' · ') : 'Donnée manquante'
+        h('span',{style:{display:'block',marginTop:'4px',fontSize:'12px',color:'#605d5d'}},
+          p.height||p.weight||p.ftp?[p.height?p.height+' cm':null,p.weight?p.weight+' kg':null,p.ftp?'FTP '+p.ftp+' W':null].filter(Boolean).join(' · '):'Donnée manquante'
         )
       )
     ),
 
     // MAIN
-    h('main', { style: { flex: 1, minWidth: 0 } },
+    h('main',{style:{flex:1,minWidth:0}},
 
       // ── PROGRAMME ─────────────────────────────────────────────────────────
-      tab === 'programme' && h('div', null,
-        h('header', { style: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '24px', minHeight: '108px', boxSizing: 'border-box', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ec3013' } }, 'Programme'),
-            h('h1', { style: { margin: 0, fontSize: '30px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1' } }, 'Calendrier par semaine')
+      tab==='programme'&&h('div',null,
+        h('header',{style:{display:'flex',alignItems:'flex-end',justifyContent:'space-between',flexWrap:'wrap',gap:'24px',minHeight:'108px',boxSizing:'border-box',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.14em',textTransform:'uppercase',color:'#ec3013'}},'Programme'),
+            h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},'Calendrier par semaine')
           )
         ),
-        h('section', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '20px 44px', padding: '18px 32px', borderBottom: '2px solid #201e1d' } },
-          h('div', { style: { display: 'flex', flex: '1 1 520px', flexWrap: 'wrap', gap: '20px 44px', minWidth: 0 } },
-            [
-              { label: 'Objectif', value: race.type, unit: '', delta: raceDateObj ? raceDateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: '2-digit' }) : '—', note: daysToRace === null ? '' : 'J−' + daysToRace, good: null },
-              { label: 'Temps projeté', value: 'Donnée manquante', unit: '', delta: '—', note: 'à calculer', good: null },
-              { label: 'Prêt · Readiness', value: data.length ? String(ready) : 'Donnée manquante', unit: data.length ? '%' : '', delta: data.length ? (ready >= 75 ? 'En bonne voie' : 'À consolider') : '—', note: race.type, good: data.length ? ready >= 75 : null },
-              { label: 'Semaines restantes', value: raceDateObj ? String(weeksLeft) : 'Donnée manquante', unit: raceDateObj ? 'sem.' : '', delta: raceDateObj ? "jusqu'à la course" : '—', note: '', good: null },
-            ].map((k, i) =>
-              h('div', { key: i, style: { display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 } },
-                h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, k.label),
-                h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '8px' } },
-                  h('span', { style: { fontSize: String(k.value).length > 16 ? '16px' : '20px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1.05' } }, k.value),
-                  k.unit && h('span', { style: { fontSize: '13px', fontWeight: '600', color: '#605d5d' } }, k.unit)
+        h('section',{style:{display:'flex',flexWrap:'wrap',alignItems:'flex-start',justifyContent:'space-between',gap:'20px 44px',padding:'18px 32px',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{display:'flex',flex:'1 1 520px',flexWrap:'wrap',gap:'20px 44px',minWidth:0}},
+            [{label:'Objectif',value:race.type,unit:'',delta:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}):'—',note:daysToRace===null?'':'J−'+daysToRace,good:null},{label:'Temps projeté',value:'Donnée manquante',unit:'',delta:'—',note:'à calculer',good:null},{label:'Prêt · Readiness',value:data.length?String(ready):'Donnée manquante',unit:data.length?'%':'',delta:data.length?(ready>=75?'En bonne voie':'À consolider'):'—',note:race.type,good:data.length?ready>=75:null},{label:'Semaines restantes',value:raceDateObj?String(weeksLeft):'Donnée manquante',unit:raceDateObj?'sem.':'',delta:raceDateObj?"jusqu'à la course":'—',note:'',good:null}].map((k,i)=>
+              h('div',{key:i,style:{display:'flex',flexDirection:'column',gap:'6px',minWidth:0}},
+                h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},k.label),
+                h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px'}},
+                  h('span',{style:{fontSize:String(k.value).length>16?'16px':'20px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.05'}},k.value),
+                  k.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},k.unit)
                 ),
-                h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' } },
-                  h('span', { style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: k.good ? '#ffe0d9' : '#eae9e9', color: k.good ? '#ae1800' : '#605d5d' } }, k.delta),
-                  h('span', { style: { fontSize: '12px', color: '#605d5d' } }, k.note)
+                h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'8px'}},
+                  h('span',{style:{padding:'3px 8px',fontSize:'12px',fontWeight:'600',letterSpacing:'0.04em',background:k.good?'#ffe0d9':'#eae9e9',color:k.good?'#ae1800':'#605d5d'}},k.delta),
+                  h('span',{style:{fontSize:'12px',color:'#605d5d'}},k.note)
                 )
               )
             )
           ),
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Affichage'),
-            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
-              [{ label: 'Saison', value: 'saison' }, { label: '4 sem.', value: 4 }, { label: '8 sem.', value: 8 }].map(o =>
-                h('button', { key: o.label, type: 'button', onClick: () => setView(o.value), style: btnStyle(view === o.value), onMouseEnter: e => { if (view !== o.value) e.currentTarget.style.background = '#ffe0d9'; }, onMouseLeave: e => { e.currentTarget.style.background = view === o.value ? '#ec3013' : 'transparent'; } }, o.label)
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
+            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Affichage'),
+            h('div',{style:{display:'flex',flexWrap:'wrap',gap:'8px'}},
+              [{label:'Saison',value:'saison'},{label:'4 sem.',value:4},{label:'8 sem.',value:8}].map(o=>
+                h('button',{key:o.label,type:'button',onClick:()=>setView(o.value),style:btnStyle(view===o.value),onMouseEnter:e=>{if(view!==o.value)e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{e.currentTarget.style.background=view===o.value?'#ec3013':'transparent';}},o.label)
               )
             )
           )
         ),
-        noData && h('p', { style: { margin: 0, padding: '28px 32px 32px', fontSize: '14px', color: '#605d5d' } }, noDataMsg),
-        h('section', null,
-          data.length ? buildWeeks().map((wk, wi) =>
-            h('div', { key: wi, style: wk.rowStyle },
-              h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', padding: '14px 32px', borderBottom: '1px solid #d7d3d3' } },
-                h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '14px' } },
-                  h('span', { style: { fontSize: '14px', fontWeight: '800', letterSpacing: '-0.01em' } }, wk.title),
-                  h('span', { style: { fontSize: '12px', color: '#605d5d' } }, wk.span),
-                  wk.isCurrent && h('span', { style: wk.tagStyle }, wk.tag)
+        noData&&h('p',{style:{margin:0,padding:'28px 32px 32px',fontSize:'14px',color:'#605d5d'}},noDataMsg),
+        h('section',null,
+          data.length?buildWeeks().map((wk,wi)=>
+            h('div',{key:wi,style:wk.rowStyle},
+              h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',padding:'14px 32px',borderBottom:'1px solid #d7d3d3'}},
+                h('div',{style:{display:'flex',alignItems:'baseline',gap:'14px'}},
+                  h('span',{style:{fontSize:'14px',fontWeight:'800',letterSpacing:'-0.01em'}},wk.title),
+                  h('span',{style:{fontSize:'12px',color:'#605d5d'}},wk.span),
+                  wk.isCurrent&&h('span',{style:wk.tagStyle},wk.tag)
                 ),
-                h('span', { style: { fontSize: '12px', color: '#605d5d' } }, wk.blockNote)
+                h('span',{style:{fontSize:'12px',color:'#605d5d'}},wk.blockNote)
               ),
-              h('div', { style: { display: 'grid', gridTemplateColumns: 'calc(100% / 4) minmax(0, 1fr)' } },
-                h('div', { style: { minWidth: 0, padding: '16px 14px 20px', borderRight: '1px solid #d7d3d3' } },
-                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
-                    wk.stats.map((st, si) =>
-                      h('div', { key: si },
-                        h('span', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, st.label),
-                        h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '8px', marginTop: '4px' } },
-                          h('span', { style: { fontSize: '20px', fontWeight: '800', letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' } }, st.value),
-                          h('span', { style: st.arrowStyle }, st.arrow),
-                          h('span', { style: st.deltaStyle }, st.delta)
-                        )
+              h('div',{style:{display:'grid',gridTemplateColumns:'calc(100% / 4) minmax(0, 1fr)'}},
+                h('div',{style:{minWidth:0,padding:'16px 14px 20px',borderRight:'1px solid #d7d3d3'}},
+                  h('div',{style:{display:'flex',flexDirection:'column',gap:'12px'}},
+                    wk.stats.map((st,si)=>h('div',{key:si},
+                      h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},st.label),
+                      h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'4px'}},
+                        h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.02em',fontVariantNumeric:'tabular-nums'}},st.value),
+                        h('span',{style:st.arrowStyle},st.arrow),
+                        h('span',{style:st.deltaStyle},st.delta)
                       )
-                    )
-                  ),
-                  h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginTop: '16px' } },
-                    h('span', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Fatigue moy.'),
-                    h('div', { style: { display: 'flex', gap: '3px' } }, wk.fatigueDots.map((dot, di) => h('span', { key: di, style: dot.style }))),
-                    h('span', { style: { fontSize: '12px', fontWeight: '600' } }, wk.fatigueLabel)
+                    ))
                   )
                 ),
-                h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' } },
-                  wk.days.map((day, di) =>
-                    h('div', { key: di, style: { minWidth: 0, padding: '8px 6px 8px', borderRight: di < 6 ? '1px solid #d7d3d3' : undefined } },
-                      h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '4px' } },
-                        h('span', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, day.dow),
-                        h('span', { style: day.numStyle }, day.num)
-                      ),
-                      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px', height: '168px' } },
-                        day.sessions.map((s, si) =>
-                          h('div', { key: si, style: s.style },
-                            h('span', { style: { display: 'block', fontSize: '13px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1.1' } }, s.sport),
-                            h('span', { style: { display: 'block', fontSize: '12px', fontWeight: '700', lineHeight: '1.2', overflowWrap: 'anywhere', hyphens: 'auto' } }, s.workout),
-                            h('span', { style: { display: 'block', fontSize: '12px', fontWeight: '600', lineHeight: '1.25' } }, s.time),
-                            h('span', { style: { display: 'block', fontSize: '12px', fontWeight: '600', lineHeight: '1.25' } }, s.detail),
-                            h('span', { style: s.ifStyle }, s.ifLabel)
-                          )
-                        ),
-                        day.empty && h('span', { style: { display: 'flex', alignItems: 'center', height: '100%', fontSize: '12px', color: '#bab6b6' } }, 'Repos')
-                      )
+                h('div',{style:{display:'grid',gridTemplateColumns:'repeat(7, minmax(0, 1fr))'}},
+                  wk.days.map((day,di)=>h('div',{key:di,style:{minWidth:0,padding:'8px 6px 8px',borderRight:di<6?'1px solid #d7d3d3':undefined}},
+                    h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'4px'}},
+                      h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},day.dow),
+                      h('span',{style:day.numStyle},day.num)
+                    ),
+                    h('div',{style:{display:'flex',flexDirection:'column',gap:'4px',marginTop:'8px',height:'168px'}},
+                      day.sessions.map((s,si)=>h('div',{key:si,style:s.style},
+                        h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.1'}},s.sport),
+                        h('span',{style:{display:'block',fontSize:'12px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},s.workout),
+                        h('span',{style:{display:'block',fontSize:'12px',fontWeight:'600',lineHeight:'1.25'}},s.time),
+                        h('span',{style:{display:'block',fontSize:'12px',fontWeight:'600',lineHeight:'1.25'}},s.detail)
+                      )),
+                      day.empty&&h('span',{style:{display:'flex',alignItems:'center',height:'100%',fontSize:'12px',color:'#bab6b6'}},'Repos')
                     )
-                  )
+                  ))
                 )
               )
             )
-          ) : null,
-          data.length && h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: '40px', padding: '22px 32px 44px' } },
-            h('div', null,
-              h('span', { style: { display: 'block', fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Indice de fatigue'),
-              h('div', { style: { display: 'flex', gap: '3px', marginTop: '8px', width: '220px' } },
-                ['#ffe0d9', '#ffb3a3', '#f97a60', '#ec3013', '#ae1800'].map((c, i) => h('span', { key: i, style: { flex: '1', height: '12px', background: c } }))
-              ),
-              h('div', { style: { display: 'flex', justifyContent: 'space-between', width: '220px', marginTop: '6px', fontSize: '10px', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#605d5d' } },
-                h('span', null, 'Facile'), h('span', null, 'Très dur')
-              )
-            )
-          )
+          ):null
         )
       ),
 
       // ── ATHLETE ──────────────────────────────────────────────────────────
-      tab === 'athlete' && h('div', null,
-        h('header', { style: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '32px', minHeight: '108px', boxSizing: 'border-box', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ec3013' } }, 'Athlète'),
-            h('h1', { style: { margin: 0, fontSize: '30px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1' } }, athleteSection)
+      tab==='athlete'&&h('div',null,
+        h('header',{style:{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'32px',minHeight:'108px',boxSizing:'border-box',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.14em',textTransform:'uppercase',color:'#ec3013'}},'Athlète'),
+            h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},athleteSection)
           )
         ),
-        athleteSection === 'Condition physique' && h('div', null,
-          h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
-            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période de calcul'),
-              h(BtnRow, { options: mkOptions(powPeriods, fitRange, setFitRange) })
+        athleteSection==='Condition physique'&&h('div',null,
+          h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},
+              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période de calcul'),
+              h(BtnRow,{options:mkOptions(powPeriods,fitRange,setFitRange)})
             )
           ),
-          h('section', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: '2px solid #201e1d' } },
-            fitStats.map((st, i) =>
-              h('div', { key: i, style: { minWidth: 0, padding: '20px 32px 22px', borderRight: i < 3 ? '1px solid #d7d3d3' : undefined } },
-                h('div', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, st.label),
-                h('div', { style: st.valueStyle }, st.value),
-                h('div', { style: { marginTop: '6px', fontSize: '12px', color: '#605d5d' } }, st.sub)
-              )
-            )
+          h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',borderBottom:'2px solid #201e1d'}},
+            fitStats.map((st,i)=>h('div',{key:i,style:{minWidth:0,padding:'20px 32px 22px',borderRight:i<3?'1px solid #d7d3d3':undefined}},
+              h('div',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},st.label),
+              h('div',{style:st.valueStyle},st.value),
+              h('div',{style:{marginTop:'6px',fontSize:'12px',color:'#605d5d'}},st.sub)
+            ))
           ),
-          h('section', { style: { padding: '28px 32px 32px' } },
-            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px 16px', marginBottom: '10px' } },
-              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Condition physique, fatigue et forme'),
-              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Rouge : condition physique · Noir : fatigue · Gris : forme')
+          h('section',{style:{padding:'28px 32px 32px'}},
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Condition physique, fatigue et forme'),
+              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : condition physique · Noir : fatigue · Gris : forme')
             ),
-            h('p', { style: { margin: '0 0 18px', fontSize: '12px', color: '#605d5d', maxWidth: '90ch' } }, data.some(a => a.trainingLoad) ? 'Condition physique (CTL 42j), fatigue (ATL 7j) et forme (TSB) calculées à partir de la charge de chaque séance.' : 'Donnée manquante — aucune activité importée.'),
-            h('div', { style: { height: 'calc(100vh - 440px)', minHeight: '340px' } }, h('canvas', { ref: fitRef }))
+            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},'Donnée manquante — aucune activité importée.'),
+            h('div',{style:{height:'calc(100vh - 440px)',minHeight:'340px'}},h('canvas',{ref:fitRef}))
           )
         ),
-        athleteSection === 'Outils' && h('div', null,
-          h('section', { style: { display: 'flex', alignItems: 'center', gap: '24px', padding: '18px 32px', borderBottom: '2px solid #201e1d' } },
-            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Données enrichies · Streams Strava'),
-              h('span', { style: { fontSize: '12px', color: '#605d5d' } },
-                streamsStatus === 'idle' ? 'Connecte Strava pour charger les streams (allure sec/sec, BPM, altitude).' :
-                streamsStatus === 'loading' ? 'Import des streams en cours — ' + Object.keys(streams).length + ' activités chargées…' :
-                streamsStatus === 'done' ? Object.keys(streams).length + ' activités avec streams complets (allure, BPM, altitude seconde par seconde).' :
-                'Donnée manquante.'
-              )
-            ),
-            streamsStatus === 'loading' && h('span', { style: { fontSize: '11px', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase', padding: '4px 10px', border: '2px solid #bab6b6', color: '#605d5d' } }, 'Chargement…'),
-            streamsStatus === 'done' && h('span', { style: { fontSize: '11px', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase', padding: '4px 10px', border: '2px solid #ec3013', color: '#ec3013' } }, 'Prêt')
+        athleteSection==='Puissance'&&h('div',null,
+          h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période de calcul'),h(BtnRow,{options:mkOptions(powPeriods,powRange,setPowRange)})),
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison'),h(BtnRow,{options:mkOptions(powPeriods,powCompare,setPowCompare)}))
           ),
-          h('section', { style: { padding: '40px 32px' } },
-            h('p', { style: { fontSize: '14px', color: '#605d5d', maxWidth: '52ch' } }, 'Les calculateurs seront construits ici — estimateur de puissance, indice de fatigue, et autres outils à définir ensemble.')
+          h('section',{style:{padding:'28px 32px 32px'}},
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Courbe de puissance'),h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : '+powLabel(powRange)+' · Gris : '+powLabel(powCompare)+' précédents')),
+            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},data.some(a=>a.sport==='Vélo'&&a.power)?"Meilleure puissance par durée d'effort. Estimation calculée à partir des moyennes et pics de chaque sortie.":'Donnée manquante — aucune sortie vélo avec capteur de puissance.'),
+            h('div',{style:{height:'calc(100vh - 320px)',minHeight:'380px'}},h('canvas',{ref:powerRef}))
+          )
+        ),
+        athleteSection==='Allure'&&h('div',null,
+          h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période de calcul'),h(BtnRow,{options:mkOptions(powPeriods,paceRange,setPaceRange)})),
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison'),h(BtnRow,{options:mkOptions(powPeriods,paceCompare,setPaceCompare)}))
+          ),
+          h('section',{style:{padding:'28px 32px 32px'}},
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Meilleure allure par distance'),h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : '+powLabel(paceRange)+' · Gris : '+powLabel(paceCompare)+' précédents')),
+            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},data.some(a=>(a.sport==='Course'||a.sport==='Trail')&&a.pace)?"Meilleure allure moyenne par distance. Estimation calculée à partir de l'allure moyenne de chaque sortie.":'Donnée manquante — aucune sortie course ou trail.'),
+            h('div',{style:{height:'calc(100vh - 320px)',minHeight:'380px'}},h('canvas',{ref:paceRef}))
+          )
+        ),
+        athleteSection==='Fréquence cardiaque'&&h('div',null,
+          h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période de calcul'),h(BtnRow,{options:mkOptions(powPeriods,hrRange,setHrRange)})),
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison'),h(BtnRow,{options:mkOptions(powPeriods,hrCompare,setHrCompare)}))
+          ),
+          h('section',{style:{padding:'28px 32px 32px'}},
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Vitesse moyenne par fréquence cardiaque'),h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : '+powLabel(hrRange)+' · Gris : '+powLabel(hrCompare)+' précédents')),
+            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},data.some(a=>a.hr)?'Vitesse moyenne obtenue dans chaque plage de fréquence cardiaque. Une courbe qui monte à fréquence égale indique un gain d\'efficacité.':'Donnée manquante — aucune activité avec fréquence cardiaque.'),
+            h('div',{style:{height:'calc(100vh - 320px)',minHeight:'380px'}},h('canvas',{ref:hrRef}))
           )
         )
       ),
 
       // ── ACTIVITES ─────────────────────────────────────────────────────────
-      tab === 'activites' && h('div', null,
-        h('header', { style: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '32px', minHeight: '108px', boxSizing: 'border-box', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ec3013' } }, 'Activités'),
-            h('h1', { style: { margin: 0, fontSize: '30px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1' } }, "Analyse de l'activité")
+      tab==='activites'&&h('div',null,
+        h('header',{style:{display:'flex',alignItems:'flex-end',justifyContent:'space-between',gap:'32px',minHeight:'108px',boxSizing:'border-box',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.14em',textTransform:'uppercase',color:'#ec3013'}},'Activités'),
+            h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},"Analyse de l'activité")
           ),
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Sélection'),
-            h('span', { style: { fontSize: '14px', fontWeight: '600' } }, acts.length ? acts.length + ' séances · ' + (sport === 'Tous' ? 'tous sports' : sport) : 'Donnée manquante'),
-            h('span', { style: { fontSize: '12px', color: '#605d5d' } }, acts.length ? fmtNum(Math.round(sum(acts, 'dist')), 0) + ' km · ' + Math.round(sum(acts, 'time') / 60) + ' h · +' + fmtNum(sum(acts, 'elev'), 0) + ' m' : status === 'loading' ? 'Import Strava en cours…' : 'Connecte Strava pour importer tes activités.')
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sélection'),
+            h('span',{style:{fontSize:'14px',fontWeight:'600'}},acts.length?acts.length+' séances · '+(sport==='Tous'?'tous sports':sport):'Donnée manquante'),
+            h('span',{style:{fontSize:'12px',color:'#605d5d'}},acts.length?fmtNum(Math.round(sum(acts,'dist')),0)+' km · '+Math.round(sum(acts,'time')/60)+' h · +'+fmtNum(sum(acts,'elev'),0)+' m':status==='loading'?'Import Strava en cours…':'Connecte Strava pour importer tes activités.')
           )
         ),
-        h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Sport'),
-            h(SportSelector)
-          ),
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période · Range'),
-            h(BtnRow, { options: mkOptions([{ label: '30 j', value: 30 }, { label: '90 j', value: 90 }, { label: '6 mois', value: 180 }, { label: '12 mois', value: 365 }], range, setRange) })
-          )
+        h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),h(SportSelector)),
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période · Range'),h(BtnRow,{options:mkOptions([{label:'30 j',value:30},{label:'90 j',value:90},{label:'6 mois',value:180},{label:'12 mois',value:365}],range,setRange)}))
         ),
-        h('section', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', borderBottom: '2px solid #201e1d' } },
-          kpis.map((kpi, i) =>
-            h('div', { key: i, style: kpi.cellStyle },
-              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, kpi.label),
-              h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '8px', marginTop: '14px' } },
-                h('span', { style: kpi.valueStyle }, kpi.value),
-                kpi.unit && h('span', { style: { fontSize: '13px', fontWeight: '600', color: '#605d5d' } }, kpi.unit)
-              ),
-              h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginTop: '14px' } },
-                h('span', { style: kpi.deltaStyle }, kpi.delta),
-                h('span', { style: { fontSize: '12px', color: '#605d5d' } }, kpi.deltaNote)
-              )
+        h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4, minmax(0, 1fr))',borderBottom:'2px solid #201e1d'}},
+          kpis.map((kpi,i)=>h('div',{key:i,style:kpi.cellStyle},
+            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},kpi.label),
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'14px'}},
+              h('span',{style:kpi.valueStyle},kpi.value),
+              kpi.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},kpi.unit)
+            ),
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'8px',marginTop:'14px'}},
+              h('span',{style:kpi.deltaStyle},kpi.delta),
+              h('span',{style:{fontSize:'12px',color:'#605d5d'}},kpi.deltaNote)
             )
-          )
+          ))
         ),
-        h('section', { style: { display: 'grid', gridTemplateColumns: '3fr 1fr', gridTemplateRows: 'auto auto', borderBottom: '2px solid #201e1d' } },
-          h('div', { style: { gridColumn: '1', gridRow: '1', minWidth: 0, padding: '28px 32px 32px', borderRight: '2px solid #201e1d', borderBottom: '2px solid #201e1d' } },
-            h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', marginBottom: '20px' } },
-              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, range <= 90 ? 'Volume par semaine' : 'Volume par mois'),
-              h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '12px' } },
-                h('button', { type: 'button', onClick: () => setShowElev(v => !v), style: { padding: '4px 10px', border: '2px solid ' + (showElev ? '#ec3013' : '#201e1d'), background: showElev ? '#ec3013' : 'transparent', color: showElev ? '#ffffff' : '#201e1d', fontFamily: 'inherit', fontSize: '10px', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase', cursor: 'pointer' } }, 'D+'),
-                h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, range <= 90 ? 'Abscisse en semaines' : 'Abscisse en mois')
+        h('section',{style:{display:'grid',gridTemplateColumns:'3fr 1fr',gridTemplateRows:'auto auto',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{gridColumn:'1',gridRow:'1',minWidth:0,padding:'28px 32px 32px',borderRight:'2px solid #201e1d',borderBottom:'2px solid #201e1d'}},
+            h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'20px'}},
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},range<=90?'Volume par semaine':'Volume par mois'),
+              h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px'}},
+                h('button',{type:'button',onClick:()=>setShowElev(v=>!v),style:{padding:'4px 10px',border:'2px solid '+(showElev?'#ec3013':'#201e1d'),background:showElev?'#ec3013':'transparent',color:showElev?'#ffffff':'#201e1d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',cursor:'pointer'}},'D+'),
+                h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},range<=90?'Abscisse en semaines':'Abscisse en mois')
               )
             ),
-            h('div', { style: { height: '252px' } }, h('canvas', { ref: lineRef }))
+            h('div',{style:{height:'252px'}},h('canvas',{ref:lineRef}))
           ),
-          h('div', { style: { gridColumn: '2', gridRow: '1 / span 2', minWidth: 0, padding: '28px 32px 32px' } },
-            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '4px 16px', marginBottom: '8px' } },
-              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Temps par zone cardiaque'),
-              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Répartition')
+          h('div',{style:{gridColumn:'2',gridRow:'1 / span 2',minWidth:0,padding:'28px 32px 32px'}},
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'4px 16px',marginBottom:'8px'}},
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Temps par zone cardiaque'),
+              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Répartition')
             ),
-            h('p', { style: { margin: '0 0 14px', fontSize: '12px', color: '#605d5d', maxWidth: '42ch' } }, acts.some(a => a.hr) ? 'Minutes dans chaque zone de FC sur la période.' : 'Donnée manquante — aucune fréquence cardiaque.'),
-            h('div', { style: { height: '190px' } }, h('canvas', { ref: zoneRef })),
-            h('div', { style: { display: 'flex', flexDirection: 'column', marginTop: '16px' } },
-              zm.map((z, i) =>
-                h('div', { key: i, style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 10px', padding: '6px 0', borderBottom: '1px solid #d7d3d3' } },
-                  h('span', { style: { flexShrink: 0, width: '12px', height: '12px', background: z.color, border: '1px solid #d7d3d3' } }),
-                  h('span', { style: { flex: '1 0 auto', fontSize: '12px', fontWeight: '600' } }, z.label),
-                  h('span', { style: { fontSize: '12px', fontVariantNumeric: 'tabular-nums' } }, fmtH(z.min)),
-                  h('span', { style: { fontSize: '12px', color: '#605d5d', fontVariantNumeric: 'tabular-nums' } }, Math.round((z.min / zmTotal) * 100) + ' %')
-                )
-              )
+            h('p',{style:{margin:'0 0 14px',fontSize:'12px',color:'#605d5d',maxWidth:'42ch'}},acts.some(a=>a.hr)?'Minutes dans chaque zone de FC sur la période.':'Donnée manquante — aucune fréquence cardiaque.'),
+            h('div',{style:{height:'190px'}},h('canvas',{ref:zoneRef})),
+            h('div',{style:{display:'flex',flexDirection:'column',marginTop:'16px'}},
+              zm.map((z,i)=>h('div',{key:i,style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'4px 10px',padding:'6px 0',borderBottom:'1px solid #d7d3d3'}},
+                h('span',{style:{flexShrink:0,width:'12px',height:'12px',background:z.color,border:'1px solid #d7d3d3'}}),
+                h('span',{style:{flex:'1 0 auto',fontSize:'12px',fontWeight:'600'}},z.label),
+                h('span',{style:{fontSize:'12px',fontVariantNumeric:'tabular-nums'}},fmtH(z.min)),
+                h('span',{style:{fontSize:'12px',color:'#605d5d',fontVariantNumeric:'tabular-nums'}},Math.round((z.min/zmTotal)*100)+' %')
+              ))
             )
           ),
-          h('div', { style: { gridColumn: '1', gridRow: '2', minWidth: 0, padding: '28px 32px 32px', borderRight: '2px solid #201e1d' } },
-            h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', marginBottom: '8px' } },
-              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Charge quotidienne'),
-              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, range >= 365 ? '12 mois' : range >= 180 ? '6 mois' : range + ' jours')
+          h('div',{style:{gridColumn:'1',gridRow:'2',minWidth:0,padding:'28px 32px 32px',borderRight:'2px solid #201e1d'}},
+            h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'8px'}},
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Charge quotidienne'),
+              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},range>=365?'12 mois':range>=180?'6 mois':range+' jours')
             ),
-            h('p', { style: { margin: '0 0 14px', fontSize: '12px', color: '#605d5d', maxWidth: '62ch' } }, !acts.length ? 'Donnée manquante — aucune activité importée.' : 'Minutes d\'activité par jour. Les week-ends sont en gris.'),
-            h('div', { style: { height: '252px' } }, h('canvas', { ref: dailyRef }))
+            h('p',{style:{margin:'0 0 14px',fontSize:'12px',color:'#605d5d',maxWidth:'62ch'}},!acts.length?'Donnée manquante — aucune activité importée.':"Minutes d'activité par jour. Les week-ends sont en gris."),
+            h('div',{style:{height:'252px'}},h('canvas',{ref:dailyRef}))
           )
         ),
-        h('section', { style: { padding: '28px 32px 48px' } },
-          h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', marginBottom: '20px' } },
-            h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Séances de la sélection'),
-            h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, (expanded ? Math.min(40, acts.length) : Math.min(8, acts.length)) + ' / ' + acts.length)
+        h('section',{style:{padding:'28px 32px 48px'}},
+          h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'20px'}},
+            h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Séances de la sélection'),
+            h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},(expanded?Math.min(40,acts.length):Math.min(8,acts.length))+' / '+acts.length)
           ),
-          h('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '14px' } },
-            h('thead', null,
-              h('tr', { style: { borderTop: '2px solid #201e1d', borderBottom: '2px solid #201e1d' } },
-                ['Date', 'Sport', 'Distance', 'Temps', 'D+', 'Allure', 'Puissance'].map((col, i) =>
-                  h('th', { key: i, style: { padding: i === 0 ? '10px 12px 10px 0' : i === 6 ? '10px 0 10px 12px' : '10px 12px', textAlign: i > 1 ? 'right' : 'left', fontSize: '11px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, col)
+          h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'14px'}},
+            h('thead',null,
+              h('tr',{style:{borderTop:'2px solid #201e1d',borderBottom:'2px solid #201e1d'}},
+                ['Date','Sport','Distance','Temps','D+','Allure','Puissance',''].map((col,i)=>
+                  h('th',{key:i,style:{padding:i===0?'10px 12px 10px 0':i===7?'10px 0 10px 12px':'10px 12px',textAlign:i>1&&i<7?'right':'left',fontSize:'11px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},col)
                 )
               )
             ),
-            h('tbody', null,
-              rows.map((row, ri) =>
-                h('tr', { key: ri, style: { borderBottom: '1px solid #d7d3d3' } },
-                  h('td', { style: { padding: '12px 12px 12px 0', color: '#605d5d' } }, row.date),
-                  h('td', { style: { padding: '12px', fontWeight: '600' } }, row.sport),
-                  h('td', { style: { padding: '12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' } }, row.dist),
-                  h('td', { style: { padding: '12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' } }, row.time),
-                  h('td', { style: { padding: '12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' } }, row.elev),
-                  h('td', { style: { padding: '12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' } }, row.pace),
-                  h('td', { style: { padding: '12px 0 12px 12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#605d5d' } }, row.power)
+            h('tbody',null,
+              rows.map((row,ri)=>h('tr',{key:ri,style:{borderBottom:'1px solid #d7d3d3',cursor:'pointer'},
+                onMouseEnter:e=>{e.currentTarget.style.background='#fdf1ee';},
+                onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
+              },
+                h('td',{style:{padding:'12px 12px 12px 0',color:'#605d5d'}},row.date),
+                h('td',{style:{padding:'12px',fontWeight:'600'}},row.sport),
+                h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.dist),
+                h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.time),
+                h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.elev),
+                h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums'}},row.pace),
+                h('td',{style:{padding:'12px',textAlign:'right',fontVariantNumeric:'tabular-nums',color:'#605d5d'}},row.power),
+                h('td',{style:{padding:'12px 0 12px 12px'}},
+                  h('button',{type:'button',onClick:()=>loadStreams(row.act),
+                    style:{padding:'4px 10px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer',whiteSpace:'nowrap'},
+                    onMouseEnter:e=>{e.currentTarget.style.background='#ffe0d9';e.currentTarget.style.borderColor='#ec3013';e.currentTarget.style.color='#ec3013';},
+                    onMouseLeave:e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.borderColor='#201e1d';e.currentTarget.style.color='#201e1d';},
+                  },'Détail →')
                 )
-              )
+              ))
             )
           ),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '16px', marginTop: '24px' } },
-            h('button', { type: 'button', onClick: () => setExpanded(v => !v), style: { minWidth: '200px', padding: '12px 16px', border: '2px solid #201e1d', background: 'transparent', color: '#201e1d', fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: 'pointer' }, onMouseEnter: e => { e.currentTarget.style.background = '#ffe0d9'; e.currentTarget.style.borderColor = '#ec3013'; }, onMouseLeave: e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = '#201e1d'; } }, expanded ? 'Réduire la liste' : 'Voir plus de séances'),
-            h('span', { style: { fontSize: '12px', color: '#605d5d' } }, acts.length ? 'Trié du plus récent au plus ancien.' : 'Donnée manquante — aucune activité importée.')
+          h('div',{style:{display:'flex',alignItems:'center',gap:'16px',marginTop:'24px'}},
+            h('button',{type:'button',onClick:()=>setExpanded(v=>!v),style:{minWidth:'200px',padding:'12px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',letterSpacing:'0.08em',textTransform:'uppercase',textAlign:'left',cursor:'pointer'},onMouseEnter:e=>{e.currentTarget.style.background='#ffe0d9';e.currentTarget.style.borderColor='#ec3013';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.borderColor='#201e1d';}},expanded?'Réduire la liste':'Voir plus de séances'),
+            h('span',{style:{fontSize:'12px',color:'#605d5d'}},acts.length?'Trié du plus récent au plus ancien.':'Donnée manquante — aucune activité importée.')
           )
         )
       ),
 
       // ── PROFIL ────────────────────────────────────────────────────────────
-      tab === 'profil' && h('div', null,
-        h('header', { style: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '24px', minHeight: '108px', boxSizing: 'border-box', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.14em', textTransform: 'uppercase', color: '#ec3013' } }, 'Profil'),
-            h('h1', { style: { margin: 0, fontSize: '30px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1' } }, profile.name || 'Donnée manquante')
+      tab==='profil'&&h('div',null,
+        h('header',{style:{display:'flex',alignItems:'flex-end',justifyContent:'space-between',flexWrap:'wrap',gap:'24px',minHeight:'108px',boxSizing:'border-box',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.14em',textTransform:'uppercase',color:'#ec3013'}},'Profil'),
+            h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},profile.name||'Donnée manquante')
           ),
-          h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-            h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Objectif'),
-            h('span', { style: { fontSize: '14px', fontWeight: '600' } }, race.type + ' · ' + (raceDateObj ? raceDateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'date à définir')),
-            h('span', { style: { fontSize: '12px', color: '#605d5d' } }, daysToRace === null ? 'Aucune date renseignée.' : daysToRace >= 0 ? 'Dans ' + daysToRace + ' jours · ' + Math.round(daysToRace / 7) + ' semaines restantes.' : 'Course passée il y a ' + Math.abs(daysToRace) + ' jours.')
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Objectif'),
+            h('span',{style:{fontSize:'14px',fontWeight:'600'}},race.type+' · '+(raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}):'date à définir')),
+            h('span',{style:{fontSize:'12px',color:'#605d5d'}},daysToRace===null?'Aucune date renseignée.':daysToRace>=0?'Dans '+daysToRace+' jours · '+Math.round(daysToRace/7)+' semaines restantes.':'Course passée il y a '+Math.abs(daysToRace)+' jours.')
           )
         ),
-        h('section', { style: { display: 'grid', gridTemplateColumns: '1fr 3fr', borderBottom: '2px solid #201e1d' } },
-          h('div', { style: { minWidth: 0, padding: '24px 32px 28px', borderRight: '2px solid #201e1d' } },
-            h('h2', { style: { margin: '0 0 4px', fontSize: '15px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Identité'),
-            h('p', { style: { margin: '0 0 18px', fontSize: '12px', color: '#605d5d' } }, 'Ces données servent aux zones, à la charge et aux estimations.'),
-            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr', gap: '16px 18px' } },
-              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
-                h('label', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Nom'),
-                h('input', { type: 'text', value: profile.name, onChange: e => setProfile(p => ({ ...p, name: e.target.value })), style: { width: '100%', padding: '10px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '14px', fontWeight: '600' } })
+        h('section',{style:{display:'grid',gridTemplateColumns:'1fr 3fr',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{minWidth:0,padding:'24px 32px 28px',borderRight:'2px solid #201e1d'}},
+            h('h2',{style:{margin:'0 0 4px',fontSize:'15px',fontWeight:'800',letterSpacing:'-0.01em'}},'Identité'),
+            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d'}},'Ces données servent aux zones, à la charge et aux estimations.'),
+            h('div',{style:{display:'grid',gridTemplateColumns:'1fr',gap:'16px 18px'}},
+              h('div',{style:{display:'flex',flexDirection:'column',gap:'7px'}},
+                h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Nom'),
+                h('input',{type:'text',value:profile.name,onChange:e=>setProfile(p=>({...p,name:e.target.value})),style:{width:'100%',padding:'10px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600'}})
               ),
-              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
-                h('label', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Genre'),
-                h('select', { value: profile.gender, onChange: e => setProfile(p => ({ ...p, gender: e.target.value })), style: { width: '100%', padding: '10px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '14px', fontWeight: '600', cursor: 'pointer' } },
-                  ['Femme', 'Homme', 'Non précisé'].map(g => h('option', { key: g, value: g }, g))
+              h('div',{style:{display:'flex',flexDirection:'column',gap:'7px'}},
+                h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Genre'),
+                h('select',{value:profile.gender,onChange:e=>setProfile(p=>({...p,gender:e.target.value})),style:{width:'100%',padding:'10px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600',cursor:'pointer'}},
+                  ['Femme','Homme','Non précisé'].map(g=>h('option',{key:g,value:g},g))
                 )
               ),
-              [{ k: 'age', label: 'Âge (ans)', step: 1 }, { k: 'height', label: 'Taille (cm)', step: 1 }, { k: 'weight', label: 'Poids (kg)', step: 0.1 }, { k: 'fcMax', label: 'FC max (bpm)', step: 1 }, { k: 'fcRest', label: 'FC repos (bpm)', step: 1 }, { k: 'ftp', label: 'FTP vélo (W)', step: 1 }].map(f =>
-                h('div', { key: f.k, style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
-                  h('label', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, f.label),
-                  h('input', { type: 'number', step: f.step, value: profile[f.k] ?? '', onChange: e => { const v = e.target.value; setProfile(p => ({ ...p, [f.k]: v === '' ? '' : Number(v) })); }, style: { width: '100%', padding: '10px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '14px', fontWeight: '600', fontVariantNumeric: 'tabular-nums' } })
+              [{k:'age',label:'Âge (ans)',step:1},{k:'height',label:'Taille (cm)',step:1},{k:'weight',label:'Poids (kg)',step:0.1},{k:'fcMax',label:'FC max (bpm)',step:1},{k:'fcRest',label:'FC repos (bpm)',step:1},{k:'ftp',label:'FTP vélo (W)',step:1}].map(f=>
+                h('div',{key:f.k,style:{display:'flex',flexDirection:'column',gap:'7px'}},
+                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},f.label),
+                  h('input',{type:'number',step:f.step,value:profile[f.k]??'',onChange:e=>{const v=e.target.value;setProfile(p=>({...p,[f.k]:v===''?'':Number(v)}));},style:{width:'100%',padding:'10px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600',fontVariantNumeric:'tabular-nums'}})
                 )
               )
             ),
-            h('p', { style: { margin: '18px 0 0', fontSize: '12px', color: '#605d5d' } }, 'IMC ' + (bmi ?? 'donnée manquante') + ' · rapport poids-puissance ' + (wkg ?? 'donnée manquante') + ' W/kg · réserve cardiaque ' + (p.fcMax && p.fcRest ? p.fcMax - p.fcRest + ' bpm' : 'donnée manquante') + '.')
+            h('p',{style:{margin:'18px 0 0',fontSize:'12px',color:'#605d5d'}},'IMC '+(bmi??'donnée manquante')+' · rapport poids-puissance '+(wkg??'donnée manquante')+' W/kg · réserve cardiaque '+(p.fcMax&&p.fcRest?p.fcMax-p.fcRest+' bpm':'donnée manquante')+'.')
           ),
-          h('div', { style: { minWidth: 0, padding: '24px 32px 28px' } },
-            h('h2', { style: { margin: '0 0 4px', fontSize: '15px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Course visée'),
-            h('p', { style: { margin: '0 0 16px', fontSize: '12px', color: '#605d5d' } }, 'Le type de course pré-remplit les champs à compléter.'),
-            h('label', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Type de course'),
-            h('select', { value: race.type, onChange: e => { const t = e.target.value; setRace(r => ({ ...r, type: t, values: defaultValues(t) })); }, style: { width: '100%', marginTop: '8px', padding: '11px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '13px', fontWeight: '600', cursor: 'pointer' } },
-              Object.keys(RACE_CATALOG).map(rt => h('option', { key: rt, value: rt }, rt))
+          h('div',{style:{minWidth:0,padding:'24px 32px 28px'}},
+            h('h2',{style:{margin:'0 0 4px',fontSize:'15px',fontWeight:'800',letterSpacing:'-0.01em'}},'Course visée'),
+            h('p',{style:{margin:'0 0 16px',fontSize:'12px',color:'#605d5d'}},'Le type de course pré-remplit les champs à compléter.'),
+            h('label',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Type de course'),
+            h('select',{value:race.type,onChange:e=>{const t=e.target.value;setRace(r=>({...r,type:t,values:defaultValues(t)}));},style:{width:'100%',marginTop:'8px',padding:'11px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}},
+              Object.keys(RACE_CATALOG).map(rt=>h('option',{key:rt,value:rt},rt))
             ),
-            h('label', { style: { display: 'block', marginTop: '16px', fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Date'),
-            h('input', { type: 'date', value: race.date, onChange: e => setRace(r => ({ ...r, date: e.target.value })), style: { width: '100%', marginTop: '8px', padding: '10px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '13px', fontWeight: '600' } }),
-            h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '16px 20px', marginTop: '20px' } },
-              spec.fields.map(f =>
-                h('div', { key: f.k, style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
-                  h('label', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, f.label),
-                  h('input', { type: 'number', step: f.step || 1, value: race.values[f.k] ?? '', onChange: e => { const v = e.target.value; setRace(r => ({ ...r, values: { ...r.values, [f.k]: v === '' ? '' : Number(v) } })); }, style: { width: '100%', padding: '10px 12px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '14px', fontWeight: '600', fontVariantNumeric: 'tabular-nums' } })
-                )
-              )
+            h('label',{style:{display:'block',marginTop:'16px',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Date'),
+            h('input',{type:'date',value:race.date,onChange:e=>setRace(r=>({...r,date:e.target.value})),style:{width:'100%',marginTop:'8px',padding:'10px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600'}}),
+            h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(140px, 1fr))',gap:'16px 20px',marginTop:'20px'}},
+              spec.fields.map(f=>h('div',{key:f.k,style:{display:'flex',flexDirection:'column',gap:'7px'}},
+                h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},f.label),
+                h('input',{type:'number',step:f.step||1,value:race.values[f.k]??'',onChange:e=>{const v=e.target.value;setRace(r=>({...r,values:{...r.values,[f.k]:v===''?'':Number(v)}}));},style:{width:'100%',padding:'10px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600',fontVariantNumeric:'tabular-nums'}})
+              ))
             ),
-            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '16px', marginTop: '22px', paddingTop: '18px', borderTop: '2px solid #201e1d' } },
-              h('div', null,
-                h('span', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Estimation'),
-                h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '4px' } },
-                  h('span', { style: { fontSize: '30px', fontWeight: '800', letterSpacing: '-0.03em', lineHeight: '0.9' } }, data.length ? ready : '—'),
-                  h('span', { style: { fontSize: '13px', fontWeight: '600', color: '#605d5d' } }, '% prêt')
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',marginTop:'22px',paddingTop:'18px',borderTop:'2px solid #201e1d'}},
+              h('div',null,
+                h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Estimation'),
+                h('div',{style:{display:'flex',alignItems:'baseline',gap:'6px',marginTop:'4px'}},
+                  h('span',{style:{fontSize:'30px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'0.9'}},data.length?ready:'—'),
+                  h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},'% prêt')
                 )
               ),
-              h('div', { style: { paddingLeft: '20px', borderLeft: '2px solid #201e1d' } },
-                h('span', { style: { display: 'block', fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Temps projeté'),
-                h('span', { style: { display: 'block', marginTop: '4px', fontSize: '24px', fontWeight: '800', letterSpacing: '-0.02em' } }, 'Donnée manquante')
+              h('div',{style:{paddingLeft:'20px',borderLeft:'2px solid #201e1d'}},
+                h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Temps projeté'),
+                h('span',{style:{display:'block',marginTop:'4px',fontSize:'24px',fontWeight:'800',letterSpacing:'-0.02em'}},'Donnée manquante')
               )
             )
           )
-        ),
+        )
       )
     )
   );
