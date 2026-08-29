@@ -536,10 +536,13 @@ function App() {
     });
   }
 
-  // Fetch des streams watts pour toutes les sorties vélo (avec cache)
+  // Fetch des streams velocity_smooth + altitude pour toutes les sorties vélo,
+  // calcule la puissance estimée seconde par seconde et la met en cache.
   async function fetchWattStreams() {
     const token = localStorage.getItem('strava_token');
     if (!token) return;
+    const totalMass = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
+    if (!totalMass) { alert('Renseigne le poids cycliste et le poids vélo dans le Profil pour activer la courbe de puissance estimée.'); return; }
     const rides = data.filter(a => a.sport === 'Vélo');
     const toFetch = rides.filter(a => !wattStreams[a.id] || wattStreams[a.id] === 'error');
     if (!toFetch.length) { setWattFetchStatus('ready'); return; }
@@ -551,9 +554,28 @@ function App() {
     for (const a of toFetch) {
       if (wattFetchAbort.current) break;
       try {
-        const res = await stravaApi('/activities/' + a.id + '/streams?keys=watts&key_by_type=true', tk);
-        if (res && res.watts && res.watts.data) {
-          const arr = new Float32Array(res.watts.data);
+        const res = await stravaApi(
+          '/activities/' + a.id + '/streams?keys=velocity_smooth,altitude,distance&key_by_type=true', tk
+        );
+        const vel = res && res.velocity_smooth && res.velocity_smooth.data;
+        const alt = res && res.altitude && res.altitude.data;
+        if (vel && vel.length) {
+          // Puissance estimée seconde par seconde
+          const arr = new Float32Array(vel.length);
+          for (let i = 0; i < vel.length; i++) {
+            const v_kmh = vel[i] * 3.6;
+            let slope = 0;
+            if (alt && i > 0) {
+              const dAlt = alt[i] - alt[i-1];
+              // distance entre deux points : 1 s × vitesse m/s
+              const dDist = Math.max(0.1, vel[i]);
+              slope = (dAlt / dDist) * 100;
+              // Limiter les pentes aberrantes (données GPS bruitées)
+              slope = Math.max(-30, Math.min(30, slope));
+            }
+            const p = estimatePower(v_kmh, slope, totalMass);
+            arr[i] = p !== null ? p : 0;
+          }
           setWattStreams(prev => ({ ...prev, [a.id]: arr }));
         } else {
           setWattStreams(prev => ({ ...prev, [a.id]: 'error' }));
@@ -563,7 +585,6 @@ function App() {
       }
       done++;
       setWattFetchProgress({ done, total: toFetch.length });
-      // Respecter le rate limit Strava : ~1 req/150ms max
       await new Promise(r => setTimeout(r, 150));
     }
     setWattFetchStatus('ready');
@@ -1363,28 +1384,34 @@ function App() {
               const cached = rides.filter(a => wattStreams[a.id] && wattStreams[a.id] !== 'error');
               const withData = rides.filter(a => wattStreams[a.id] instanceof Float32Array);
               const isLoading = wattFetchStatus === 'loading';
+              const totalMass = (Number(profile.weight)||0)+(Number(profile.bikeMass)||0);
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
                     isLoading
-                      ? 'Chargement… ' + wattFetchProgress.done + ' / ' + wattFetchProgress.total + ' sorties'
+                      ? 'Calcul en cours… ' + wattFetchProgress.done + ' / ' + wattFetchProgress.total + ' sorties'
                       : withData.length
-                        ? withData.length + ' / ' + rides.length + ' sorties avec streams watts'
-                        : 'Streams watts non chargés — courbe indisponible'
+                        ? withData.length + ' / ' + rides.length + ' sorties calculées'
+                        : !totalMass
+                          ? 'Renseigne le poids cycliste + poids vélo dans le Profil'
+                          : 'Puissance estimée non calculée — clique sur Calculer'
                   ),
                   isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
                     h('div',{style:{height:'100%',background:'#ec3013',width: Math.round((wattFetchProgress.done/Math.max(1,wattFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
                   ),
                   !isLoading && withData.length>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    'Courbe de puissance calculée par fenêtre glissante seconde par seconde'
+                    'Modèle physique Crr='+CRR+' · CdA='+CDA+' · masse '+totalMass.toFixed(1)+' kg · fenêtre glissante s/s'
+                  ),
+                  !isLoading && !withData.length && totalMass>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
+                    'Masse système : '+totalMass.toFixed(1)+' kg · Crr '+CRR+' · CdA '+CDA+' m²'
                   )
                 ),
                 h('div',{style:{display:'flex',gap:'8px'}},
                   !isLoading && h('button',{type:'button',
                     onClick: fetchWattStreams,
-                    disabled: isLoading || !localStorage.getItem('strava_token'),
-                    style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor: isLoading ? 'not-allowed':'pointer'}
-                  }, withData.length ? 'Actualiser' : 'Charger les streams'),
+                    disabled: isLoading || !localStorage.getItem('strava_token') || !totalMass,
+                    style:{padding:'10px 16px',border:'2px solid #ec3013',background: (!localStorage.getItem('strava_token')||!totalMass)?'#bab6b6':'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor: (!localStorage.getItem('strava_token')||!totalMass)?'not-allowed':'pointer'}
+                  }, withData.length ? 'Recalculer' : 'Calculer la courbe'),
                   isLoading && h('button',{type:'button',
                     onClick:()=>{ wattFetchAbort.current = true; setWattFetchStatus('idle'); },
                     style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
@@ -1398,8 +1425,8 @@ function App() {
             ),
             h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
               data.filter(a=>a.sport==='Vélo').some(a=>wattStreams[a.id] instanceof Float32Array)
-                ? "Meilleure puissance moyenne par fenêtre glissante. Survole pour voir W, kJ et W/kg."
-                : "Clique sur « Charger les streams » pour calculer la vraie courbe de puissance depuis les données seconde par seconde."
+                ? "Puissance estimée par fenêtre glissante seconde par seconde (modèle physique Crr/CdA). Survole pour voir W, kJ et W/kg."
+                : "Clique sur « Calculer la courbe » pour fetcher les streams vitesse/altitude de chaque sortie et calculer la puissance estimée seconde par seconde."
             ),
             h('div',{style:{height:'calc(100vh - 480px)',minHeight:'320px'}},h('canvas',{ref:powerRef}))
           )
