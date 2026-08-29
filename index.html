@@ -287,6 +287,15 @@ function App() {
   const [expanded, setExpanded] = useState(false);
   const [powRange, setPowRange] = useState(90);
   const [powCompare, setPowCompare] = useState(365);
+  // Dates libres pour la courbe de puissance (ISO strings YYYY-MM-DD)
+  const todayStr = new Date().toISOString().slice(0,10);
+  const ago90Str = new Date(Date.now()-90*86400000).toISOString().slice(0,10);
+  const ago180Str = new Date(Date.now()-180*86400000).toISOString().slice(0,10);
+  const ago365Str = new Date(Date.now()-365*86400000).toISOString().slice(0,10);
+  const [powDateA0, setPowDateA0] = useState(ago90Str);  // période A : début
+  const [powDateA1, setPowDateA1] = useState(todayStr);  // période A : fin
+  const [powDateB0, setPowDateB0] = useState(ago365Str); // période B : début
+  const [powDateB1, setPowDateB1] = useState(ago180Str); // période B : fin
   const [paceRange, setPaceRange] = useState(90);
   const [paceCompare, setPaceCompare] = useState(365);
   const [hrRange, setHrRange] = useState(90);
@@ -482,19 +491,35 @@ function App() {
     return d.filter(a => a.date.getTime() >= start && a.date.getTime() < end && (sp === 'Tous' || a.sport === sp));
   }
 
+  // Durées en secondes pour la courbe de puissance — axe X log-like
   const POWER_DURATIONS = [
-    { s:5,l:'5 s' },{ s:15,l:'15 s' },{ s:30,l:'30 s' },{ s:60,l:'1 min' },
-    { s:120,l:'2 min' },{ s:300,l:'5 min' },{ s:600,l:'10 min' },{ s:1200,l:'20 min' },
-    { s:1800,l:'30 min' },{ s:3600,l:'1 h' },{ s:5400,l:'1 h 30' },{ s:10800,l:'3 h' },
+    { s:5,l:'5 s' },{ s:10,l:'10 s' },{ s:15,l:'15 s' },{ s:30,l:'30 s' },{ s:60,l:'1 min' },
+    { s:120,l:'2 min' },{ s:180,l:'3 min' },{ s:300,l:'5 min' },{ s:420,l:'7 min' },
+    { s:600,l:'10 min' },{ s:1200,l:'20 min' },{ s:1800,l:'30 min' },
+    { s:3600,l:'1 h' },{ s:5400,l:'1 h 30' },{ s:10800,l:'3 h' },
   ];
+  // powerCurveByDate : retourne { watts, joules } par durée, entre deux dates ISO
+  function powerCurveByDate(d0, d1) {
+    const start = new Date(d0).getTime(), end = new Date(d1).getTime() + 86400000;
+    const rides = data.filter(a => a.sport==='Vélo' && (a.power||a.maxPower) && a.secs && a.date.getTime()>=start && a.date.getTime()<end);
+    return POWER_DURATIONS.map(d => {
+      let bestW = null;
+      rides.forEach(a => {
+        if (a.secs < d.s) {
+          if (d.s <= 60 && a.maxPower) bestW = Math.max(bestW||0, a.maxPower);
+          return;
+        }
+        if (a.power) bestW = Math.max(bestW||0, a.power);
+        if (d.s <= 60 && a.maxPower) bestW = Math.max(bestW||0, a.maxPower);
+      });
+      return bestW !== null ? { w: bestW, j: Math.round(bestW * d.s) } : null;
+    });
+  }
   function powerCurve(days, offset) {
     const end = Date.now() - (offset||0)*days*86400000, start = end - days*86400000;
-    const rides = data.filter(a => a.sport==='Vélo' && a.power && a.secs && a.date.getTime()>=start && a.date.getTime()<end);
-    return POWER_DURATIONS.map(d => {
-      let best = null;
-      rides.forEach(a => { if (a.secs<d.s) { if (d.s<=60&&a.maxPower) best=Math.max(best||0,a.maxPower); return; } best=Math.max(best||0,a.power); if (d.s<=60&&a.maxPower) best=Math.max(best,a.maxPower); });
-      return best !== null ? best : 0;
-    });
+    const d0 = new Date(start).toISOString().slice(0,10);
+    const d1 = new Date(end).toISOString().slice(0,10);
+    return powerCurveByDate(d0, d1).map(v => v ? v.w : 0);
   }
   const PACE_DISTANCES = [{ d:1,l:'1 km'},{d:2,l:'2 km'},{d:5,l:'5 km'},{d:10,l:'10 km'},{d:15,l:'15 km'},{d:21.1,l:'Semi'},{d:30,l:'30 km'},{d:42.2,l:'Marathon'}];
   const HR_BINS = [{ min:100,max:120,l:'100-120'},{min:120,max:130,l:'120-130'},{min:130,max:140,l:'130-140'},{min:140,max:150,l:'140-150'},{min:150,max:160,l:'150-160'},{min:160,max:170,l:'160-170'},{min:170,max:180,l:'170-180'},{min:180,max:200,l:'180+'}];
@@ -530,19 +555,65 @@ function App() {
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Puissance') return;
     chartDefaults();
+    const curveA = powerCurveByDate(powDateA0, powDateA1);
+    const curveB = powerCurveByDate(powDateB0, powDateB1);
+    const wA = curveA.map(v => v ? v.w : null);
+    const wB = curveB.map(v => v ? v.w : null);
+    const jA = curveA.map(v => v ? v.j : null);
+    const jB = curveB.map(v => v ? v.j : null);
+    const ftpVal = Number(profile.ftp) || ftpEstimated || null;
+    const wmaxA = wA.filter(Boolean).length ? Math.max(...wA.filter(Boolean)) : null;
+    const wmaxB = wB.filter(Boolean).length ? Math.max(...wB.filter(Boolean)) : null;
+    const labels = POWER_DURATIONS.map(d => d.l);
+    const datasets = [
+      { label:'Comparaison · W', data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' },
+      { label:'Actuel · W', data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true, yAxisID:'yW' },
+      { label:'Actuel · kJ', data:jA.map(v=>v?Math.round(v/1000*10)/10:null), borderColor:'#ec3013', borderWidth:1.5, borderDash:[3,3], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:0, spanGaps:true, yAxisID:'yJ' },
+      { label:'Compar. · kJ', data:jB.map(v=>v?Math.round(v/1000*10)/10:null), borderColor:'#bab6b6', borderWidth:1.5, borderDash:[3,3], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:0, spanGaps:true, yAxisID:'yJ' },
+    ];
+    if (ftpVal) {
+      datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
+    }
+    const tooltipFtp = ftpVal ? '\nFTP : ' + ftpVal + ' W' : '';
     upsert('power', powerRef, {
       type:'line', plugins:[crosshairPlugin],
-      data:{ labels:POWER_DURATIONS.map(d=>d.l), datasets:[
-        { label:'Comparaison', data:powerCurve(powCompare,1), borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true },
-        { label:'Actuel', data:powerCurve(powRange,0), borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true },
-      ]},
-      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false,axis:'x'}, hover:{animationDuration:0},
-        plugins:{ legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:false}}, tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,position:'nearest',titleFont:{weight:'700'},callbacks:{title:items=>'Effort '+items[0].label,label:c=>c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':c.parsed.y+' W')}} },
-        scales:{ x:{grid:{display:false},title:{display:true,text:"Durée d'effort",color:'#605d5d'}}, y:{grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Puissance (W)',color:'#605d5d'}} },
+      data:{ labels, datasets },
+      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
+        interaction:{mode:'index',intersect:false,axis:'x'}, hover:{animationDuration:0},
+        plugins:{
+          legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16,filter:item=>!item.text.includes('kJ')}},
+          tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:12,displayColors:true,
+            callbacks:{
+              title: items => 'Effort : ' + POWER_DURATIONS[items[0].dataIndex].l,
+              label: c => {
+                if (c.dataset.yAxisID==='yJ') return null;
+                const v = c.parsed.y; if (v===null) return null;
+                if (c.dataset.label.startsWith('FTP')) return '─── ' + c.dataset.label;
+                const iA = c.datasetIndex===1; const iB = c.datasetIndex===0;
+                const jVal = iA ? jA[c.dataIndex] : iB ? jB[c.dataIndex] : null;
+                const jStr = jVal ? '  ·  ' + (jVal>=1000 ? Math.round(jVal/100)/10+' kJ' : jVal+' J') : '';
+                const wpkg = (iA||iB) && profile.weight ? '  ·  ' + Math.round(v/Number(profile.weight)*100)/100+' W/kg' : '';
+                return c.dataset.label.replace(' · W','') + ' : ' + v + ' W' + jStr + wpkg;
+              },
+              afterBody: items => {
+                const lines = [];
+                if (wmaxA) lines.push('Wmax actuel : ' + wmaxA + ' W');
+                if (wmaxB) lines.push('Wmax compar. : ' + wmaxB + ' W');
+                if (ftpVal) lines.push('FTP : ' + ftpVal + ' W' + (profile.weight ? '  ·  ' + Math.round(ftpVal/Number(profile.weight)*100)/100 + ' W/kg' : ''));
+                return lines;
+              }
+            }
+          }
+        },
+        scales:{
+          x:{grid:{display:false},title:{display:true,text:"Durée d'effort",color:'#605d5d'}},
+          yW:{position:'left',grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},beginAtZero:false,title:{display:true,text:'Puissance (W)',color:'#605d5d'}},
+          yJ:{position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Énergie (kJ)',color:'#bab6b6'},ticks:{color:'#bab6b6'}},
+        },
       },
     });
     return () => destroyChart('power');
-  }, [tab, athleteSection, data, powRange, powCompare]);
+  }, [tab, athleteSection, data, powDateA0, powDateA1, powDateB0, powDateB1, profile.ftp, profile.weight, ftpEstimated]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Allure') return;
@@ -743,7 +814,7 @@ function App() {
       const total = (runRes?.minutes||0) + (bikeRes?.minutes||0) + (swimRes?.minutes||0);
       const transitions = 5 + (f.bike ? 3 : 0);
       if (!total) return null;
-      return { minutes: total + transitions, segments: { run: runRes, bike: bikeRes, swim: swimRes } };
+      return { minutes: total + transitions, segTotal: total, transitions, segments: { run: runRes, bike: bikeRes, swim: swimRes } };
     }
     return projectRaceTime(data, race.type, dist, elev, elevNeg);
   })();
@@ -1160,14 +1231,85 @@ function App() {
           )
         ),
         athleteSection==='Puissance'&&h('div',null,
-          h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
-            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période de calcul'),h(BtnRow,{options:mkOptions(powPeriods,powRange,setPowRange)})),
-            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison'),h(BtnRow,{options:mkOptions(powPeriods,powCompare,setPowCompare)}))
+          // Bande de contrôle : deux périodes par date
+          h('section',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',borderBottom:'2px solid #201e1d'}},
+            // Période A (actuelle — rouge)
+            h('div',{style:{padding:'20px 32px',borderRight:'2px solid #201e1d'}},
+              h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}},
+                h('span',{style:{display:'inline-block',width:'16px',height:'3px',background:'#ec3013'}}),
+                h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#ec3013'}},'Période actuelle')
+              ),
+              h('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}},
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Du'),
+                  h('input',{type:'date',value:powDateA0,onChange:e=>setPowDateA0(e.target.value),style:{padding:'8px 10px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
+                ),
+                h('span',{style:{fontSize:'14px',color:'#605d5d',marginTop:'18px'}},'→'),
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Au'),
+                  h('input',{type:'date',value:powDateA1,onChange:e=>setPowDateA1(e.target.value),style:{padding:'8px 10px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
+                ),
+                h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'18px'}},
+                  [{l:'30 j',d:30},{l:'90 j',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>
+                    h('button',{key:o.l,type:'button',onClick:()=>{const t=new Date().toISOString().slice(0,10);const f=new Date(Date.now()-o.d*86400000).toISOString().slice(0,10);setPowDateA0(f);setPowDateA1(t);},style:{...btnStyle(false),padding:'6px 10px',fontSize:'11px'}},o.l)
+                  )
+                )
+              )
+            ),
+            // Période B (comparaison — gris)
+            h('div',{style:{padding:'20px 32px'}},
+              h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}},
+                h('span',{style:{display:'inline-block',width:'16px',height:'2px',background:'#bab6b6',borderTop:'2px dashed #bab6b6'}}),
+                h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison')
+              ),
+              h('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}},
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Du'),
+                  h('input',{type:'date',value:powDateB0,onChange:e=>setPowDateB0(e.target.value),style:{padding:'8px 10px',border:'2px solid #d7d3d3',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
+                ),
+                h('span',{style:{fontSize:'14px',color:'#605d5d',marginTop:'18px'}},'→'),
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Au'),
+                  h('input',{type:'date',value:powDateB1,onChange:e=>setPowDateB1(e.target.value),style:{padding:'8px 10px',border:'2px solid #d7d3d3',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
+                ),
+                h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'18px'}},
+                  [{l:'30 j',d:30},{l:'90 j',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>
+                    h('button',{key:o.l,type:'button',onClick:()=>{const t=new Date(Date.now()-90*86400000).toISOString().slice(0,10);const f=new Date(Date.now()-(90+o.d)*86400000).toISOString().slice(0,10);setPowDateB0(f);setPowDateB1(t);},style:{...btnStyle(false),padding:'6px 10px',fontSize:'11px'}},o.l)
+                  )
+                )
+              )
+            )
           ),
+          // Bande stats : FTP + Wmax des deux périodes
+          // Bande stats FTP / Wmax
+          (()=>{
+            const ftpVal = Number(profile.ftp)||ftpEstimated||null;
+            const curA = powerCurveByDate(powDateA0,powDateA1);
+            const curB = powerCurveByDate(powDateB0,powDateB1);
+            const wmaxA = curA.filter(v=>v).length ? Math.max(...curA.filter(v=>v).map(v=>v.w)) : null;
+            const wmaxB = curB.filter(v=>v).length ? Math.max(...curB.filter(v=>v).map(v=>v.w)) : null;
+            const wkg = ftpVal && profile.weight ? Math.round(ftpVal/Number(profile.weight)*100)/100 : null;
+            const cells = [
+              {label:'FTP', value: ftpVal?ftpVal+' W':'Donnée manquante', sub: wkg?wkg+' W/kg':'—', accent: true},
+              {label:'Wmax · actuel', value: wmaxA?wmaxA+' W':'—', sub: wmaxA&&profile.weight?Math.round(wmaxA/Number(profile.weight)*100)/100+' W/kg':'', accent: false},
+              {label:'Wmax · compar.', value: wmaxB?wmaxB+' W':'—', sub: wmaxB&&profile.weight?Math.round(wmaxB/Number(profile.weight)*100)/100+' W/kg':'', accent: false},
+              {label:'W/kg FTP', value: wkg?wkg+' W/kg':'Donnée manquante', sub: ftpVal?'FTP '+ftpVal+' W':'', accent: false},
+            ];
+            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',borderBottom:'2px solid #201e1d'}},
+              cells.map((c,i)=>h('div',{key:i,style:{padding:'16px 32px 18px',borderRight:i<3?'1px solid #d7d3d3':undefined}},
+                h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
+                h('span',{style:{display:'block',marginTop:'6px',fontSize:'20px',fontWeight:'800',letterSpacing:'-0.02em',color:c.accent&&ftpVal?'#ec3013':'#201e1d'}},c.value),
+                h('span',{style:{display:'block',marginTop:'3px',fontSize:'12px',color:'#605d5d'}},c.sub)
+              ))
+            );
+          })(),
           h('section',{style:{padding:'28px 32px 32px'}},
-            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Courbe de puissance'),h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : '+powLabel(powRange)+' · Gris : '+powLabel(powCompare)+' précédents')),
-            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},data.some(a=>a.sport==='Vélo'&&a.power)?"Meilleure puissance par durée d'effort. Estimation calculée à partir des moyennes et pics de chaque sortie.":'Donnée manquante — aucune sortie vélo avec capteur de puissance.'),
-            h('div',{style:{height:'calc(100vh - 320px)',minHeight:'380px'}},h('canvas',{ref:powerRef}))
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Courbe de puissance'),
+              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Axe droit pointillé : énergie (kJ)')
+            ),
+            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},data.some(a=>a.sport==='Vélo'&&(a.power||a.maxPower))?"Meilleure puissance par durée d'effort. Survole pour voir la puissance, les joules et les W/kg.":'Donnée manquante — aucune sortie vélo avec capteur de puissance.'),
+            h('div',{style:{height:'calc(100vh - 380px)',minHeight:'360px'}},h('canvas',{ref:powerRef}))
           )
         ),
         athleteSection==='Allure'&&h('div',null,
@@ -1453,8 +1595,12 @@ function App() {
                           )
                         )
                       ),
+                      projResult.transitions && h('div',{key:'trans',style:{display:'flex',alignItems:'baseline',gap:'8px',opacity:0.6}},
+                        h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d',minWidth:'42px'}},'T1+T2'),
+                        h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.01em'}},'+'+projResult.transitions+' min')
+                      ),
                       h('div',{style:{marginTop:'4px',paddingTop:'4px',borderTop:'1px solid #d7d3d3',fontSize:'11px',color:'#605d5d'}},
-                        'Transitions estimées incluses · Riegel + Minetti'
+                        'Riegel + Minetti · total ' + fmtProjected(projResult.minutes)
                       )
                     )
                   : projResult&&h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},projNote)
