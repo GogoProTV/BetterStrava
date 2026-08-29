@@ -1,4 +1,3 @@
-// api/exchange-token.js
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -6,26 +5,23 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const { code, refresh_token } = req.query;
-  const CLIENT_ID     = process.env.STRAVA_CLIENT_ID;
-  const CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
 
-  if (!CLIENT_ID || !CLIENT_SECRET) {
-    return res.status(500).json({ error: 'STRAVA_CLIENT_ID ou STRAVA_CLIENT_SECRET manquant' });
+  const CLIENT_ID     = process.env.STRAVA_CLIENT_ID || '274766';
+  const CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET
+                     || process.env.STRAVA_SECRET_CLIENT_ID
+                     || null;
+
+  if (!CLIENT_SECRET) {
+    return res.status(500).json({ error: 'CLIENT_SECRET introuvable' });
   }
 
   let params;
   if (refresh_token) {
-    params = {
-      client_id: CLIENT_ID, client_secret: CLIENT_SECRET,
-      grant_type: 'refresh_token', refresh_token,
-    };
+    params = { client_id: CLIENT_ID, client_secret: CLIENT_SECRET, grant_type: 'refresh_token', refresh_token };
   } else if (code) {
-    params = {
-      client_id: CLIENT_ID, client_secret: CLIENT_SECRET,
-      grant_type: 'authorization_code', code,
-    };
+    params = { client_id: CLIENT_ID, client_secret: CLIENT_SECRET, grant_type: 'authorization_code', code };
   } else {
-    return res.status(400).json({ error: 'Parametre code ou refresh_token requis' });
+    return res.status(400).json({ error: 'code ou refresh_token requis' });
   }
 
   try {
@@ -35,7 +31,7 @@ module.exports = async function handler(req, res) {
       body: new URLSearchParams(params).toString(),
     });
     const data = await r.json();
-    return res.status(r.status).json(data);
+    return res.status(r.ok ? 200 : r.status).json(data);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
