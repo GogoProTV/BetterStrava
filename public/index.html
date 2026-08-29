@@ -63,14 +63,16 @@ function navStyle(active, sub) {
   };
 }
 function deltaChip(pct, betterHigh) {
-  if (pct === null || !isFinite(pct)) return { text: '—', style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', background: '#eae9e9', color: '#605d5d' }, arrow: '→', arrowStyle: { fontSize: '15px', color: '#605d5d' } };
+  if (pct === null || !isFinite(pct)) return { text: '—', style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', background: '#eae9e9', color: '#605d5d' }, arrow: '', arrowStyle: { fontSize: '13px', color: '#605d5d' } };
   const good = betterHigh ? pct > 0 : pct < 0;
   const flat = pct === 0;
+  const bad = !good && !flat;
+  // Flèche vers le bas et texte négatif masqués — on n'affiche rien si mauvais
   return {
-    text: (pct > 0 ? '+' : '') + pct + '%',
-    style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ffe0d9' : '#eae9e9', color: flat ? '#605d5d' : good ? '#ae1800' : '#444141' },
-    arrow: flat ? '→' : pct > 0 ? '▲' : '▼',
-    arrowStyle: { fontSize: '13px', lineHeight: '1', color: flat ? '#605d5d' : good ? '#ec3013' : '#605d5d' },
+    text: bad ? '' : flat ? '—' : '+' + pct + '%',
+    style: { padding: bad ? '0' : '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ffe0d9' : 'transparent', color: flat ? '#605d5d' : good ? '#ae1800' : 'transparent' },
+    arrow: good ? '▲' : '',
+    arrowStyle: { fontSize: '13px', lineHeight: '1', color: good ? '#ec3013' : 'transparent' },
   };
 }
 
@@ -232,6 +234,7 @@ function App() {
   const [athleteSection, setAthleteSection] = useState('Condition physique');
   const [view, setView] = useState(8);
   const [sport, setSport] = useState('Tous');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [range, setRange] = useState(180);
   const [showElev, setShowElev] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -564,7 +567,7 @@ function App() {
       const pct = (a, b) => b > 0 ? Math.round(((a - b) / b) * 100) : null;
       const mkStat = (label, value, pctv) => {
         const chip = deltaChip(pctv, true);
-        return { label, value: value || 'Donnée manquante', arrow: chip.arrow, arrowStyle: chip.arrowStyle, delta: chip.text, deltaStyle: chip.style };
+        return { label, value: value || '0', arrow: chip.arrow, arrowStyle: chip.arrowStyle, delta: chip.text, deltaStyle: chip.style };
       };
       const avgF = cur.list.length ? cur.list.reduce((s, a) => s + (a.fatigue || 3), 0) / cur.list.length : 0;
       const daysList = dows.map((dow, i) => {
@@ -606,6 +609,60 @@ function App() {
         days: daysList,
       };
     }).reverse();
+  }
+
+  // ── Sports dynamiques (top 3 de l'athlète) ───────────────────────────────
+  const sportCounts = {};
+  data.forEach(a => { sportCounts[a.sport] = (sportCounts[a.sport] || 0) + a.time; });
+  const sortedSports = Object.keys(sportCounts).sort((a, b) => sportCounts[b] - sportCounts[a]);
+  const topSports = sortedSports.slice(0, 3);
+  const otherSports = sortedSports.slice(3);
+
+  function SportSelector() {
+    const btnBase = { padding: '9px 14px', border: '2px solid #201e1d', fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: 'pointer' };
+    const activeSt = { ...btnBase, background: '#ec3013', borderColor: '#ec3013', color: '#ffffff' };
+    const inactiveSt = { ...btnBase, background: 'transparent', color: '#201e1d' };
+
+    return h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', position: 'relative', alignItems: 'flex-start' } },
+      // Bouton Tous
+      h('button', {
+        type: 'button', onClick: () => { setSport('Tous'); setDropdownOpen(false); },
+        style: sport === 'Tous' ? activeSt : inactiveSt,
+        onMouseEnter: e => { if (sport !== 'Tous') e.currentTarget.style.background = '#ffe0d9'; },
+        onMouseLeave: e => { if (sport !== 'Tous') e.currentTarget.style.background = 'transparent'; },
+      }, 'Tous'),
+      // Boutons top sports
+      topSports.map(sp =>
+        h('button', {
+          key: sp, type: 'button', onClick: () => { setSport(sp); setDropdownOpen(false); },
+          style: sport === sp ? activeSt : inactiveSt,
+          onMouseEnter: e => { if (sport !== sp) e.currentTarget.style.background = '#ffe0d9'; },
+          onMouseLeave: e => { if (sport !== sp) e.currentTarget.style.background = 'transparent'; },
+        }, sp)
+      ),
+      // Bouton Autre avec menu déroulant si nécessaire
+      otherSports.length > 0 && h('div', { style: { position: 'relative' } },
+        h('button', {
+          type: 'button', onClick: () => setDropdownOpen(o => !o),
+          style: otherSports.includes(sport) ? activeSt : inactiveSt,
+          onMouseEnter: e => { if (!otherSports.includes(sport)) e.currentTarget.style.background = '#ffe0d9'; },
+          onMouseLeave: e => { if (!otherSports.includes(sport)) e.currentTarget.style.background = 'transparent'; },
+        }, otherSports.includes(sport) ? sport : 'Autre ▾'),
+        dropdownOpen && h('div', {
+          style: { position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 100, display: 'flex', flexDirection: 'column', border: '2px solid #201e1d', background: '#f3f2f2', minWidth: '140px' },
+        },
+          otherSports.map(sp =>
+            h('button', {
+              key: sp, type: 'button',
+              onClick: () => { setSport(sp); setDropdownOpen(false); },
+              style: { padding: '10px 14px', border: '0', borderBottom: '1px solid #d7d3d3', background: sport === sp ? '#ec3013' : 'transparent', color: sport === sp ? '#ffffff' : '#201e1d', fontFamily: 'inherit', fontSize: '12px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', textAlign: 'left', cursor: 'pointer' },
+              onMouseEnter: e => { if (sport !== sp) e.currentTarget.style.background = '#ffe0d9'; },
+              onMouseLeave: e => { if (sport !== sp) e.currentTarget.style.background = sport === sp ? '#ec3013' : 'transparent'; },
+            }, sp)
+          )
+        )
+      )
+    );
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -982,7 +1039,7 @@ function App() {
         h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
           h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
             h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Sport'),
-            h(BtnRow, { options: mkOptions([{ label: 'Tous', value: 'Tous' }, { label: 'Course', value: 'Course' }, { label: 'Trail', value: 'Trail' }, { label: 'Vélo', value: 'Vélo' }, { label: 'Natation', value: 'Natation' }], sport, setSport) })
+            h(SportSelector)
           ),
           h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
             h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période · Range'),
@@ -1145,21 +1202,6 @@ function App() {
             )
           )
         ),
-        h('section', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: '2px solid #201e1d' } },
-          seasonStats.map((s, i) =>
-            h('div', { key: i, style: s.cellStyle },
-              h('span', { style: { display: 'block', fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, s.label),
-              h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '8px', marginTop: '8px' } },
-                h('span', { style: { fontSize: '28px', fontWeight: '800', letterSpacing: '-0.02em', lineHeight: '1' } }, s.value),
-                s.unit && h('span', { style: { fontSize: '13px', fontWeight: '600', color: '#605d5d' } }, s.unit)
-              ),
-              h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px' } },
-                h('span', { style: s.arrowStyle }, s.arrow),
-                h('span', { style: s.deltaStyle }, s.delta)
-              )
-            )
-          )
-        )
       )
     )
   );
