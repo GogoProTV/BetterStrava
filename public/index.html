@@ -131,8 +131,12 @@ function defaultValues(type) {
 
 // ── Strava API ────────────────────────────────────────────────────────────────
 const BASE = '/.netlify/functions';
+// client_id est public — hardcodé pour éviter la dépendance réseau au chargement
+const STRAVA_CLIENT_ID = '274766';
+const STRAVA_REDIRECT = 'https://betterstrava.netlify.app/';
 
 async function resolveClientId() {
+  if (STRAVA_CLIENT_ID) return STRAVA_CLIENT_ID;
   try {
     const cfg = await fetch(BASE + '/strava-config').then(r => r.json());
     if (cfg && cfg.client_id) return String(cfg.client_id);
@@ -285,7 +289,8 @@ function App() {
     setStatus('loading'); setError('');
     const id = await resolveClientId();
     if (!id) { setStatus('error'); setError('Identifiant client Strava indisponible côté serveur.'); return; }
-    const redirect = window.location.origin + window.location.pathname;
+    // Redirect URI fixe vers Netlify — Strava exige que ça corresponde exactement à l'URL enregistrée
+    const redirect = STRAVA_REDIRECT;
     window.location.href = 'https://www.strava.com/oauth/authorize?client_id=' + encodeURIComponent(id) +
       '&response_type=code&redirect_uri=' + encodeURIComponent(redirect) +
       '&approval_prompt=auto&scope=activity:read_all,profile:read_all';
