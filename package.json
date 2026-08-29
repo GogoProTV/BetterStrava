@@ -1,9 +1,6 @@
 {
   "name": "better-strava",
   "version": "1.0.0",
-  "description": "Strava but better",
   "private": true,
-  "engines": {
-    "node": ">=18"
-  }
+  "engines": { "node": ">=18" }
 }
