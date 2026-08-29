@@ -700,7 +700,12 @@ function App() {
       options.map(o=>h('button',{key:o.label,type:'button',onClick:o.onClick,style:btnStyle(o.active),onMouseEnter:e=>e.currentTarget.style.background=o.active?'#ec3013':'#ffe0d9',onMouseLeave:e=>e.currentTarget.style.background=o.active?'#ec3013':'transparent'},o.label))
     );
   }
-  const kpiDef=[
+  const isSwimFilter = sport === 'Natation';
+  const kpiDef = isSwimFilter ? [
+    {label:'Distance',  unit:'km',    get:l=>sum(l,'dist'),                                                            pace:false},
+    {label:'Temps',     unit:'h',     get:l=>sum(l,'time')/60,                                                        pace:false},
+    {label:'Allure moy.',unit:'/100m',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d/10:0;},              pace:true},
+  ] : [
     {label:'Distance',unit:'km',get:l=>sum(l,'dist'),pace:false},
     {label:'Temps',unit:'h',get:l=>sum(l,'time')/60,pace:false},
     {label:'Dénivelé',unit:'m',get:l=>sum(l,'elev'),pace:false},
@@ -716,21 +721,32 @@ function App() {
         },pace:false}
       : sport==='Tous'
         ? {label:'BPM moyen',unit:'bpm',get:l=>{const h2=l.filter(a=>a.hr);return h2.length?h2.reduce((s,a)=>s+a.hr,0)/h2.length:0;},pace:false}
-        : sport==='Natation'
-          ? {label:'Allure moy.',unit:'/100m',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d/10:0;},pace:true}
-          : {label:'Allure moy.',unit:'/km',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d:0;},pace:true},
+        : {label:'Allure moy.',unit:'/km',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d:0;},pace:true},
   ];
   const kpis=kpiDef.map((k,i)=>{
-    const c=k.get(curW),pv=k.get(prevW);
+    const nCols = kpiDef.length;
+    const c=k.get(curW), pv=k.get(prevW);
     const pctv=pv>0?Math.round(((c-pv)/pv)*100):null;
     const chip=deltaChip(pctv,!k.pace);
-    const hasDelta = chip.text && chip.text!=='—' && chip.text!=='';
     let txt;
     if (!curW.length||!isFinite(c)||c===0) txt='Donnée manquante';
     else if (k.unit==='bpm') txt=fmtNum(Math.round(c),0);
     else if (k.pace) txt=fmtPace(c);
     else txt=fmtNum(Math.round(c),0);
-    return{label:k.label,unit:txt==='Donnée manquante'?'':k.unit,value:txt,delta:chip.text,deltaNote:hasDelta?'vs période précédente':'',deltaStyle:chip.style,valueStyle:{fontSize:'30px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'0.95'},cellStyle:{minWidth:0,padding:'24px 24px 28px',borderRight:i<3?'2px solid #201e1d':undefined}};
+    // Valeur semaine précédente formatée
+    let prevTxt='0';
+    if (pv>0) {
+      if (k.unit==='bpm') prevTxt=fmtNum(Math.round(pv),0);
+      else if (k.pace) prevTxt=fmtPace(pv);
+      else prevTxt=fmtNum(Math.round(pv),0);
+    }
+    return{
+      label:k.label, unit:txt==='Donnée manquante'?'':k.unit, value:txt,
+      delta:chip.text, deltaStyle:chip.style, arrow:chip.arrow, arrowStyle:chip.arrowStyle,
+      prevTxt, prevUnit: pv>0 ? k.unit : '',
+      valueStyle:{fontSize:'30px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'0.95'},
+      cellStyle:{minWidth:0,padding:'24px 24px 28px',borderRight:i<nCols-1?'2px solid #201e1d':undefined},
+    };
   });
   const p=profile;
   const bmi=p.height>0&&p.weight>0?Math.round((p.weight/Math.pow(p.height/100,2))*10)/10:null;
@@ -1111,7 +1127,7 @@ function App() {
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),h(SportSelector)),
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période · Range'),h(BtnRow,{options:mkOptions([{label:'30 j',value:30},{label:'90 j',value:90},{label:'6 mois',value:180},{label:'12 mois',value:365}],range,setRange)}))
         ),
-        h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4, minmax(0, 1fr))',borderBottom:'2px solid #201e1d'}},
+        h('section',{style:{display:'grid',gridTemplateColumns:'repeat('+kpis.length+', minmax(0, 1fr))',borderBottom:'2px solid #201e1d'}},
           kpis.map((kpi,i)=>{
             // Case puissance vélo : cliquable si données manquantes
             const isPowCell = i===3 && sport==='Vélo';
@@ -1127,11 +1143,14 @@ function App() {
                 h('span',{style:kpi.valueStyle},kpi.value),
                 kpi.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},kpi.unit)
               ),
-              h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'8px',marginTop:'14px'}},
-                h('span',{style:kpi.deltaStyle},kpi.delta),
-                h('span',{style:{fontSize:'12px',color:'#605d5d'}},kpi.deltaNote)
+              h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'10px'}},
+                kpi.arrow&&h('span',{style:kpi.arrowStyle},kpi.arrow),
+                kpi.delta&&kpi.delta!=='—'&&h('span',{style:{...kpi.deltaStyle,padding:'2px 7px'}},kpi.delta),
+                h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},
+                  'S−1 : '+(kpi.prevTxt||'0')+(kpi.prevUnit?' '+kpi.prevUnit:'')
+                )
               ),
-              powMissing && h('div',{style:{marginTop:'8px',fontSize:'11px',color:'#ec3013',fontWeight:'600',letterSpacing:'0.04em'}},
+              powMissing && h('div',{style:{marginTop:'6px',fontSize:'11px',color:'#ec3013',fontWeight:'600',letterSpacing:'0.04em'}},
                 '→ Renseigne le profil'
               )
             );
