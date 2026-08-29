@@ -195,9 +195,6 @@ function zoneMinutes(list, fcMax) {
 }
 
 // ── Estimation de puissance vélo (modèle physique) ───────────────────────────
-// P = P_roulement + P_aero + P_gravité + P_inertie(≈0 en régime établi)
-// Crr = 0.008 (asphalte), CdA = 0.35 m² (position route classique)
-// rho_air = 1.225 kg/m³, eta = 0.97 (rendement transmission)
 const CRR = 0.008;
 const CDA = 0.35;
 const RHO = 1.225;
@@ -206,7 +203,7 @@ const G   = 9.81;
 
 function estimatePower(v_kmh, slope_pct, totalMassKg) {
   if (!v_kmh || v_kmh <= 0 || !totalMassKg || totalMassKg <= 0) return null;
-  const v = v_kmh / 3.6; // m/s
+  const v = v_kmh / 3.6;
   const grade = (slope_pct || 0) / 100;
   const P_roll  = CRR * totalMassKg * G * v;
   const P_aero  = 0.5 * CDA * RHO * v * v * v;
@@ -214,12 +211,11 @@ function estimatePower(v_kmh, slope_pct, totalMassKg) {
   return Math.max(0, Math.round((P_roll + P_aero + P_grav) / ETA));
 }
 
-// Puissance estimée moyenne pour une liste d'activités vélo
 function bikeActsEstimatedPower(acts, totalMassKg) {
   const rides = acts.filter(a => a.sport === 'Vélo' && a.dist && a.time);
   if (!rides.length || !totalMassKg) return null;
   const pList = rides.map(a => {
-    const v = a.dist / (a.time / 60); // km/h moyen
+    const v = a.dist / (a.time / 60);
     const slope = a.elev && a.dist ? (a.elev / (a.dist * 1000)) * 100 : 0;
     return estimatePower(v, slope, totalMassKg);
   }).filter(v => v !== null);
@@ -228,12 +224,7 @@ function bikeActsEstimatedPower(acts, totalMassKg) {
 }
 
 // ── Calculateur de temps projeté ────────────────────────────────────────────
-// Modèle Riegel : t2 = t1 × (d2/d1)^1.06  (exposant fatigue standard)
-// Correction dénivelé Minetti : coût énergétique en fonction de la pente
-// eq_dist = dist × (1 + D+ × 0.01)  (approximation : +1% par tranche de 100m/10km)
-
 function projectRaceTime(activities, raceType, raceDist, raceElev, raceElevNeg) {
-  // Distances de référence par sport
   const runSports = ['Course', 'Trail'];
   const bikeSports = ['Vélo'];
   const swimSports = ['Natation'];
@@ -247,30 +238,21 @@ function projectRaceTime(activities, raceType, raceDist, raceElev, raceElevNeg) 
   );
   if (!candidates.length || !raceDist) return null;
 
-  // Trouver la sortie avec la meilleure allure sur une distance ≥ 60% de la cible
-  // ou la plus longue dispo si pas assez
   const minDist = Math.min(raceDist * 0.6, 10);
   const usable = candidates.filter(a => a.dist >= minDist);
   const pool = usable.length ? usable : candidates;
-  // Choisir la sortie la plus rapide (meilleure allure = min pace) avec dist raisonnable
   pool.sort((a, b) => {
-    // Pondérer par la distance pour ne pas extrapoler depuis 1 km
     const scoreA = a.pace / Math.log(a.dist + 1);
     const scoreB = b.pace / Math.log(b.dist + 1);
     return scoreA - scoreB;
   });
   const ref = pool[0];
 
-  // Correction dénivelé : coût énergétique Minetti simplifié
-  // Temps équivalent plat = temps_reel × (1 - facteur_gain_elev)
-  // On utilise : chaque 100m D+ sur 10 km ≈ +2 min/km d'équivalent
   const refElevFactor = ref.elev && ref.dist
-    ? 1 + (ref.elev / (ref.dist * 1000)) * 4.5   // pente positive
+    ? 1 + (ref.elev / (ref.dist * 1000)) * 4.5
     : 1;
-  const refElevNegFactor = 1; // descente neutre sur sorties mixtes
   const refPaceFlat = ref.pace / refElevFactor;
 
-  // Cible : distance équivalente plat
   const raceElevFactor = raceElev && raceDist
     ? 1 + (raceElev / (raceDist * 1000)) * 4.5
     : 1;
@@ -280,7 +262,6 @@ function projectRaceTime(activities, raceType, raceDist, raceElev, raceElevNeg) 
   const raceEqDist = raceDist * raceElevFactor * raceElevNegFactor;
   const refEqDist  = ref.dist  * refElevFactor;
 
-  // Riegel : t2 = t1 × (d2/d1)^1.06
   const riegelExp = 1.06;
   const projPaceFlat = refPaceFlat * Math.pow(raceEqDist / refEqDist, riegelExp - 1);
   const projMinutes  = projPaceFlat * raceEqDist;
@@ -318,7 +299,7 @@ function App() {
 
   // ── Accordéon inline ─────────────────────────────────────────────────────
   const [openRowId, setOpenRowId] = useState(null);
-  const [rowStreams, setRowStreams] = useState({}); // id → streams | 'loading' | { error: msg }
+  const [rowStreams, setRowStreams] = useState({});
   const rowChartInsts = useRef({});
 
   const lineRef = useRef(null); const barRef = useRef(null); const dailyRef = useRef(null);
@@ -443,7 +424,7 @@ function App() {
     if (rowChartInsts.current[id]) { rowChartInsts.current[id].destroy(); delete rowChartInsts.current[id]; }
     chartDefaults();
     const isBike = act.sport === 'Vélo';
-    const vis = serieVis || { fc:true, alt:true, vel:true, pow:true };
+    const vis = serieVis || { fc:false, alt:true, vel:true, pow:false };
     const timeData = (streamsData.time && streamsData.time.data) || [];
     const hrData   = (streamsData.heartrate && streamsData.heartrate.data) || [];
     const altData  = (streamsData.altitude && streamsData.altitude.data) || [];
@@ -456,20 +437,23 @@ function App() {
     const thinTime = thin(timeData);
     const usesDist = thinDist.length === thinTime.length && thinDist.length > 0;
     const xLabels = usesDist ? thinDist.map(d => (d / 1000).toFixed(2)) : thinTime.map(t => (t / 60).toFixed(1));
-    // Échelle altitude : min du tracé → min+1000 (fixe pour comparaison inter-activités)
     const altMin = altData.length ? Math.floor(Math.min(...altData) / 10) * 10 : 0;
     const altMax = altMin + 1000;
     const datasets = [];
+    if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(hrData), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
     if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(altData), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
     if (velData.length && vis.vel) {
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => v > 0 ? Math.round((1000 / 60 / v) * 100) / 100 : null;
       datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
+    if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(estPowData), borderColor: '#605d5d', borderWidth: 1.5, borderDash: [4,3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
     const scales = { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } } };
+    if (hrData.length && vis.fc) scales.yHr = { position: 'left', grid: { color: 'rgba(236,48,19,0.12)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
     if (altData.length && vis.alt) scales.yAlt = { position: 'right', min: altMin, max: altMax, grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
     if (velData.length && vis.vel) {
       scales.yPace = { position: 'left', reverse: !isBike, grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#3d3a3a' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
     }
+    if (estPowData.length && vis.pow) scales.yPow = { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'W estimés', color: '#605d5d' }, beginAtZero: true };
     rowChartInsts.current[id] = new Chart(canvasEl, {
       type: 'line', plugins: [crosshairPlugin],
       data: { labels: xLabels, datasets },
@@ -609,7 +593,6 @@ function App() {
     const vals = [...buckets.values()].map(w=>Math.round(w.km*10)/10);
     const elevVals = [...buckets.values()].map(w=>Math.round(w.elev));
     const totalMass = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
-    // Puissance estimée par bucket (vélo uniquement)
     const powVals = [...buckets.keys()].map(k => {
       const bucketActs = acts.filter(a => a.sport==='Vélo' && a.dist && a.time && keyOf(a.date)===k);
       if (!bucketActs.length || !totalMass) return null;
@@ -624,7 +607,6 @@ function App() {
     const datasets = [{ label:'Distance (km)', data:vals, borderColor:'#ec3013', borderWidth:2, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.25, pointRadius:3.5, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, yAxisID:'y' }];
     if (showElev) datasets.push({ label:'D+ (m)', data:elevVals, borderColor:'#201e1d', borderWidth:2, backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#201e1d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y1' });
     if (showEstPow) datasets.push({ label:'Puissance estimée (W)', data:powVals, borderColor:'#605d5d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#605d5d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y2', spanGaps:true });
-    // Index activités par bucket pour le tooltip
     const bucketActsMap = new Map([...buckets.keys()].map(k => [k, acts.filter(a => keyOf(a.date)===k)]));
     const bucketKeys = [...buckets.keys()];
     upsert('line', lineRef, { type:'line', data:{labels,datasets}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
@@ -744,24 +726,21 @@ function App() {
   const load90=sum(cur90,'time')/60, loadPrev=sum(prev90,'time')/60;
   const ready=Math.max(0,Math.min(99,Math.round(52+(weeksDone/plan)*34+(loadPrev>0?Math.min(12,((load90-loadPrev)/loadPrev)*30):0))));
 
-  // Temps projeté sur la course cible
   const projResult = (() => {
     const spec = RACE_CATALOG[race.type];
     if (!spec || !data.length) return null;
     const f = race.values;
-    // Distance principale de course / vélo / natation
     const dist = f.run || f.bike || f.swim || 0;
     const elev = f.runElev || f.bikeElev || 0;
     const elevNeg = f.runElevNeg || 0;
     if (!dist) return null;
-    // Pour triathlon : estimer chaque segment et sommer
     const isTriathlon = race.type.toLowerCase().includes('triathlon') || race.type === 'Ironman' || race.type === 'Triathlon 70.3';
     if (isTriathlon) {
       const runRes  = f.run  ? projectRaceTime(data, 'Marathon', f.run,  f.runElev||0,  f.runElevNeg||0)  : null;
       const bikeRes = f.bike ? projectRaceTime(data, 'Cyclosportive', f.bike, f.bikeElev||0, 0) : null;
       const swimRes = f.swim ? projectRaceTime(data, 'Natation eau libre', f.swim, 0, 0) : null;
       const total = (runRes?.minutes||0) + (bikeRes?.minutes||0) + (swimRes?.minutes||0);
-      const transitions = 5 + (f.bike ? 3 : 0); // T1 + T2 estimés
+      const transitions = 5 + (f.bike ? 3 : 0);
       if (!total) return null;
       return { minutes: total + transitions, segments: { run: runRes, bike: bikeRes, swim: swimRes } };
     }
@@ -807,10 +786,12 @@ function App() {
     );
   }
   const isSwimFilter = sport === 'Natation';
+
+  // ── PATCH 1 : kpiDef natation — 4 cases avec swimWide sur Temps ────────────
   const kpiDef = isSwimFilter ? [
-    {label:'Distance',  unit:'km',    get:l=>sum(l,'dist'),                                                            pace:false},
-    {label:'Temps',     unit:'h',     get:l=>sum(l,'time')/60,                                                        pace:false},
-    {label:'Allure moy.',unit:'/100m',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d/10:0;},              pace:true},
+    {label:'Distance',  unit:'km',    get:l=>sum(l,'dist'),                                                            pace:false, swimWide:false},
+    {label:'Temps',     unit:'h',     get:l=>sum(l,'time')/60,                                                        pace:false, swimWide:true},
+    {label:'Allure moy.',unit:'/100m',get:l=>{const d=sum(l,'dist'),t=sum(l,'time');return d?t/d/10:0;},              pace:true,  swimWide:false},
   ] : [
     {label:'Distance',unit:'km',get:l=>sum(l,'dist'),pace:false},
     {label:'Temps',unit:'h',get:l=>sum(l,'time')/60,pace:false},
@@ -839,7 +820,6 @@ function App() {
     else if (k.unit==='bpm') txt=fmtNum(Math.round(c),0);
     else if (k.pace) txt=fmtPace(c);
     else txt=fmtNum(Math.round(c),0);
-    // Valeur semaine précédente formatée
     let prevTxt='0';
     if (pv>0) {
       if (k.unit==='bpm') prevTxt=fmtNum(Math.round(pv),0);
@@ -852,6 +832,7 @@ function App() {
       prevTxt, prevUnit: pv>0 ? k.unit : '',
       valueStyle:{fontSize:'30px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'0.95'},
       cellStyle:{minWidth:0,padding:'24px 24px 28px',borderRight:i<nCols-1?'2px solid #201e1d':undefined},
+      def: k,
     };
   });
   const p=profile;
@@ -864,21 +845,15 @@ function App() {
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
   const athleteSections=['Condition physique','Puissance','Allure','Fréquence cardiaque'];
 
-  // ── Estimation FTP depuis les données ────────────────────────────────────
-  // FTP = meilleure puissance estimée sur 20 min × 0.95
-  // On utilise les sorties vélo avec vitesse + dénivelé + masse système
   const ftpEstimated = (() => {
     const totalMassFtp = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
     if (!totalMassFtp) return null;
     const rides = data.filter(a => a.sport==='Vélo' && a.dist && a.time && a.secs >= 1200);
     if (!rides.length) return null;
-    // Pour chaque sortie de ≥20 min, estimer la puissance moyenne (proxy 20 min ≈ puissance moyenne de la sortie)
-    // Pour les sorties longues on pondère par la durée (effort soutenu)
     const candidates = rides.map(a => {
       const v = a.dist / (a.time / 60);
       const slope = a.elev && a.dist ? (a.elev / (a.dist * 1000)) * 100 : 0;
       const pEst = estimatePower(v, slope, totalMassFtp);
-      // Coefficient de confiance : sorties entre 20 et 60 min sont les meilleures proxies
       const confBonus = (a.time >= 20 && a.time <= 65) ? 1.05 : 1.0;
       return pEst ? Math.round(pEst * confBonus) : null;
     }).filter(Boolean);
@@ -886,6 +861,7 @@ function App() {
     const best20min = Math.max(...candidates);
     return Math.round(best20min * 0.95);
   })();
+
   function RowDetail({ act, id }) {
     const canvasRef = useRef(null);
     const st = rowStreams[id];
@@ -895,11 +871,10 @@ function App() {
     const isBike = act.sport === 'Vélo';
     const isSwim = act.sport === 'Natation';
 
-    // Visibilité des séries (boutons toggle)
-    const [serieVis, setSerieVis] = useState({ fc: true, alt: true, vel: true, pow: true });
+    // ── PATCH 3 : serieVis par défaut — altitude + allure/vitesse activés, FC + puissance désactivés
+    const [serieVis, setSerieVis] = useState({ fc:false, alt:true, vel:true, pow:false });
     function toggleSerie(k) { setSerieVis(v => ({ ...v, [k]: !v[k] })); }
 
-    // Calcul puissance estimée par seconde depuis les streams
     const totalMass = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
     const velArr  = hasData && st.velocity_smooth && st.velocity_smooth.data ? st.velocity_smooth.data : [];
     const altArr  = hasData && st.altitude   && st.altitude.data   ? st.altitude.data   : [];
@@ -935,7 +910,6 @@ function App() {
       };
     }, [hasData, totalMass, serieVis]);
 
-    // KPIs selon sport
     let detailKpis;
     if (isBike) {
       detailKpis = [
@@ -965,7 +939,6 @@ function App() {
     }
     const nCols = detailKpis.length;
 
-    // Boutons séries visibles selon disponibilité des données
     const serieBtns = [
       hrArr.length   && { k:'fc',  label:'FC',        color:'#ec3013' },
       altArr.length  && { k:'alt', label:'Altitude',  color:'#201e1d' },
@@ -990,19 +963,16 @@ function App() {
     return h('tr', { style:{ background:'#fdf1ee' } },
       h('td', { colSpan: 7, style:{ padding:'0', borderBottom:'2px solid #201e1d' } },
         h('div', { style:{ padding:'20px 0 24px 28px', borderTop:'1px solid #d7d3d3' } },
-          // Nom de l'activité
           h('div', { style:{ marginBottom:'14px', paddingRight:'32px' } },
             h('span', { style:{ fontSize:'18px', fontWeight:'800', letterSpacing:'-0.02em' } }, act.name || 'Donnée manquante'),
             h('span', { style:{ marginLeft:'12px', fontSize:'11px', fontWeight:'600', letterSpacing:'0.1em', textTransform:'uppercase', color:'#ec3013' } }, act.sport+' · '+act.date.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}))
           ),
-          // Bandeau info masse vélo
           isBike && totalMass === 0 && h('p', { style:{ margin:'0 32px 10px 0', fontSize:'11px', color:'#605d5d', fontStyle:'italic' } },
             'Renseigne le poids cycliste et le poids vélo dans le profil pour activer la puissance estimée.'
           ),
           isBike && totalMass > 0 && h('p', { style:{ margin:'0 32px 10px 0', fontSize:'11px', color:'#605d5d' } },
             'Puissance estimée · Crr '+CRR+' · CdA '+CDA+' m² · masse système '+totalMass.toFixed(1)+' kg'
           ),
-          // KPIs
           h('div', { style:{ display:'grid', gridTemplateColumns:'repeat('+nCols+',1fr)', gap:'0', borderBottom:'1px solid #d7d3d3', marginBottom:'20px' } },
             detailKpis.map((kpi,i) =>
               h('div', { key:i, style:{ padding:'10px 14px 12px', borderRight: i<nCols-1 ? '1px solid #d7d3d3' : undefined } },
@@ -1014,7 +984,6 @@ function App() {
               )
             )
           ),
-          // En-tête graphique avec boutons séries
           h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'16px', marginBottom:'12px', paddingRight:'32px' } },
             h('span', { style:{ fontSize:'12px', fontWeight:'700', letterSpacing:'0.06em', textTransform:'uppercase' } }, 'Données seconde par seconde'),
             serieBtns.length > 0 && h('div', { style:{ display:'flex', gap:'8px' } }, serieBtns.map(serBtn))
@@ -1233,13 +1202,15 @@ function App() {
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),h(SportSelector)),
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période · Range'),h(BtnRow,{options:mkOptions([{label:'30 j',value:30},{label:'90 j',value:90},{label:'6 mois',value:180},{label:'12 mois',value:365}],range,setRange)}))
         ),
-        h('section',{style:{display:'grid',gridTemplateColumns:'repeat('+kpis.length+', minmax(0, 1fr))',borderBottom:'2px solid #201e1d'}},
+
+        // ── PATCH 2 : grille KPIs — colonnes 1fr 2fr 1fr pour natation, delta chips inclus ──
+        h('section',{style:{display:'grid',gridTemplateColumns:isSwimFilter?'1fr 2fr 1fr':'repeat('+kpis.length+', minmax(0, 1fr))',borderBottom:'2px solid #201e1d'}},
           kpis.map((kpi,i)=>{
-            // Case puissance vélo : cliquable si données manquantes
             const isPowCell = i===3 && sport==='Vélo';
             const powMissing = isPowCell && kpi.value==='Donnée manquante';
             const cellClick = powMissing ? ()=>setTab('profil') : undefined;
-            return h('div',{key:i,style:{...kpi.cellStyle,cursor:powMissing?'pointer':undefined,position:'relative'},
+            const isSwimTimeCell = isSwimFilter && kpi.def && kpi.def.swimWide;
+            return h('div',{key:i,style:{...kpi.cellStyle,borderRight:isSwimTimeCell?'none':kpi.cellStyle.borderRight,cursor:powMissing?'pointer':undefined,position:'relative'},
               onClick:cellClick,
               onMouseEnter:e=>{if(powMissing){e.currentTarget.style.background='#fdf1ee';}},
               onMouseLeave:e=>{if(powMissing){e.currentTarget.style.background='transparent';}}
@@ -1299,7 +1270,6 @@ function App() {
           )
         ),
 
-        // ── Table des séances — accordéon inline ─────────────────────────────
         h('section',{style:{padding:'28px 32px 48px'}},
           h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'20px'}},
             h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Séances de la sélection'),
