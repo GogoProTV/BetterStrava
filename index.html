@@ -65,11 +65,12 @@ function deltaChip(pct, betterHigh) {
   const good = betterHigh ? pct > 0 : pct < 0;
   const flat = pct === 0;
   const bad = !good && !flat;
+  const sign = pct > 0 ? '+' : '';
   return {
-    text: bad ? '' : flat ? '—' : '+' + pct + '%',
-    style: { padding: bad ? '0' : '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ffe0d9' : 'transparent', color: flat ? '#605d5d' : good ? '#ae1800' : 'transparent' },
-    arrow: good ? '▲' : '',
-    arrowStyle: { fontSize: '13px', lineHeight: '1', color: good ? '#ec3013' : 'transparent' },
+    text: flat ? '—' : sign + pct + '%',
+    style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ffe0d9' : '#eae9e9', color: flat ? '#605d5d' : good ? '#ae1800' : '#605d5d' },
+    arrow: good ? '▲' : bad ? '▼' : '',
+    arrowStyle: { fontSize: '13px', lineHeight: '1', color: good ? '#ec3013' : bad ? '#605d5d' : 'transparent' },
   };
 }
 
@@ -440,20 +441,20 @@ function App() {
     const altMin = altData.length ? Math.floor(Math.min(...altData) / 10) * 10 : 0;
     const altMax = altMin + 1000;
     const datasets = [];
-    if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(hrData), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
+    if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(hrData), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
     if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(altData), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
     if (velData.length && vis.vel) {
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => v > 0 ? Math.round((1000 / 60 / v) * 100) / 100 : null;
       datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
-    if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(estPowData), borderColor: '#605d5d', borderWidth: 1.5, borderDash: [4,3], backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
+    if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(estPowData), borderColor: '#7c4dbc', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
     const scales = { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } } };
     if (hrData.length && vis.fc) scales.yHr = { position: 'left', grid: { color: 'rgba(236,48,19,0.12)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
     if (altData.length && vis.alt) scales.yAlt = { position: 'right', min: altMin, max: altMax, grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
     if (velData.length && vis.vel) {
       scales.yPace = { position: 'left', reverse: !isBike, grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#3d3a3a' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
     }
-    if (estPowData.length && vis.pow) scales.yPow = { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'W estimés', color: '#605d5d' }, beginAtZero: true };
+    if (estPowData.length && vis.pow) scales.yPow = { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'W estimés', color: '#7c4dbc' }, beginAtZero: true };
     rowChartInsts.current[id] = new Chart(canvasEl, {
       type: 'line', plugins: [crosshairPlugin],
       data: { labels: xLabels, datasets },
@@ -943,7 +944,7 @@ function App() {
       hrArr.length   && { k:'fc',  label:'FC',        color:'#ec3013' },
       altArr.length  && { k:'alt', label:'Altitude',  color:'#201e1d' },
       velArr.length  && { k:'vel', label: isBike?'Vitesse':'Allure', color:'#3d3a3a' },
-      estPowArr.length && { k:'pow', label:'Puissance', color:'#605d5d' },
+      estPowArr.length && { k:'pow', label:'Puissance', color:'#7c4dbc' },
     ].filter(Boolean);
 
     function serBtn(b) {
@@ -955,7 +956,7 @@ function App() {
         onMouseEnter: e => { e.currentTarget.style.borderColor = b.color; e.currentTarget.style.color = b.color; e.currentTarget.style.cursor = 'pointer'; },
         onMouseLeave: e => { e.currentTarget.style.borderColor = on?b.color:'#d7d3d3'; e.currentTarget.style.color = on?b.color:'#bab6b6'; },
       },
-        h('span', { style:{ width:'10px', height:'2px', background: on?b.color:'#bab6b6', display:'inline-block', ...(b.k==='pow'?{borderTop:'2px dashed '+b.color, background:'transparent', height:'0'}:{}) } }),
+        h('span', { style:{ width:'10px', height:'2px', background: on?b.color:'#bab6b6', display:'inline-block' } }),
         b.label
       );
     }
@@ -1210,7 +1211,8 @@ function App() {
             const powMissing = isPowCell && kpi.value==='Donnée manquante';
             const cellClick = powMissing ? ()=>setTab('profil') : undefined;
             const isSwimTimeCell = isSwimFilter && kpi.def && kpi.def.swimWide;
-            return h('div',{key:i,style:{...kpi.cellStyle,borderRight:isSwimTimeCell?'none':kpi.cellStyle.borderRight,cursor:powMissing?'pointer':undefined,position:'relative'},
+            const isSwimLastCell = isSwimFilter && !kpi.def.swimWide && i === kpis.length - 1;
+            return h('div',{key:i,style:{...kpi.cellStyle,borderRight:isSwimTimeCell?'none':kpi.cellStyle.borderRight,borderLeft:isSwimLastCell?'2px solid #201e1d':undefined,cursor:powMissing?'pointer':undefined,position:'relative'},
               onClick:cellClick,
               onMouseEnter:e=>{if(powMissing){e.currentTarget.style.background='#fdf1ee';}},
               onMouseLeave:e=>{if(powMissing){e.currentTarget.style.background='transparent';}}
