@@ -655,42 +655,43 @@ function App() {
     const ftpVal = Number(profile.ftp) || ftpEstimated || null;
     const wmaxA = wA.filter(Boolean).length ? Math.max(...wA.filter(Boolean)) : null;
     const wmaxB = wB.filter(Boolean).length ? Math.max(...wB.filter(Boolean)) : null;
+    // "est." si pas de capteur de puissance réelle
+    const hasRealPower = data.some(a => a.sport==='Vélo' && a.power);
+    const hasEstPower = data.filter(a=>a.sport==='Vélo').some(a=>wattStreams[a.id] instanceof Float32Array);
+    const estSuffix = !hasRealPower && hasEstPower ? ' (estimée)' : '';
     const labels = POWER_DURATIONS.map(d => d.l);
     const datasets = [
-      { label:'Comparaison · W', data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' },
-      { label:'Actuel · W', data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true, yAxisID:'yW' },
-      { label:'Actuel · kJ', data:jA.map(v=>v?Math.round(v/1000*10)/10:null), borderColor:'#ec3013', borderWidth:1.5, borderDash:[3,3], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:0, spanGaps:true, yAxisID:'yJ' },
-      { label:'Compar. · kJ', data:jB.map(v=>v?Math.round(v/1000*10)/10:null), borderColor:'#bab6b6', borderWidth:1.5, borderDash:[3,3], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:0, spanGaps:true, yAxisID:'yJ' },
+      { label:'Comparaison'+estSuffix, data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' },
+      { label:'Actuel'+estSuffix, data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true, yAxisID:'yW' },
     ];
     if (ftpVal) {
       datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
     }
-    const tooltipFtp = ftpVal ? '\nFTP : ' + ftpVal + ' W' : '';
     upsert('power', powerRef, {
       type:'line', plugins:[crosshairPlugin],
       data:{ labels, datasets },
       options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
         interaction:{mode:'index',intersect:false,axis:'x'}, hover:{animationDuration:0},
         plugins:{
-          legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16,filter:item=>!item.text.includes('kJ')}},
+          legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}},
           tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:12,displayColors:true,
             callbacks:{
               title: items => 'Effort : ' + POWER_DURATIONS[items[0].dataIndex].l,
               label: c => {
-                if (c.dataset.yAxisID==='yJ') return null;
                 const v = c.parsed.y; if (v===null) return null;
                 if (c.dataset.label.startsWith('FTP')) return '─── ' + c.dataset.label;
                 const iA = c.datasetIndex===1; const iB = c.datasetIndex===0;
                 const jVal = iA ? jA[c.dataIndex] : iB ? jB[c.dataIndex] : null;
                 const jStr = jVal ? '  ·  ' + (jVal>=1000 ? Math.round(jVal/100)/10+' kJ' : jVal+' J') : '';
-                const wpkg = (iA||iB) && profile.weight ? '  ·  ' + Math.round(v/Number(profile.weight)*100)/100+' W/kg' : '';
-                return c.dataset.label.replace(' · W','') + ' : ' + v + ' W' + jStr + wpkg;
+                const wpkg = profile.weight ? '  ·  ' + Math.round(v/Number(profile.weight)*100)/100+' W/kg' : '';
+                return c.dataset.label + ' : ' + v + ' W' + jStr + wpkg;
               },
               afterBody: items => {
                 const lines = [];
                 if (wmaxA) lines.push('Wmax actuel : ' + wmaxA + ' W');
                 if (wmaxB) lines.push('Wmax compar. : ' + wmaxB + ' W');
                 if (ftpVal) lines.push('FTP : ' + ftpVal + ' W' + (profile.weight ? '  ·  ' + Math.round(ftpVal/Number(profile.weight)*100)/100 + ' W/kg' : ''));
+                if (!hasRealPower && hasEstPower) lines.push('⚠ Puissance estimée (modèle physique, pas de capteur)');
                 return lines;
               }
             }
@@ -699,7 +700,6 @@ function App() {
         scales:{
           x:{grid:{display:false},title:{display:true,text:"Durée d'effort",color:'#605d5d'}},
           yW:{position:'left',grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},beginAtZero:false,title:{display:true,text:'Puissance (W)',color:'#605d5d'}},
-          yJ:{position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Énergie (kJ)',color:'#bab6b6'},ticks:{color:'#bab6b6'}},
         },
       },
     });
@@ -1354,20 +1354,22 @@ function App() {
               )
             )
           ),
-          // Bande stats : FTP + Wmax des deux périodes
-          // Bande stats FTP / Wmax
           (()=>{
             const ftpVal = Number(profile.ftp)||ftpEstimated||null;
+            const isEstimatedFtp = !Number(profile.ftp) && !!ftpEstimated;
             const curA = powerCurveByDate(powDateA0,powDateA1);
-            const curB = powerCurveByDate(powDateB0,powDateB1);
             const wmaxA = curA.filter(v=>v).length ? Math.max(...curA.filter(v=>v).map(v=>v.w)) : null;
-            const wmaxB = curB.filter(v=>v).length ? Math.max(...curB.filter(v=>v).map(v=>v.w)) : null;
+            // kJ : énergie du meilleur effort 20 min (ou le plus long dispo)
+            const best20idx = POWER_DURATIONS.findIndex(d=>d.s===1200);
+            const kjBest = curA[best20idx] ? Math.round(curA[best20idx].j/1000*10)/10 : null;
             const wkg = ftpVal && profile.weight ? Math.round(ftpVal/Number(profile.weight)*100)/100 : null;
+            const hasStreams = data.filter(a=>a.sport==='Vélo').some(a=>wattStreams[a.id] instanceof Float32Array);
+            const estTag = hasStreams && !data.some(a=>a.sport==='Vélo'&&a.power) ? ' (est.)' : '';
             const cells = [
-              {label:'FTP', value: ftpVal?ftpVal+' W':'Donnée manquante', sub: wkg?wkg+' W/kg':'—', accent: true},
-              {label:'Wmax · actuel', value: wmaxA?wmaxA+' W':'—', sub: wmaxA&&profile.weight?Math.round(wmaxA/Number(profile.weight)*100)/100+' W/kg':'', accent: false},
-              {label:'Wmax · compar.', value: wmaxB?wmaxB+' W':'—', sub: wmaxB&&profile.weight?Math.round(wmaxB/Number(profile.weight)*100)/100+' W/kg':'', accent: false},
-              {label:'W/kg FTP', value: wkg?wkg+' W/kg':'Donnée manquante', sub: ftpVal?'FTP '+ftpVal+' W':'', accent: false},
+              {label:'FTP'+estTag,          value: ftpVal?ftpVal+' W':'Donnée manquante', sub: isEstimatedFtp?'Estimée depuis tes sorties':'Renseignée manuellement', accent: true},
+              {label:'W/kg FTP'+estTag,     value: wkg?wkg+' W/kg':'Donnée manquante',   sub: ftpVal?'FTP '+ftpVal+' W':''},
+              {label:'kJ · effort 20 min',  value: kjBest?kjBest+' kJ':'—',               sub: kjBest?'= '+Math.round(kjBest*1000)+' J':'Calcule la courbe d\'abord'},
+              {label:'Wmax'+estTag,         value: wmaxA?wmaxA+' W':'—',                  sub: wmaxA&&profile.weight?Math.round(wmaxA/Number(profile.weight)*100)/100+' W/kg':''},
             ];
             return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',borderBottom:'2px solid #201e1d'}},
               cells.map((c,i)=>h('div',{key:i,style:{padding:'16px 32px 18px',borderRight:i<3?'1px solid #d7d3d3':undefined}},
