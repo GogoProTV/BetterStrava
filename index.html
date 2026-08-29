@@ -127,7 +127,7 @@ function defaultValues(type) {
 // ── Strava API ────────────────────────────────────────────────────────────────
 const BASE = '/api';
 const STRAVA_CLIENT_ID = '274766';
-const STRAVA_REDIRECT = 'https://better-strava.vercel.app';
+const STRAVA_REDIRECT = 'https://better-strava.vercel.app/';
 
 async function resolveClientId() {
   if (STRAVA_CLIENT_ID) return STRAVA_CLIENT_ID;
@@ -362,8 +362,12 @@ function App() {
       if (code) {
         setStatus('loading');
         try {
-          const res = await fetch(BASE + '/exchange-token?code=' + encodeURIComponent(code)).then(r => r.json());
-          if (!res.access_token) throw new Error(res.message || res.error || 'Échange du code impossible');
+          const raw = await fetch(BASE + '/exchange-token?code=' + encodeURIComponent(code));
+          const res = await raw.json();
+          if (!res.access_token) {
+            const detail = JSON.stringify(res);
+            throw new Error('Strava: ' + detail);
+          }
           token = res.access_token;
           localStorage.setItem('strava_token', token);
           if (res.refresh_token) localStorage.setItem('strava_refresh_token', res.refresh_token);
