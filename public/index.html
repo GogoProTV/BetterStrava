@@ -127,7 +127,7 @@ function defaultValues(type) {
 // ── Strava API ────────────────────────────────────────────────────────────────
 const BASE = '/.netlify/functions';
 const STRAVA_CLIENT_ID = '274766';
-const STRAVA_REDIRECT = 'https://betterstrava.netlify.app/';
+const STRAVA_REDIRECT = 'https://better-strava.vercel.app';
 
 async function resolveClientId() {
   if (STRAVA_CLIENT_ID) return STRAVA_CLIENT_ID;
@@ -227,7 +227,72 @@ function bikeActsEstimatedPower(acts, totalMassKg) {
   return Math.round(pList.reduce((s, v) => s + v, 0) / pList.length);
 }
 
-// ── Main App ─────────────────────────────────────────────────────────────────
+// ── Calculateur de temps projeté ────────────────────────────────────────────
+// Modèle Riegel : t2 = t1 × (d2/d1)^1.06  (exposant fatigue standard)
+// Correction dénivelé Minetti : coût énergétique en fonction de la pente
+// eq_dist = dist × (1 + D+ × 0.01)  (approximation : +1% par tranche de 100m/10km)
+
+function projectRaceTime(activities, raceType, raceDist, raceElev, raceElevNeg) {
+  // Distances de référence par sport
+  const runSports = ['Course', 'Trail'];
+  const bikeSports = ['Vélo'];
+  const swimSports = ['Natation'];
+
+  let refSport = runSports;
+  if (raceType === 'Cyclosportive' || raceType === 'Contre-la-montre vélo') refSport = bikeSports;
+  if (raceType === 'Natation eau libre') refSport = swimSports;
+
+  const candidates = activities.filter(a =>
+    refSport.includes(a.sport) && a.dist >= 1 && a.time > 0 && a.pace
+  );
+  if (!candidates.length || !raceDist) return null;
+
+  // Trouver la sortie avec la meilleure allure sur une distance ≥ 60% de la cible
+  // ou la plus longue dispo si pas assez
+  const minDist = Math.min(raceDist * 0.6, 10);
+  const usable = candidates.filter(a => a.dist >= minDist);
+  const pool = usable.length ? usable : candidates;
+  // Choisir la sortie la plus rapide (meilleure allure = min pace) avec dist raisonnable
+  pool.sort((a, b) => {
+    // Pondérer par la distance pour ne pas extrapoler depuis 1 km
+    const scoreA = a.pace / Math.log(a.dist + 1);
+    const scoreB = b.pace / Math.log(b.dist + 1);
+    return scoreA - scoreB;
+  });
+  const ref = pool[0];
+
+  // Correction dénivelé : coût énergétique Minetti simplifié
+  // Temps équivalent plat = temps_reel × (1 - facteur_gain_elev)
+  // On utilise : chaque 100m D+ sur 10 km ≈ +2 min/km d'équivalent
+  const refElevFactor = ref.elev && ref.dist
+    ? 1 + (ref.elev / (ref.dist * 1000)) * 4.5   // pente positive
+    : 1;
+  const refElevNegFactor = 1; // descente neutre sur sorties mixtes
+  const refPaceFlat = ref.pace / refElevFactor;
+
+  // Cible : distance équivalente plat
+  const raceElevFactor = raceElev && raceDist
+    ? 1 + (raceElev / (raceDist * 1000)) * 4.5
+    : 1;
+  const raceElevNegFactor = raceElevNeg && raceDist
+    ? Math.max(0.85, 1 - (raceElevNeg / (raceDist * 1000)) * 1.5)
+    : 1;
+  const raceEqDist = raceDist * raceElevFactor * raceElevNegFactor;
+  const refEqDist  = ref.dist  * refElevFactor;
+
+  // Riegel : t2 = t1 × (d2/d1)^1.06
+  const riegelExp = 1.06;
+  const projPaceFlat = refPaceFlat * Math.pow(raceEqDist / refEqDist, riegelExp - 1);
+  const projMinutes  = projPaceFlat * raceEqDist;
+
+  return {
+    minutes: Math.round(projMinutes),
+    refName: ref.name || ref.sport,
+    refDist: ref.dist,
+    refPace: ref.pace,
+    refDate: ref.date,
+  };
+}
 function App() {
   const [tab, setTab] = useState('programme');
   const [athleteOpen, setAthleteOpen] = useState(false);
@@ -674,6 +739,43 @@ function App() {
   const plan=24; const weeksDone=Math.max(0,plan-weeksLeft);
   const load90=sum(cur90,'time')/60, loadPrev=sum(prev90,'time')/60;
   const ready=Math.max(0,Math.min(99,Math.round(52+(weeksDone/plan)*34+(loadPrev>0?Math.min(12,((load90-loadPrev)/loadPrev)*30):0))));
+
+  // Temps projeté sur la course cible
+  const projResult = (() => {
+    const spec = RACE_CATALOG[race.type];
+    if (!spec || !data.length) return null;
+    const f = race.values;
+    // Distance principale de course / vélo / natation
+    const dist = f.run || f.bike || f.swim || 0;
+    const elev = f.runElev || f.bikeElev || 0;
+    const elevNeg = f.runElevNeg || 0;
+    if (!dist) return null;
+    // Pour triathlon : estimer chaque segment et sommer
+    const isTriathlon = race.type.toLowerCase().includes('triathlon') || race.type === 'Ironman' || race.type === 'Triathlon 70.3';
+    if (isTriathlon) {
+      const runRes  = f.run  ? projectRaceTime(data, 'Marathon', f.run,  f.runElev||0,  f.runElevNeg||0)  : null;
+      const bikeRes = f.bike ? projectRaceTime(data, 'Cyclosportive', f.bike, f.bikeElev||0, 0) : null;
+      const swimRes = f.swim ? projectRaceTime(data, 'Natation eau libre', f.swim, 0, 0) : null;
+      const total = (runRes?.minutes||0) + (bikeRes?.minutes||0) + (swimRes?.minutes||0);
+      const transitions = 5 + (f.bike ? 3 : 0); // T1 + T2 estimés
+      if (!total) return null;
+      return { minutes: total + transitions, segments: { run: runRes, bike: bikeRes, swim: swimRes } };
+    }
+    return projectRaceTime(data, race.type, dist, elev, elevNeg);
+  })();
+
+  function fmtProjected(min) {
+    if (!min) return 'Donnée manquante';
+    const h = Math.floor(min / 60);
+    const m = Math.round(min % 60);
+    return h > 0 ? h+'h'+String(m).padStart(2,'0') : m+' min';
+  }
+  const projDisplay = projResult ? fmtProjected(projResult.minutes) : 'Donnée manquante';
+  const projNote = projResult
+    ? (projResult.segments
+        ? 'Triathlon estimé segment par segment'
+        : 'D\'après ' + (projResult.refName||'sortie') + ' · ' + fmtNum(projResult.refDist,1) + ' km · ' + fmtPace(projResult.refPace) + '/km')
+    : (data.length ? 'Pas assez de données' : 'à calculer');
   const acts=filtered(data,range,sport);
   const curW=window2(data,0,range,sport);
   const prevW=window2(data,1,range,sport);
@@ -975,7 +1077,7 @@ function App() {
         ),
         h('section',{style:{display:'flex',flexWrap:'wrap',alignItems:'flex-start',justifyContent:'space-between',gap:'20px 44px',padding:'18px 32px',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{display:'flex',flex:'1 1 520px',flexWrap:'wrap',gap:'20px 44px',minWidth:0}},
-            [{label:'Objectif',value:race.type,unit:'',delta:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}):'—',note:daysToRace===null?'':'J−'+daysToRace,good:null},{label:'Temps projeté',value:'Donnée manquante',unit:'',delta:'—',note:'à calculer',good:null},{label:'Prêt · Readiness',value:data.length?String(ready):'Donnée manquante',unit:data.length?'%':'',delta:data.length?(ready>=75?'En bonne voie':'À consolider'):'—',note:race.type,good:data.length?ready>=75:null},{label:'Semaines restantes',value:raceDateObj?String(weeksLeft):'Donnée manquante',unit:raceDateObj?'sem.':'',delta:raceDateObj?"jusqu'à la course":'—',note:'',good:null}].map((k,i)=>
+            [{label:'Objectif',value:race.type,unit:'',delta:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}):'—',note:daysToRace===null?'':'J−'+daysToRace,good:null},{label:'Temps projeté',value:projDisplay,unit:'',delta:projResult?'Riegel + Minetti':'—',note:projNote,good:projResult?true:null},{label:'Prêt · Readiness',value:data.length?String(ready):'Donnée manquante',unit:data.length?'%':'',delta:data.length?(ready>=75?'En bonne voie':'À consolider'):'—',note:race.type,good:data.length?ready>=75:null},{label:'Semaines restantes',value:raceDateObj?String(weeksLeft):'Donnée manquante',unit:raceDateObj?'sem.':'',delta:raceDateObj?"jusqu'à la course":'—',note:'',good:null}].map((k,i)=>
               h('div',{key:i,style:{display:'flex',flexDirection:'column',gap:'6px',minWidth:0}},
                 h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},k.label),
                 h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px'}},
@@ -1316,7 +1418,8 @@ function App() {
               ),
               h('div',{style:{paddingLeft:'20px',borderLeft:'2px solid #201e1d'}},
                 h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Temps projeté'),
-                h('span',{style:{display:'block',marginTop:'4px',fontSize:'24px',fontWeight:'800',letterSpacing:'-0.02em'}},'Donnée manquante')
+                h('span',{style:{display:'block',marginTop:'4px',fontSize:'24px',fontWeight:'800',letterSpacing:'-0.02em'}},projDisplay),
+                projResult&&h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},projNote)
               )
             )
           )
