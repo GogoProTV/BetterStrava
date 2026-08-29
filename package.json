@@ -1,12 +1,9 @@
 {
-  "name": "strava-analytics",
+  "name": "better-strava",
   "version": "1.0.0",
-  "description": "Analyse tes activités Strava",
-  "scripts": {
-    "dev": "netlify dev",
-    "build": "echo 'Static site, no build needed'"
-  },
-  "devDependencies": {
-    "netlify-cli": "^17.0.0"
+  "description": "Strava but better",
+  "private": true,
+  "engines": {
+    "node": ">=18"
   }
 }
