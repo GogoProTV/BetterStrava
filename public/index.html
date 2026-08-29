@@ -242,26 +242,28 @@ function App() {
   const [range, setRange] = useState(180);
   const [showElev, setShowElev] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [powRange, setPowRange] = useState(90);
-  const [powCompare, setPowCompare] = useState(365);
-  const [paceRange, setPaceRange] = useState(90);
-  const [paceCompare, setPaceCompare] = useState(365);
-  const [hrRange, setHrRange] = useState(90);
-  const [hrCompare, setHrCompare] = useState(365);
   const [fitRange, setFitRange] = useState(90);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const [data, setData] = useState([]);
-  const [profile, setProfile] = useState({ name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '' });
+  const [profile, setProfile] = useState(() => {
+    try {
+      const saved = localStorage.getItem('bs_profile');
+      if (saved) return { name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '', ...JSON.parse(saved) };
+    } catch (e) {}
+    return { name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '' };
+  });
   const [race, setRace] = useState({ type: 'Marathon', date: '2026-09-12', values: defaultValues('Marathon') });
+
+  // Persistance automatique du profil dans localStorage
+  useEffect(() => {
+    try { localStorage.setItem('bs_profile', JSON.stringify(profile)); } catch (e) {}
+  }, [profile]);
 
   const lineRef = useRef(null);
   const barRef = useRef(null);
   const dailyRef = useRef(null);
   const zoneRef = useRef(null);
-  const powerRef = useRef(null);
-  const paceRef = useRef(null);
-  const hrRef = useRef(null);
   const fitRef = useRef(null);
   const charts = useRef({});
 
@@ -336,8 +338,14 @@ function App() {
           acts.push(...batch);
           if (batch.length < 200) break;
         }
-        const mapped = acts.map(a => mapActivity(a)).filter(Boolean).sort((x, y) => y.date - x.date);
+        const mapped = acts.map(a => {
+          const m = mapActivity(a);
+          if (m) m.id = a.id; // conserver l'id Strava pour les streams
+          return m;
+        }).filter(Boolean).sort((x, y) => y.date - x.date);
         setData(mapped); setStatus(mapped.length ? 'ready' : 'empty');
+        // Lancer le chargement des streams en arrière-plan
+        if (mapped.length) loadStreams(mapped, token);
       } catch (e) { setStatus('error'); setError(e.message); }
     }
     init();
@@ -380,59 +388,34 @@ function App() {
     return d.filter(a => a.date.getTime() >= start && a.date.getTime() < end && (sp === 'Tous' || a.sport === sp));
   }
 
-  const POWER_DURATIONS = [
-    { s: 5, l: '5 s' }, { s: 15, l: '15 s' }, { s: 30, l: '30 s' }, { s: 60, l: '1 min' },
-    { s: 120, l: '2 min' }, { s: 300, l: '5 min' }, { s: 600, l: '10 min' }, { s: 1200, l: '20 min' },
-    { s: 1800, l: '30 min' }, { s: 3600, l: '1 h' }, { s: 5400, l: '1 h 30' }, { s: 10800, l: '3 h' },
-  ];
-
-  function powerCurve(days, offset) {
-    const end = Date.now() - (offset || 0) * days * 86400000;
-    const start = end - days * 86400000;
-    const rides = data.filter(a => a.sport === 'Vélo' && a.power && a.secs && a.date.getTime() >= start && a.date.getTime() < end);
-    return POWER_DURATIONS.map(d => {
-      let best = null;
-      rides.forEach(a => {
-        if (a.secs < d.s) { if (d.s <= 60 && a.maxPower) best = Math.max(best || 0, a.maxPower); return; }
-        best = Math.max(best || 0, a.power);
-        if (d.s <= 60 && a.maxPower) best = Math.max(best, a.maxPower);
-      });
-      return best;
-    });
-  }
-
-  const PACE_DISTANCES = [
-    { d: 1, l: '1 km' }, { d: 2, l: '2 km' }, { d: 5, l: '5 km' }, { d: 10, l: '10 km' },
-    { d: 15, l: '15 km' }, { d: 21.1, l: 'Semi' }, { d: 30, l: '30 km' }, { d: 42.2, l: 'Marathon' },
-  ];
-  const HR_BINS = [
-    { min: 100, max: 120, l: '100-120' }, { min: 120, max: 130, l: '120-130' }, { min: 130, max: 140, l: '130-140' },
-    { min: 140, max: 150, l: '140-150' }, { min: 150, max: 160, l: '150-160' }, { min: 160, max: 170, l: '160-170' },
-    { min: 170, max: 180, l: '170-180' }, { min: 180, max: 200, l: '180+' },
-  ];
-
-  function paceCurve(days, offset) {
-    const end = Date.now() - (offset || 0) * days * 86400000;
-    const start = end - days * 86400000;
-    const runs = data.filter(a => (a.sport === 'Course' || a.sport === 'Trail') && a.pace && a.dist && a.date.getTime() >= start && a.date.getTime() < end);
-    return PACE_DISTANCES.map(x => {
-      let best = null;
-      runs.forEach(a => { if (a.dist >= x.d && (best === null || a.pace < best)) best = a.pace; });
-      return best === null ? null : Math.round(best * 100) / 100;
-    });
-  }
-
-  function hrSpeedCurve(days, offset) {
-    const end = Date.now() - (offset || 0) * days * 86400000;
-    const start = end - days * 86400000;
-    const acts = data.filter(a => a.hr && a.dist && a.time && a.date.getTime() >= start && a.date.getTime() < end);
-    return HR_BINS.map(b => {
-      const inBin = acts.filter(a => a.hr >= b.min && a.hr < b.max);
-      if (!inBin.length) return null;
-      const km = inBin.reduce((s, a) => s + a.dist, 0);
-      const h = inBin.reduce((s, a) => s + a.time, 0) / 60;
-      return h ? Math.round((km / h) * 10) / 10 : null;
-    });
+  // ── Streams Strava (allure sec/sec, BPM, altitude) ─────────────────────────
+  // Appelé après le chargement des activités quand Strava est connecté.
+  // Fetche les streams des 30 activités les plus récentes et les stocke.
+  async function loadStreams(acts, token) {
+    setStreamsStatus('loading');
+    const recent = acts.slice(0, 30);
+    const result = {};
+    let loaded = 0;
+    for (const a of recent) {
+      try {
+        const raw = await stravaApi(
+          '/activities/' + a.id + '/streams?keys=velocity_smooth,heartrate,altitude,time&key_by_type=true',
+          token
+        );
+        if (raw && !raw.errors) {
+          result[a.id] = {
+            time:     (raw.time     || raw['time'])     ? (raw.time     || raw['time']).data     : [],
+            velocity: (raw.velocity_smooth             ) ? raw.velocity_smooth.data               : [],
+            heartrate:(raw.heartrate                   ) ? raw.heartrate.data                     : [],
+            altitude: (raw.altitude                    ) ? raw.altitude.data                      : [],
+          };
+        }
+      } catch (e) { /* stream indisponible pour cette activité */ }
+      loaded++;
+      if (loaded % 5 === 0) setStreams({ ...result }); // mise à jour progressive
+    }
+    setStreams({ ...result });
+    setStreamsStatus('done');
   }
 
   // Draw fitness chart
@@ -455,58 +438,6 @@ function App() {
     });
     return () => destroyChart('fitness');
   }, [tab, athleteSection, data, fitRange]);
-
-  useEffect(() => {
-    if (tab !== 'athlete' || athleteSection !== 'Puissance') return;
-    chartDefaults();
-    upsert('power', powerRef, {
-      type: 'line', plugins: [crosshairPlugin],
-      data: { labels: POWER_DURATIONS.map(d => d.l), datasets: [
-        { label: 'Comparaison', data: powerCurve(powCompare, 1), borderColor: '#bab6b6', borderWidth: 2, borderDash: [5, 4], backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 3, pointBackgroundColor: '#bab6b6', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, spanGaps: true },
-        { label: 'Actuel', data: powerCurve(powRange, 0), borderColor: '#ec3013', borderWidth: 2.5, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.2, pointRadius: 4, pointBackgroundColor: '#ec3013', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, pointHoverRadius: 6, spanGaps: true },
-      ]},
-      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 },
-        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16, usePointStyle: false } }, tooltip: { enabled: true, animation: false, backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true, position: 'nearest', titleFont: { weight: '700' }, callbacks: { title: items => 'Effort ' + items[0].label, label: c => c.dataset.label + ' · ' + (c.parsed.y == null ? 'donnée manquante' : c.parsed.y + ' W') } } },
-        scales: { x: { grid: { display: false }, title: { display: true, text: "Durée d'effort", color: '#605d5d' } }, y: { grid: { color: 'rgba(32,30,29,0.12)', drawTicks: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Puissance (W)', color: '#605d5d' } } },
-      },
-    });
-    return () => destroyChart('power');
-  }, [tab, athleteSection, data, powRange, powCompare]);
-
-  useEffect(() => {
-    if (tab !== 'athlete' || athleteSection !== 'Allure') return;
-    chartDefaults();
-    const fmtP = v => Math.floor(v) + ':' + String(Math.round((v % 1) * 60)).padStart(2, '0');
-    upsert('pace', paceRef, {
-      type: 'line',
-      data: { labels: PACE_DISTANCES.map(x => x.l), datasets: [
-        { label: 'Comparaison', data: paceCurve(paceCompare, 1), borderColor: '#bab6b6', borderWidth: 2, borderDash: [5, 4], backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 3, pointBackgroundColor: '#bab6b6', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, spanGaps: true },
-        { label: 'Actuel', data: paceCurve(paceRange, 0), borderColor: '#ec3013', borderWidth: 2.5, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.2, pointRadius: 4, pointBackgroundColor: '#ec3013', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, pointHoverRadius: 6, spanGaps: true },
-      ]},
-      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true, callbacks: { label: c => c.dataset.label + ' · ' + (c.parsed.y == null ? 'donnée manquante' : fmtP(c.parsed.y) + ' /km') } } },
-        scales: { x: { grid: { display: false }, title: { display: true, text: 'Distance', color: '#605d5d' } }, y: { reverse: true, grid: { color: 'rgba(32,30,29,0.12)', drawTicks: false }, border: { display: false }, ticks: { callback: v => fmtP(v) }, title: { display: true, text: 'Allure (min/km)', color: '#605d5d' } } },
-      },
-    });
-    return () => destroyChart('pace');
-  }, [tab, athleteSection, data, paceRange, paceCompare]);
-
-  useEffect(() => {
-    if (tab !== 'athlete' || athleteSection !== 'Fréquence cardiaque') return;
-    chartDefaults();
-    upsert('hr', hrRef, {
-      type: 'line',
-      data: { labels: HR_BINS.map(b => b.l), datasets: [
-        { label: 'Comparaison', data: hrSpeedCurve(hrCompare, 1), borderColor: '#bab6b6', borderWidth: 2, borderDash: [5, 4], backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 3, pointBackgroundColor: '#bab6b6', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, spanGaps: true },
-        { label: 'Actuel', data: hrSpeedCurve(hrRange, 0), borderColor: '#ec3013', borderWidth: 2.5, backgroundColor: 'rgba(236,48,19,0.08)', fill: true, tension: 0.2, pointRadius: 4, pointBackgroundColor: '#ec3013', pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5, pointHoverRadius: 6, spanGaps: true },
-      ]},
-      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 240 }, interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } }, tooltip: { backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true, callbacks: { label: c => c.dataset.label + ' · ' + (c.parsed.y == null ? 'donnée manquante' : c.parsed.y + ' km/h') } } },
-        scales: { x: { grid: { display: false }, title: { display: true, text: 'Fréquence cardiaque moyenne (bpm)', color: '#605d5d' } }, y: { grid: { color: 'rgba(32,30,29,0.12)', drawTicks: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'Vitesse moyenne (km/h)', color: '#605d5d' } } },
-      },
-    });
-    return () => destroyChart('hr');
-  }, [tab, athleteSection, data, hrRange, hrCompare]);
 
   // Activities charts
   useEffect(() => {
@@ -672,7 +603,6 @@ function App() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const powPeriods = [{ label: '1 mois', value: 30 }, { label: '3 mois', value: 90 }, { label: '6 mois', value: 180 }, { label: '1 an', value: 365 }];
-  const powLabel = v => (powPeriods.find(p => p.value === v) || {}).label || '';
   const mkOptions = (list, current, setter) => list.map(o => ({ label: o.label, active: current === o.value, onClick: () => setter(o.value) }));
 
   const now = Date.now();
@@ -749,7 +679,7 @@ function App() {
     : status === 'empty' ? 'Aucune activité trouvée sur ce compte Strava.'
     : 'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
 
-  const athleteSections = ['Condition physique', 'Puissance', 'Allure', 'Fréquence cardiaque'];
+  const athleteSections = ['Condition physique', 'Outils'];
 
   function BtnRow({ options }) {
     return h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
@@ -776,7 +706,7 @@ function App() {
     const chip = deltaChip(pctv, !k.pace);
     const txt = !curW.length || !isFinite(c) || c === 0 ? 'Donnée manquante'
       : k.pace ? fmtPace(c) : fmtNum(Math.round(c), 0);
-    return { label: k.label, unit: txt === 'Donnée manquante' ? '' : k.unit, value: txt, delta: chip.text, deltaNote: 'vs période précédente', deltaStyle: chip.style, valueStyle: { fontSize: txt.length > 10 ? '15px' : txt.length > 5 ? '30px' : '38px', fontWeight: '800', letterSpacing: '-0.03em', lineHeight: '0.95' }, cellStyle: { minWidth: 0, padding: '24px 24px 28px', borderRight: i < 3 ? '2px solid #201e1d' : undefined } };
+    return { label: k.label, unit: txt === 'Donnée manquante' ? '' : k.unit, value: txt, delta: chip.text, deltaNote: chip.text ? 'vs période précédente' : '', deltaStyle: chip.style, valueStyle: { fontSize: txt.length > 10 ? '15px' : txt.length > 5 ? '30px' : '38px', fontWeight: '800', letterSpacing: '-0.03em', lineHeight: '0.95' }, cellStyle: { minWidth: 0, padding: '24px 24px 28px', borderRight: i < 3 ? '2px solid #201e1d' : undefined } };
   });
 
   // ── Render structure ───────────────────────────────────────────────────────
@@ -966,64 +896,22 @@ function App() {
             h('div', { style: { height: 'calc(100vh - 440px)', minHeight: '340px' } }, h('canvas', { ref: fitRef }))
           )
         ),
-        athleteSection === 'Puissance' && h('div', null,
-          h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
-            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période de calcul'),
-              h(BtnRow, { options: mkOptions(powPeriods, powRange, setPowRange) })
+        athleteSection === 'Outils' && h('div', null,
+          h('section', { style: { display: 'flex', alignItems: 'center', gap: '24px', padding: '18px 32px', borderBottom: '2px solid #201e1d' } },
+            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Données enrichies · Streams Strava'),
+              h('span', { style: { fontSize: '12px', color: '#605d5d' } },
+                streamsStatus === 'idle' ? 'Connecte Strava pour charger les streams (allure sec/sec, BPM, altitude).' :
+                streamsStatus === 'loading' ? 'Import des streams en cours — ' + Object.keys(streams).length + ' activités chargées…' :
+                streamsStatus === 'done' ? Object.keys(streams).length + ' activités avec streams complets (allure, BPM, altitude seconde par seconde).' :
+                'Donnée manquante.'
+              )
             ),
-            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Comparaison'),
-              h(BtnRow, { options: mkOptions(powPeriods, powCompare, setPowCompare) })
-            )
+            streamsStatus === 'loading' && h('span', { style: { fontSize: '11px', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase', padding: '4px 10px', border: '2px solid #bab6b6', color: '#605d5d' } }, 'Chargement…'),
+            streamsStatus === 'done' && h('span', { style: { fontSize: '11px', fontWeight: '700', letterSpacing: '0.1em', textTransform: 'uppercase', padding: '4px 10px', border: '2px solid #ec3013', color: '#ec3013' } }, 'Prêt')
           ),
-          h('section', { style: { padding: '28px 32px 32px' } },
-            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px 16px', marginBottom: '10px' } },
-              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Courbe de puissance'),
-              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Rouge : ' + powLabel(powRange) + ' · Gris : ' + powLabel(powCompare) + ' précédents')
-            ),
-            h('p', { style: { margin: '0 0 18px', fontSize: '12px', color: '#605d5d', maxWidth: '90ch' } }, data.some(a => a.sport === 'Vélo' && a.power) ? 'Meilleure puissance par durée d\'effort. Estimation calculée à partir des moyennes et pics de chaque sortie.' : 'Donnée manquante — aucune sortie vélo avec capteur de puissance.'),
-            h('div', { style: { height: 'calc(100vh - 320px)', minHeight: '380px' } }, h('canvas', { ref: powerRef }))
-          )
-        ),
-        athleteSection === 'Allure' && h('div', null,
-          h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
-            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période de calcul'),
-              h(BtnRow, { options: mkOptions(powPeriods, paceRange, setPaceRange) })
-            ),
-            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Comparaison'),
-              h(BtnRow, { options: mkOptions(powPeriods, paceCompare, setPaceCompare) })
-            )
-          ),
-          h('section', { style: { padding: '28px 32px 32px' } },
-            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px 16px', marginBottom: '10px' } },
-              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Meilleure allure par distance'),
-              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Rouge : ' + powLabel(paceRange) + ' · Gris : ' + powLabel(paceCompare) + ' précédents')
-            ),
-            h('p', { style: { margin: '0 0 18px', fontSize: '12px', color: '#605d5d', maxWidth: '90ch' } }, data.some(a => (a.sport === 'Course' || a.sport === 'Trail') && a.pace) ? 'Meilleure allure moyenne par distance. Estimation calculée à partir de l\'allure moyenne de chaque sortie.' : 'Donnée manquante — aucune sortie course ou trail.'),
-            h('div', { style: { height: 'calc(100vh - 320px)', minHeight: '380px' } }, h('canvas', { ref: paceRef }))
-          )
-        ),
-        athleteSection === 'Fréquence cardiaque' && h('div', null,
-          h('section', { style: { display: 'flex', flexWrap: 'wrap', gap: '40px', padding: '24px 32px', borderBottom: '2px solid #201e1d' } },
-            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Période de calcul'),
-              h(BtnRow, { options: mkOptions(powPeriods, hrRange, setHrRange) })
-            ),
-            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-              h('span', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, 'Comparaison'),
-              h(BtnRow, { options: mkOptions(powPeriods, hrCompare, setHrCompare) })
-            )
-          ),
-          h('section', { style: { padding: '28px 32px 32px' } },
-            h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px 16px', marginBottom: '10px' } },
-              h('h2', { style: { margin: 0, fontSize: '16px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Vitesse moyenne par fréquence cardiaque'),
-              h('span', { style: { fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' } }, 'Rouge : ' + powLabel(hrRange) + ' · Gris : ' + powLabel(hrCompare) + ' précédents')
-            ),
-            h('p', { style: { margin: '0 0 18px', fontSize: '12px', color: '#605d5d', maxWidth: '90ch' } }, data.some(a => a.hr) ? 'Vitesse moyenne obtenue dans chaque plage de fréquence cardiaque. Une courbe qui monte à fréquence égale indique un gain d\'efficacité.' : 'Donnée manquante — aucune activité avec fréquence cardiaque.'),
-            h('div', { style: { height: 'calc(100vh - 320px)', minHeight: '380px' } }, h('canvas', { ref: hrRef }))
+          h('section', { style: { padding: '40px 32px' } },
+            h('p', { style: { fontSize: '14px', color: '#605d5d', maxWidth: '52ch' } }, 'Les calculateurs seront construits ici — estimateur de puissance, indice de fatigue, et autres outils à définir ensemble.')
           )
         )
       ),
