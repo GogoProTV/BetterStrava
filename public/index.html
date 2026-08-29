@@ -194,6 +194,39 @@ function zoneMinutes(list, fcMax) {
   return defs;
 }
 
+// ── Estimation de puissance vélo (modèle physique) ───────────────────────────
+// P = P_roulement + P_aero + P_gravité + P_inertie(≈0 en régime établi)
+// Crr = 0.008 (asphalte), CdA = 0.35 m² (position route classique)
+// rho_air = 1.225 kg/m³, eta = 0.97 (rendement transmission)
+const CRR = 0.008;
+const CDA = 0.35;
+const RHO = 1.225;
+const ETA = 0.97;
+const G   = 9.81;
+
+function estimatePower(v_kmh, slope_pct, totalMassKg) {
+  if (!v_kmh || v_kmh <= 0 || !totalMassKg || totalMassKg <= 0) return null;
+  const v = v_kmh / 3.6; // m/s
+  const grade = (slope_pct || 0) / 100;
+  const P_roll  = CRR * totalMassKg * G * v;
+  const P_aero  = 0.5 * CDA * RHO * v * v * v;
+  const P_grav  = totalMassKg * G * grade * v;
+  return Math.max(0, Math.round((P_roll + P_aero + P_grav) / ETA));
+}
+
+// Puissance estimée moyenne pour une liste d'activités vélo
+function bikeActsEstimatedPower(acts, totalMassKg) {
+  const rides = acts.filter(a => a.sport === 'Vélo' && a.dist && a.time);
+  if (!rides.length || !totalMassKg) return null;
+  const pList = rides.map(a => {
+    const v = a.dist / (a.time / 60); // km/h moyen
+    const slope = a.elev && a.dist ? (a.elev / (a.dist * 1000)) * 100 : 0;
+    return estimatePower(v, slope, totalMassKg);
+  }).filter(v => v !== null);
+  if (!pList.length) return null;
+  return Math.round(pList.reduce((s, v) => s + v, 0) / pList.length);
+}
+
 // ── Main App ─────────────────────────────────────────────────────────────────
 function App() {
   const [tab, setTab] = useState('programme');
@@ -215,7 +248,7 @@ function App() {
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const [data, setData] = useState([]);
-  const [profile, setProfile] = useState({ name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '' });
+  const [profile, setProfile] = useState({ name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '', bikeMass: '' });
   const [race, setRace] = useState({ type: 'Marathon', date: '2026-09-12', values: defaultValues('Marathon') });
 
   // ── Accordéon inline ─────────────────────────────────────────────────────
@@ -340,11 +373,13 @@ function App() {
     if (!canvasEl) return;
     if (rowChartInsts.current[id]) { rowChartInsts.current[id].destroy(); delete rowChartInsts.current[id]; }
     chartDefaults();
+    const isBike = act.sport === 'Vélo';
     const timeData = (streamsData.time && streamsData.time.data) || [];
-    const hrData = (streamsData.heartrate && streamsData.heartrate.data) || [];
-    const altData = (streamsData.altitude && streamsData.altitude.data) || [];
-    const velData = (streamsData.velocity_smooth && streamsData.velocity_smooth.data) || [];
+    const hrData   = (streamsData.heartrate && streamsData.heartrate.data) || [];
+    const altData  = (streamsData.altitude && streamsData.altitude.data) || [];
+    const velData  = (streamsData.velocity_smooth && streamsData.velocity_smooth.data) || [];
     const distData = (streamsData.distance && streamsData.distance.data) || [];
+    const estPowData = (streamsData._estPow && streamsData._estPow.data) || [];
     const N = Math.max(1, Math.floor(timeData.length / 800));
     const thin = arr => arr.filter((_, i) => i % N === 0);
     const thinDist = thin(distData);
@@ -355,21 +390,25 @@ function App() {
     if (hrData.length) datasets.push({ label: 'FC (bpm)', data: thin(hrData), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'rgba(236,48,19,0.07)', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
     if (altData.length) datasets.push({ label: 'Altitude (m)', data: thin(altData), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
     if (velData.length) {
-      const isBike = act.sport === 'Vélo';
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => v > 0 ? Math.round((1000 / 60 / v) * 100) / 100 : null;
       datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv), borderColor: '#bab6b6', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
+    }
+    if (estPowData.length) {
+      // Lissage simple sur fenêtre 15 pts pour réduire le bruit
+      const smooth = arr => arr.map((_, i) => { const w=arr.slice(Math.max(0,i-7),i+8).filter(v=>v!==null&&v>=0); return w.length?Math.round(w.reduce((s,v)=>s+v,0)/w.length):null; });
+      datasets.push({ label: 'Puissance estimée (W)', data: smooth(thin(estPowData)), borderColor: '#605d5d', borderWidth: 1.5, borderDash: [4,3], backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
     }
     const scales = { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } } };
     if (hrData.length) scales.yHr = { position: 'left', grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
     if (altData.length) scales.yAlt = { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
     if (velData.length) {
-      const isBike = act.sport === 'Vélo';
       scales.yPace = { position: 'right', reverse: !isBike, grid: { display: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#bab6b6' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
     }
+    if (estPowData.length) scales.yPow = { position: 'left', grid: { display: false }, border: { display: false }, beginAtZero: true, title: { display: true, text: 'W estimés', color: '#605d5d' } };
     rowChartInsts.current[id] = new Chart(canvasEl, {
       type: 'line', plugins: [crosshairPlugin],
       data: { labels: xLabels, datasets },
-      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 }, plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } }, tooltip: { enabled: true, animation: false, backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true } }, scales },
+      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 }, plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 14, boxHeight: 2, padding: 16 } }, tooltip: { enabled: true, animation: false, backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true, callbacks: { label: c => { const v = c.parsed.y; if (v === null) return c.dataset.label+' · —'; if (c.dataset.yAxisID==='yPow') return c.dataset.label+' · '+v+' W'; if (c.dataset.yAxisID==='yHr') return c.dataset.label+' · '+v+' bpm'; return c.dataset.label+' · '+v; } } } }, scales },
     });
   }
 
@@ -504,9 +543,23 @@ function App() {
     const labels = [...buckets.keys()].map(k=>new Date(k).toLocaleDateString('fr-FR',byWeek?{day:'numeric',month:'short'}:{month:'short',year:'2-digit'}));
     const vals = [...buckets.values()].map(w=>Math.round(w.km*10)/10);
     const elevVals = [...buckets.values()].map(w=>Math.round(w.elev));
+    const totalMass = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
+    // Puissance estimée par bucket (vélo uniquement)
+    const powVals = [...buckets.keys()].map(k => {
+      const bucketActs = acts.filter(a => a.sport==='Vélo' && a.dist && a.time && keyOf(a.date)===k);
+      if (!bucketActs.length || !totalMass) return null;
+      const pList = bucketActs.map(a => {
+        const v = a.dist / (a.time/60);
+        const slope = a.elev&&a.dist?(a.elev/(a.dist*1000))*100:0;
+        return estimatePower(v, slope, totalMass);
+      }).filter(v=>v!==null);
+      return pList.length ? Math.round(pList.reduce((s,v)=>s+v,0)/pList.length) : null;
+    });
+    const showEstPow = (sport==='Tous'||sport==='Vélo') && totalMass > 0 && powVals.some(v=>v!==null);
     const datasets = [{ label:'Distance (km)', data:vals, borderColor:'#ec3013', borderWidth:2, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.25, pointRadius:3.5, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, yAxisID:'y' }];
     if (showElev) datasets.push({ label:'D+ (m)', data:elevVals, borderColor:'#201e1d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#201e1d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y1' });
-    upsert('line', lineRef, { type:'line', data:{labels,datasets}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:false}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Distance (km)',color:'#605d5d'}},y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}}} } });
+    if (showEstPow) datasets.push({ label:'Puissance estimée (W)', data:powVals, borderColor:'#605d5d', borderWidth:2, borderDash:[3,3], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#605d5d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y2', spanGaps:true });
+    upsert('line', lineRef, { type:'line', data:{labels,datasets}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:showEstPow||showElev,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:showEstPow||showElev,callbacks:{label:c=>c.dataset.label+' · '+c.parsed.y}}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Distance (km)',color:'#605d5d'}},y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}},y2:{display:showEstPow,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'W estimés (moy.)',color:'#605d5d'}}} } });
     const days=[]; const dayStart=new Date(); dayStart.setHours(0,0,0,0);
     for(let i=range-1;i>=0;i--) days.push(new Date(dayStart.getTime()-i*86400000));
     const perDay=new Map();
@@ -520,7 +573,7 @@ function App() {
     const shown=sport==='Tous'?sports:[sport];
     upsert('bar', barRef, { type:'bar', data:{labels,datasets:shown.map(sp=>({label:sp,backgroundColor:shades[sp],borderWidth:0,data:splitKeys.map(k=>Math.round(acts.filter(a=>a.sport===sp&&keyOf(a.date)===k).reduce((s,a)=>s+a.time/60,0)*10)/10)}))}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:shown.length>1,position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true}}, scales:{x:{stacked:true,grid:{display:false},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{stacked:true,grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Heures',color:'#605d5d'}}} } });
     return () => { destroyChart('line'); destroyChart('daily'); destroyChart('zone'); destroyChart('bar'); };
-  }, [tab, data, range, sport, showElev, profile.fcMax]);
+  }, [tab, data, range, sport, showElev, profile.fcMax, profile.weight, profile.bikeMass]);
 
   // ── Build weeks ───────────────────────────────────────────────────────────
   function buildWeeks() {
@@ -651,42 +704,88 @@ function App() {
     const isLoading = st === 'loading';
     const isError = st && typeof st === 'object' && st.error;
     const hasData = st && typeof st === 'object' && !st.error;
+    const isBike = act.sport === 'Vélo';
 
-    useEffect(() => {
-      if (!hasData || !canvasRef.current) return;
-      drawRowChart(id, act, st, canvasRef.current);
-      return () => {
-        if (rowChartInsts.current[id]) { rowChartInsts.current[id].destroy(); delete rowChartInsts.current[id]; }
-      };
-    }, [hasData]);
-
-    const hrArr = hasData && st.heartrate && st.heartrate.data ? st.heartrate.data : [];
-    const altArr = hasData && st.altitude && st.altitude.data ? st.altitude.data : [];
+    // Calcul puissance estimée par seconde depuis les streams
+    const totalMass = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
     const velArr = hasData && st.velocity_smooth && st.velocity_smooth.data ? st.velocity_smooth.data : [];
-    const distArr = hasData && st.distance && st.distance.data ? st.distance.data : [];
+    const altArr = hasData && st.altitude && st.altitude.data ? st.altitude.data : [];
+    const hrArr  = hasData && st.heartrate  && st.heartrate.data  ? st.heartrate.data  : [];
+    const distArr= hasData && st.distance   && st.distance.data   ? st.distance.data   : [];
+
+    // Puissance estimée seconde par seconde (vélo uniquement)
+    const estPowArr = (isBike && totalMass > 0 && velArr.length) ? velArr.map((v, i) => {
+      const v_kmh = v * 3.6;
+      let slope = 0;
+      if (altArr.length > 1 && i > 0) {
+        const dAlt = altArr[i] - altArr[i-1];
+        const dDist = distArr.length > i ? (distArr[i] - distArr[i-1]) : 1;
+        slope = dDist > 0.5 ? (dAlt / dDist) * 100 : 0;
+      }
+      return estimatePower(v_kmh, slope, totalMass);
+    }) : [];
+
+    const avgEstPow = estPowArr.length ? Math.round(estPowArr.filter(v=>v!==null&&v>0).reduce((s,v)=>s+v,0) / estPowArr.filter(v=>v!==null&&v>0).length) : null;
+    const maxEstPow = estPowArr.length ? Math.max(...estPowArr.filter(v=>v!==null)) : null;
+    const wPerKg = avgEstPow && profile.weight ? Math.round((avgEstPow / Number(profile.weight)) * 100) / 100 : null;
+
     const avgHr = hrArr.length ? Math.round(hrArr.reduce((s,v)=>s+v,0)/hrArr.length) : null;
     const maxHr = hrArr.length ? Math.max(...hrArr) : null;
     const elevGain = altArr.length ? Math.round(altArr.reduce((s,v,i)=>i>0&&v>altArr[i-1]?s+(v-altArr[i-1]):s,0)) : null;
-    const legendTxt = [hrArr.length&&'Rouge · FC', altArr.length&&'Noir · Altitude', velArr.length&&'Gris · Allure'].filter(Boolean).join(' · ');
 
-    const detailKpis = [
-      { label:'FC moyenne', value: avgHr!==null ? String(avgHr) : (act.hr ? String(act.hr) : 'Donnée manquante'), unit: avgHr!==null||act.hr ? 'bpm' : '' },
-      { label:'FC max', value: maxHr!==null ? String(maxHr) : 'Donnée manquante', unit: maxHr!==null ? 'bpm' : '' },
-      { label:'D+ streams', value: elevGain!==null ? '+'+fmtNum(elevGain,0) : 'Donnée manquante', unit: elevGain!==null ? 'm' : '' },
-      { label:'Allure moy.', value: act.pace ? fmtPace(act.pace) : 'Donnée manquante', unit: act.pace ? '/km' : '' },
-      { label:'Puissance', value: act.power ? act.power+' W' : 'Donnée manquante', unit: '' },
-      { label:'Charge', value: act.trainingLoad ? String(act.trainingLoad) : 'Donnée manquante', unit: '' },
+    const legendParts = [hrArr.length&&'Rouge · FC', altArr.length&&'Noir · Altitude'];
+    if (isBike && velArr.length) legendParts.push('Gris · Vitesse');
+    else if (velArr.length) legendParts.push('Gris · Allure');
+    if (estPowArr.length) legendParts.push('Pointillé · W estimés');
+    const legendTxt = legendParts.filter(Boolean).join(' · ');
+
+    useEffect(() => {
+      if (!hasData || !canvasRef.current) return;
+      // Enrichir les streams avec la courbe de puissance pour vélo
+      const enriched = { ...st };
+      if (estPowArr.length) enriched._estPow = { data: estPowArr };
+      drawRowChart(id, act, enriched, canvasRef.current, totalMass);
+      return () => {
+        if (rowChartInsts.current[id]) { rowChartInsts.current[id].destroy(); delete rowChartInsts.current[id]; }
+      };
+    }, [hasData, totalMass]);
+
+    // KPIs : 8 colonnes pour vélo (puissance estimée + W/kg), 6 pour les autres
+    const detailKpis = isBike ? [
+      { label:'FC moyenne',    value: avgHr!==null?String(avgHr):(act.hr?String(act.hr):'Donnée manquante'), unit: avgHr!==null||act.hr?'bpm':'' },
+      { label:'FC max',        value: maxHr!==null?String(maxHr):'Donnée manquante', unit: maxHr!==null?'bpm':'' },
+      { label:'D+ streams',   value: elevGain!==null?'+'+fmtNum(elevGain,0):'Donnée manquante', unit: elevGain!==null?'m':'' },
+      { label:'Vitesse moy.',  value: act.dist&&act.time?fmtNum(act.dist/(act.time/60),1):'Donnée manquante', unit: act.dist&&act.time?'km/h':'' },
+      { label:'W estimés moy.',value: avgEstPow!==null?String(avgEstPow):(act.power?act.power+' W':'Donnée manquante'), unit: avgEstPow!==null?'W':'' },
+      { label:'W max estimés', value: maxEstPow!==null&&maxEstPow>0?String(maxEstPow):'Donnée manquante', unit: maxEstPow!==null&&maxEstPow>0?'W':'' },
+      { label:'W/kg estimés',  value: wPerKg!==null?String(wPerKg):(wkg?String(wkg):'Donnée manquante'), unit: wPerKg!==null||wkg?'W/kg':'' },
+      { label:'Charge',        value: act.trainingLoad?String(act.trainingLoad):'Donnée manquante', unit:'' },
+    ] : [
+      { label:'FC moyenne',  value: avgHr!==null?String(avgHr):(act.hr?String(act.hr):'Donnée manquante'), unit: avgHr!==null||act.hr?'bpm':'' },
+      { label:'FC max',      value: maxHr!==null?String(maxHr):'Donnée manquante', unit: maxHr!==null?'bpm':'' },
+      { label:'D+ streams', value: elevGain!==null?'+'+fmtNum(elevGain,0):'Donnée manquante', unit: elevGain!==null?'m':'' },
+      { label:'Allure moy.', value: act.pace?fmtPace(act.pace):'Donnée manquante', unit: act.pace?'/km':'' },
+      { label:'Puissance',   value: act.power?act.power+' W':'Donnée manquante', unit:'' },
+      { label:'Charge',      value: act.trainingLoad?String(act.trainingLoad):'Donnée manquante', unit:'' },
     ];
+    const nCols = detailKpis.length;
 
     return h('tr', { style:{ background:'#fdf1ee' } },
       h('td', { colSpan: 7, style:{ padding:'0', borderBottom:'2px solid #201e1d' } },
         h('div', { style:{ padding:'20px 0 24px 28px', borderTop:'1px solid #d7d3d3' } },
-          h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:'0', borderBottom:'1px solid #d7d3d3', marginBottom:'20px', marginRight:'0' } },
+          // Bandeau info masse système vélo
+          isBike && totalMass === 0 && h('p', { style:{ margin:'0 32px 12px 0', fontSize:'11px', color:'#605d5d', fontStyle:'italic' } },
+            'Renseigne le poids cycliste et le poids vélo dans le profil pour activer la puissance estimée.'
+          ),
+          isBike && totalMass > 0 && h('p', { style:{ margin:'0 32px 12px 0', fontSize:'11px', color:'#605d5d' } },
+            'Puissance estimée · Crr '+CRR+' · CdA '+CDA+' m² · masse système '+totalMass.toFixed(1)+' kg'
+          ),
+          h('div', { style:{ display:'grid', gridTemplateColumns:'repeat('+nCols+',1fr)', gap:'0', borderBottom:'1px solid #d7d3d3', marginBottom:'20px', marginRight:'0' } },
             detailKpis.map((kpi,i) =>
-              h('div', { key:i, style:{ padding:'10px 14px 12px', borderRight: i<5 ? '1px solid #d7d3d3' : undefined } },
-                h('span', { style:{ display:'block', fontSize:'10px', fontWeight:'600', letterSpacing:'0.1em', textTransform:'uppercase', color:'#605d5d' } }, kpi.label),
+              h('div', { key:i, style:{ padding:'10px 14px 12px', borderRight: i<nCols-1 ? '1px solid #d7d3d3' : undefined } },
+                h('span', { style:{ display:'block', fontSize:'10px', fontWeight:'600', letterSpacing:'0.1em', textTransform:'uppercase', color: i>=4&&isBike?'#605d5d':'#605d5d' } }, kpi.label),
                 h('div', { style:{ display:'flex', alignItems:'baseline', gap:'5px', marginTop:'6px' } },
-                  h('span', { style:{ fontSize:'18px', fontWeight:'800', letterSpacing:'-0.02em', lineHeight:'1' } }, kpi.value),
+                  h('span', { style:{ fontSize: nCols>6?'15px':'18px', fontWeight:'800', letterSpacing:'-0.02em', lineHeight:'1' } }, kpi.value),
                   kpi.unit && h('span', { style:{ fontSize:'12px', fontWeight:'600', color:'#605d5d' } }, kpi.unit)
                 )
               )
@@ -1033,14 +1132,14 @@ function App() {
                   ['Femme','Homme','Non précisé'].map(g=>h('option',{key:g,value:g},g))
                 )
               ),
-              [{k:'age',label:'Âge (ans)',step:1},{k:'height',label:'Taille (cm)',step:1},{k:'weight',label:'Poids (kg)',step:0.1},{k:'fcMax',label:'FC max (bpm)',step:1},{k:'fcRest',label:'FC repos (bpm)',step:1},{k:'ftp',label:'FTP vélo (W)',step:1}].map(f=>
+              [{k:'age',label:'Âge (ans)',step:1},{k:'height',label:'Taille (cm)',step:1},{k:'weight',label:'Poids cycliste (kg)',step:0.1},{k:'bikeMass',label:'Poids vélo (kg)',step:0.1},{k:'fcMax',label:'FC max (bpm)',step:1},{k:'fcRest',label:'FC repos (bpm)',step:1},{k:'ftp',label:'FTP vélo (W)',step:1}].map(f=>
                 h('div',{key:f.k,style:{display:'flex',flexDirection:'column',gap:'7px'}},
                   h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},f.label),
                   h('input',{type:'number',step:f.step,value:profile[f.k]??'',onChange:e=>{const v=e.target.value;setProfile(p=>({...p,[f.k]:v===''?'':Number(v)}));},style:{width:'100%',padding:'10px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600',fontVariantNumeric:'tabular-nums'}})
                 )
               )
             ),
-            h('p',{style:{margin:'18px 0 0',fontSize:'12px',color:'#605d5d'}},'IMC '+(bmi??'donnée manquante')+' · rapport poids-puissance '+(wkg??'donnée manquante')+' W/kg · réserve cardiaque '+(p.fcMax&&p.fcRest?p.fcMax-p.fcRest+' bpm':'donnée manquante')+'.')
+            h('p',{style:{margin:'18px 0 0',fontSize:'12px',color:'#605d5d'}},'IMC '+(bmi??'donnée manquante')+' · W/kg FTP '+(wkg??'donnée manquante')+' · réserve cardiaque '+(p.fcMax&&p.fcRest?p.fcMax-p.fcRest+' bpm':'donnée manquante')+'.'+(p.weight&&p.bikeMass?' Masse système : '+(Number(p.weight)+Number(p.bikeMass)).toFixed(1)+' kg.':''))
           ),
           h('div',{style:{minWidth:0,padding:'24px 32px 28px'}},
             h('h2',{style:{margin:'0 0 4px',fontSize:'15px',fontWeight:'800',letterSpacing:'-0.01em'}},'Course visée'),
