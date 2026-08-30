@@ -610,8 +610,11 @@ function App() {
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => {
         if (!v || v <= 0) return null;
         const pace = 1000 / 60 / v;
-        return (pace >= 2 && pace <= 10) ? Math.round(pace * 100) / 100 : null;
+        return (pace >= 2 && pace <= MAX_PACE) ? Math.round(pace * 100) / 100 : null;
       };
+      const paceVals = thin(smoothedVel).map(conv).filter(v => v !== null);
+      const paceMin = paceVals.length ? Math.max(2, Math.floor(Math.min(...paceVals) * 2) / 2 - 0.5) : 2;
+      const paceMax = paceVals.length ? Math.min(MAX_PACE, Math.ceil(Math.max(...paceVals) * 2) / 2 + 0.5) : 10;
       datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(smoothedVel).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
     // Puissance : fenêtre 30 s
@@ -620,7 +623,7 @@ function App() {
     if (hrData.length && vis.fc) scales.yHr = { position: 'left', grid: { color: 'rgba(236,48,19,0.12)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
     if (altData.length && vis.alt) scales.yAlt = { position: 'right', min: altMin, max: altMax, grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
     if (velData.length && vis.vel) {
-      scales.yPace = { position: 'left', reverse: !isBike, min: isBike ? undefined : 2, max: isBike ? undefined : 10, grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#3d3a3a' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
+      scales.yPace = { position: 'left', reverse: !isBike, min: isBike ? undefined : paceMin, max: isBike ? undefined : paceMax, grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#3d3a3a' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
     }
     if (estPowData.length && vis.pow) scales.yPow = { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'W estimés', color: '#7c4dbc' }, beginAtZero: true };
     rowChartInsts.current[id] = new Chart(canvasEl, {
@@ -992,6 +995,40 @@ function App() {
     });
     const showEstPow = sport==='Vélo' && totalMass > 0 && powVals.some(v=>v!==null);
 
+    // ── Échelles persistantes : max calculé par semaine sur toute la carrière ──
+    const allActsSp = filtered(data, 365*10, sport);
+    const allWkBuckets = new Map();
+    allActsSp.forEach(a => {
+      const k = keyOf(a.date);
+      if (!allWkBuckets.has(k)) allWkBuckets.set(k, {km:0, h:0, elev:0, pow:[]});
+      const b = allWkBuckets.get(k);
+      b.km += a.dist; b.h += a.time/60; b.elev += a.elev;
+      if (a.sport==='Vélo' && totalMass > 0) {
+        const v = a.dist/(a.time/60);
+        const slope = a.elev&&a.dist?(a.elev/(a.dist*1000))*100:0;
+        const p = estimatePower(v, slope, totalMass);
+        if (p) b.pow.push(p);
+      }
+    });
+    const allWkVals = [...allWkBuckets.values()];
+    const yMaxKm   = Math.ceil(Math.max(1, ...allWkVals.map(b => b.km))   / 10)  * 10;
+    const yMaxElev = Math.ceil(Math.max(1, ...allWkVals.map(b => b.elev)) / 100) * 100;
+    const yMaxPow  = Math.ceil(Math.max(1, ...allWkVals.map(b => b.pow.length ? b.pow.reduce((s,v)=>s+v,0)/b.pow.length : 0)) / 10) * 10;
+    const allHBuckets = new Map();
+    data.forEach(a => {
+      if (sport !== 'Tous' && a.sport !== sport) return;
+      const k = keyOf(a.date);
+      allHBuckets.set(k, (allHBuckets.get(k) || 0) + a.time / 60);
+    });
+    const yMaxH = Math.ceil(Math.max(1, ...[...allHBuckets.values()]) / 2) * 2;
+    const allDayMap2 = new Map();
+    data.forEach(a => {
+      if (sport !== 'Tous' && a.sport !== sport) return;
+      const k = a.date.toDateString();
+      allDayMap2.set(k, (allDayMap2.get(k) || 0) + a.time);
+    });
+    const yMaxDay = Math.ceil(Math.max(1, ...[...allDayMap2.values()]) / 30) * 30;
+
     const datasets = [{ label:'Distance (km)', data:vals, borderColor:'#ec3013', borderWidth:2, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.25, pointRadius:3.5, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, yAxisID:'y' }];
     if (showElev) datasets.push({ label:'D+ (m)', data:elevVals, borderColor:'#201e1d', borderWidth:2, backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#201e1d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y1' });
     if (showEstPow) datasets.push({ label:'Puissance estimée (W)', data:powVals, borderColor:'#605d5d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#605d5d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y2', spanGaps:true });
@@ -1020,23 +1057,23 @@ function App() {
       },
       scales:{
         x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:'Semaines',color:'#605d5d'}},
-        y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Distance (km)',color:'#605d5d'}},
-        y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}},
-        y2:{display:showEstPow,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'W estimés (moy.)',color:'#605d5d'}}
+        y:{grid,border:{display:false},beginAtZero:true,max:yMaxKm,title:{display:true,text:'Distance (km)',color:'#605d5d'}},
+        y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,max:yMaxElev,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}},
+        y2:{display:showEstPow,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,max:yMaxPow,title:{display:true,text:'W estimés (moy.)',color:'#605d5d'}}
       }
     } });
     const days=[]; const dayStart=new Date(); dayStart.setHours(0,0,0,0);
     for(let i=range-1;i>=0;i--) days.push(new Date(dayStart.getTime()-i*86400000));
     const perDay=new Map();
     data.forEach(a=>{if(sport!=='Tous'&&a.sport!==sport)return;const k=a.date.toDateString();perDay.set(k,(perDay.get(k)||0)+a.time);});
-    upsert('daily', dailyRef, { type:'bar', data:{labels:days.map(d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})),datasets:[{data:days.map(d=>Math.round(perDay.get(d.toDateString())||0)),backgroundColor:days.map(d=>d.getDay()===0||d.getDay()===6?'#605d5d':'#ec3013'),borderWidth:0,barPercentage:1,categoryPercentage:0.82}]}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:false,callbacks:{label:c=>c.parsed.y+' min'}}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,autoSkipPadding:28},title:{display:true,text:'Jours',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Minutes / jour',color:'#605d5d'}}} } });
+    upsert('daily', dailyRef, { type:'bar', data:{labels:days.map(d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})),datasets:[{data:days.map(d=>Math.round(perDay.get(d.toDateString())||0)),backgroundColor:days.map(d=>d.getDay()===0||d.getDay()===6?'#605d5d':'#ec3013'),borderWidth:0,barPercentage:1,categoryPercentage:0.82}]}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:false,callbacks:{label:c=>c.parsed.y+' min'}}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,autoSkipPadding:28},title:{display:true,text:'Jours',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,max:yMaxDay,title:{display:true,text:'Minutes / jour',color:'#605d5d'}}} } });
     const sports=['Course','Trail','Vélo','Natation'];
     const shades={Course:'#ec3013',Trail:'#ff9783','Vélo':'#605d5d',Natation:'#bab6b6'};
     const zoneMin=zoneMinutes(acts,profile.fcMax);
     upsert('zone', zoneRef, { type:'doughnut', data:{labels:zoneMin.map(z=>z.label),datasets:[{data:zoneMin.map(z=>z.min),backgroundColor:zoneMin.map(z=>z.color),borderColor:'#f3f2f2',borderWidth:2}]}, options:{ responsive:true, maintainAspectRatio:false, cutout:'46%', plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.label+' · '+Math.round(c.parsed/60)+' h ('+Math.round((c.parsed/zoneMin.reduce((s,z)=>s+z.min,0))*100)+' %)'}}} } });
     const splitKeys=[...buckets.keys()];
     const shown=sport==='Tous'?sports:[sport];
-    upsert('bar', barRef, { type:'bar', data:{labels,datasets:shown.map(sp=>({label:sp,backgroundColor:shades[sp],borderWidth:0,data:splitKeys.map(k=>Math.round(acts.filter(a=>a.sport===sp&&keyOf(a.date)===k).reduce((s,a)=>s+a.time/60,0)*10)/10)}))}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:shown.length>1,position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true}}, scales:{x:{stacked:true,grid:{display:false},title:{display:true,text:'Semaines',color:'#605d5d'}},y:{stacked:true,grid,border:{display:false},beginAtZero:true,title:{display:true,text:'Heures',color:'#605d5d'}}} } });
+    upsert('bar', barRef, { type:'bar', data:{labels,datasets:shown.map(sp=>({label:sp,backgroundColor:shades[sp],borderWidth:0,data:splitKeys.map(k=>Math.round(acts.filter(a=>a.sport===sp&&keyOf(a.date)===k).reduce((s,a)=>s+a.time/60,0)*10)/10)}))}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:shown.length>1,position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true}}, scales:{x:{stacked:true,grid:{display:false},title:{display:true,text:'Semaines',color:'#605d5d'}},y:{stacked:true,grid,border:{display:false},beginAtZero:true,max:yMaxH,title:{display:true,text:'Heures',color:'#605d5d'}}} } });
     return () => { destroyChart('line'); destroyChart('daily'); destroyChart('zone'); destroyChart('bar'); };
   }, [tab, data, range, sport, showElev, profile.fcMax, profile.weight, profile.bikeMass]);
 
@@ -1847,10 +1884,12 @@ function App() {
                   : 'Allure (min/km) par plage de FC. Une courbe qui descend (allure plus rapide) à même FC indique un gain de forme.'
             ),
             (()=>{
-              const resCheck = hrCurveByDate(powDateB0, powDateB1, hrSport);
-              return !resCheck.vals.some(v=>v!==null) && h('p',{style:{margin:'-10px 0 14px',fontSize:'12px',color:'#ec3013',fontWeight:'600'}},
+              const startB = new Date(powDateB0).getTime(), endB = new Date(powDateB1).getTime()+86400000;
+              const hasActsB = data.some(a => a.sport===hrSport && a.date.getTime()>=startB && a.date.getTime()<endB);
+              if (!hasActsB) return h('p',{style:{margin:'-10px 0 14px',fontSize:'12px',color:'#ec3013',fontWeight:'600'}},
                 '⚠ Aucune activité ' + hrSport + ' dans la période de comparaison — ajuste les dates Comparaison.'
               );
+              return null;
             })(),
             h('div',{style:{height:'calc(100vh - 400px)',minHeight:'320px'}},h('canvas',{ref:hrRef}))
           )
