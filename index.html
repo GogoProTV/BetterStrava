@@ -373,11 +373,61 @@ function App() {
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const [data, setData] = useState([]);
-  const [profile, setProfile] = useState({ name: '', gender: 'Non précisé', age: '', height: '', weight: '', fcMax: '', fcRest: '', ftp: '', bikeMass: '' });
-  const [race, setRace] = useState({ type: 'Marathon', date: '2026-09-12', values: defaultValues('Marathon') });
+  const [profile, setProfile] = useState(() => {
+    try {
+      const saved = localStorage.getItem('bs_profile');
+      if (saved) return { name:'', gender:'Non précisé', age:'', height:'', weight:'', fcMax:'', fcRest:'', ftp:'', bikeMass:'', ...JSON.parse(saved) };
+    } catch(e) {}
+    return { name:'', gender:'Non précisé', age:'', height:'', weight:'', fcMax:'', fcRest:'', ftp:'', bikeMass:'' };
+  });
+  const [race, setRace] = useState(() => {
+    try {
+      const saved = localStorage.getItem('bs_race');
+      if (saved) { const r = JSON.parse(saved); return { type:'Marathon', date:'2026-09-12', values:defaultValues('Marathon'), ...r }; }
+    } catch(e) {}
+    return { type:'Marathon', date:'2026-09-12', values:defaultValues('Marathon') };
+  });
 
+  // ── Persistance profil + course ───────────────────────────────────────────
+  useEffect(() => {
+    try { localStorage.setItem('bs_profile', JSON.stringify(profile)); } catch(e) {}
+  }, [profile]);
+  useEffect(() => {
+    try { localStorage.setItem('bs_race', JSON.stringify(race)); } catch(e) {}
+  }, [race]);
+
+  // ── Recalcul puissance estimée si masse change après fetch ────────────────
+  useEffect(() => {
+    const totalMass = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
+    if (!totalMass) return;
+    setActStreams(prev => {
+      const next = { ...prev };
+      let changed = false;
+      for (const id of Object.keys(next)) {
+        const s = next[id];
+        if (!s || s === 'error' || !s.vel || s.pow) continue; // déjà calculé ou pas de streams
+        // Vélo sans pow : recalculer
+        const act = data.find(a => String(a.id) === String(id));
+        if (!act || act.sport !== 'Vélo') continue;
+        const pow = new Float32Array(s.vel.length);
+        for (let i = 0; i < s.vel.length; i++) {
+          const v_kmh = s.vel[i] * 3.6;
+          let slope = 0;
+          if (s.alt && i > 0) {
+            const dAlt = s.alt[i] - s.alt[i-1];
+            const dDist = Math.max(0.1, s.vel[i]);
+            slope = Math.max(-30, Math.min(30, (dAlt / dDist) * 100));
+          }
+          const p = estimatePower(v_kmh, slope, totalMass);
+          pow[i] = p !== null ? p : 0;
+        }
+        next[id] = { ...s, pow };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [profile.weight, profile.bikeMass, data]);
   // ── Accordéon inline ─────────────────────────────────────────────────────
-  const [openRowId, setOpenRowId] = useState(null);
   const [rowStreams, setRowStreams] = useState({});
   const rowChartInsts = useRef({});
 
