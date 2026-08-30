@@ -1578,25 +1578,74 @@ function App() {
           (()=>{
             const ftpVal = Number(profile.ftp)||ftpEstimated||null;
             const isEstimatedFtp = !Number(profile.ftp) && !!ftpEstimated;
-            const curA = powerCurveByDate(powDateA0,powDateA1);
-            const wmaxA = curA.filter(v=>v).length ? Math.max(...curA.filter(v=>v).map(v=>v.w)) : null;
-            const best20idx = POWER_DURATIONS.findIndex(d=>d.s===1200);
-            const kjBest = curA[best20idx] ? Math.round(curA[best20idx].j/1000*10)/10 : null;
-            const wkg = ftpVal && profile.weight ? Math.round(ftpVal/Number(profile.weight)*100)/100 : null;
             const hasStreams = data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow);
             const estTag = hasStreams && !data.some(a=>a.sport==='Vélo'&&a.power) ? ' (est.)' : '';
-            const cells = [
-              {label:'FTP'+estTag,          value: ftpVal?ftpVal+' W':'Donnée manquante', sub: isEstimatedFtp?'Estimée depuis tes sorties':'Renseignée manuellement', accent: true},
-              {label:'W/kg FTP'+estTag,     value: wkg?wkg+' W/kg':'Donnée manquante',   sub: ftpVal?'FTP '+ftpVal+' W':''},
-              {label:'kJ \u00b7 effort 20 min',  value: kjBest?kjBest+' kJ':'—', sub: kjBest?'= '+Math.round(kjBest*1000)+' J':'Calcule la courbe d\'abord'},
-              {label:'Wmax'+estTag,         value: wmaxA?wmaxA+' W':'—', sub: wmaxA&&profile.weight?Math.round(wmaxA/Number(profile.weight)*100)/100+' W/kg':''},
+            // Puissance critique (CP) : meilleur effort 20-60 min × 0.92 (plus conservateur que FTP 0.95)
+            const powStat = (durS, daysLimit) => {
+              const cutoff = Date.now() - daysLimit*86400000;
+              const rides = data.filter(a => a.sport==='Vélo' && a.date.getTime()>=cutoff);
+              let best = null;
+              for (const a of rides) {
+                const s = actStreams[a.id];
+                if (s && s.pow && s.pow.length >= durS) {
+                  const v = bestAvgWindow(s.pow, durS);
+                  if (v!==null) best = best===null ? v : Math.max(best,v);
+                }
+              }
+              return best;
+            };
+            const wmax30 = powStat(5, 30); const wmax365 = powStat(5, 365);
+            const ftp30  = ftpVal;
+            // CP : best 30-60min × 0.92
+            const best30minIdx = POWER_DURATIONS.findIndex(d=>d.s===1800);
+            const best60minIdx = POWER_DURATIONS.findIndex(d=>d.s===3600);
+            const curAll = powerCurveByDate(new Date(Date.now()-365*86400000).toISOString().slice(0,10), new Date().toISOString().slice(0,10));
+            const cur30d = powerCurveByDate(new Date(Date.now()-30*86400000).toISOString().slice(0,10), new Date().toISOString().slice(0,10));
+            const cur60d = powerCurveByDate(new Date(Date.now()-60*86400000).toISOString().slice(0,10), new Date(Date.now()-30*86400000).toISOString().slice(0,10));
+            const wmax30d = cur30d.filter(v=>v).length ? Math.max(...cur30d.filter(v=>v).map(v=>v.w)) : null;
+            const wmax60d = cur60d.filter(v=>v).length ? Math.max(...cur60d.filter(v=>v).map(v=>v.w)) : null;
+            const wmaxDelta = (wmax30d&&wmax60d&&wmax60d>0) ? Math.round(((wmax30d-wmax60d)/wmax60d)*100) : null;
+            const best20min30 = cur30d[POWER_DURATIONS.findIndex(d=>d.s===1200)];
+            const best20min60 = cur60d[POWER_DURATIONS.findIndex(d=>d.s===1200)];
+            const kj30 = best20min30 ? Math.round(best20min30.j/1000*10)/10 : null;
+            const kj60 = best20min60 ? Math.round(best20min60.j/1000*10)/10 : null;
+            const kjDelta = (kj30&&kj60&&kj60>0) ? Math.round(((kj30-kj60)/kj60)*100) : null;
+            const cp30val = (() => { const v30=cur30d[best30minIdx]; const v60c=cur30d[best60minIdx]; const best=Math.max(v30?v30.w:0,v60c?v60c.w:0); return best>0?Math.round(best*0.92):null; })();
+            const cp60val = (() => { const v30=cur60d[best30minIdx]; const v60c=cur60d[best60minIdx]; const best=Math.max(v30?v30.w:0,v60c?v60c.w:0); return best>0?Math.round(best*0.92):null; })();
+            const cpDelta = (cp30val&&cp60val&&cp60val>0) ? Math.round(((cp30val-cp60val)/cp60val)*100) : null;
+            const wkg = ftpVal && profile.weight ? Math.round(ftpVal/Number(profile.weight)*100)/100 : null;
+            // FTP période précédente : utiliser best effort 20min × 0.95 sur J-60→J-30
+            const ftp30prev = (() => {
+              const best = cur60d[POWER_DURATIONS.findIndex(d=>d.s===1200)];
+              return best ? Math.round(best.w*0.95) : null;
+            })();
+            const ftpDelta = (ftp30&&ftp30prev&&ftp30prev>0) ? Math.round(((ftp30-ftp30prev)/ftp30prev)*100) : null;
+            const wkgPrev = ftp30prev && profile.weight ? Math.round(ftp30prev/Number(profile.weight)*100)/100 : null;
+            const wkgDelta = (wkg&&wkgPrev&&wkgPrev>0) ? Math.round(((wkg-wkgPrev)/wkgPrev)*100) : null;
+            const mkChip = (delta, betterHigh) => deltaChip(delta, betterHigh);
+            const statCells = [
+              { label:'FTP'+estTag, val: ftpVal?ftpVal+' W':null, delta: ftpDelta, sub: isEstimatedFtp?'estimée':'manuelle', betterHigh:true },
+              { label:'W/kg'+estTag, val: wkg?wkg+' W/kg':null, delta: wkgDelta, sub: profile.weight?'masse '+profile.weight+' kg':'renseigne le poids', betterHigh:true },
+              { label:'kJ · 20 min', val: kj30?kj30+' kJ':null, delta: kjDelta, sub: kj30?'= '+Math.round(kj30*1000)+' J':'calcule la courbe', betterHigh:true },
+              { label:'Wmax'+estTag, val: wmax30d?wmax30d+' W':null, delta: wmaxDelta, sub: wmax30d&&profile.weight?Math.round(wmax30d/Number(profile.weight)*100)/100+' W/kg':'', betterHigh:true },
+              { label:'PC'+estTag, val: cp30val?cp30val+' W':null, delta: cpDelta, sub: 'puissance critique (30-60 min)', betterHigh:true },
             ];
-            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',borderBottom:'2px solid #201e1d'}},
-              cells.map((c,i)=>h('div',{key:i,style:{padding:'16px 32px 18px',borderRight:i<3?'1px solid #d7d3d3':undefined}},
-                h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
-                h('span',{style:{display:'block',marginTop:'6px',fontSize:'20px',fontWeight:'800',letterSpacing:'-0.02em',color:c.accent&&ftpVal?'#ec3013':'#201e1d'}},c.value),
-                h('span',{style:{display:'block',marginTop:'3px',fontSize:'12px',color:'#605d5d'}},c.sub)
-              ))
+            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
+              statCells.map((c,i) => {
+                const chip = mkChip(c.delta, c.betterHigh);
+                return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
+                  h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
+                  h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'10px'}},
+                    h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:c.val?'#201e1d':'#bab6b6'}},c.val||'—'),
+                  ),
+                  h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
+                    chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
+                    chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
+                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},'vs 30 j préc.')
+                  ),
+                  h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},c.sub)
+                );
+              })
             );
           })(),
           h('section',{style:{padding:'28px 32px 32px'}},
@@ -1637,43 +1686,55 @@ function App() {
         ),
         athleteSection==='Allure'&&h('div',null,
           (()=>{
-            // Stats allure : distances clés depuis les streams ou moyennes
-            const fmtPLocal = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
+            const fmtPL = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
             const runActs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
-            const paceStat = (targetM, daysLimit) => {
-              const cutoff = Date.now() - daysLimit*86400000;
-              const pool = runActs.filter(a => a.date.getTime() >= cutoff);
+            const paceStat = (targetM, d0, d1) => {
+              const pool = runActs.filter(a => a.date.getTime()>=d0 && a.date.getTime()<d1);
               let best = null;
               for (const a of pool) {
                 const ps = actStreams[a.id];
                 if (ps && ps.dist && ps.vel) {
                   const v = bestPaceWindow(ps.dist, ps.vel, targetM);
-                  if (v && v <= MAX_PACE) best = best===null ? v : Math.min(best, v);
-                } else if (a.dist*1000 >= targetM && a.pace && a.pace <= MAX_PACE) {
-                  best = best===null ? a.pace : Math.min(best, a.pace);
+                  if (v && v<=MAX_PACE) best = best===null ? v : Math.min(best,v);
+                } else if (a.dist*1000>=targetM && a.pace && a.pace<=MAX_PACE) {
+                  best = best===null ? a.pace : Math.min(best,a.pace);
                 }
               }
               return best;
             };
+            const now = Date.now();
             const statDefs = [
-              {label:'1 km',   m:1000},
-              {label:'5 km',   m:5000},
-              {label:'10 km',  m:10000},
-              {label:'Semi',   m:21097},
+              {label:'1 km',    m:1000},
+              {label:'5 km',    m:5000},
+              {label:'10 km',   m:10000},
+              {label:'Semi',    m:21097},
               {label:'Marathon',m:42195},
             ];
-            const cells30  = statDefs.map(s => paceStat(s.m, 30));
-            const cells365 = statDefs.map(s => paceStat(s.m, 365));
-            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat('+statDefs.length+',1fr)',borderBottom:'2px solid #201e1d'}},
-              statDefs.map((s,i) => h('div',{key:i,style:{padding:'16px 24px 18px',borderRight:i<statDefs.length-1?'2px solid #201e1d':undefined}},
-                h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},s.label),
-                h('span',{style:{display:'block',marginTop:'6px',fontSize:'20px',fontWeight:'800',letterSpacing:'-0.02em',color:cells30[i]?'#ec3013':'#bab6b6'}},
-                  cells30[i] ? fmtPLocal(cells30[i])+' /km' : '—'
-                ),
-                h('span',{style:{display:'block',marginTop:'3px',fontSize:'12px',color:'#605d5d'}},
-                  cells365[i] ? 'Mieux : '+fmtPLocal(cells365[i])+' /km (1 an)' : 'Pas de données'
-                )
-              ))
+            const cur  = statDefs.map(s => paceStat(s.m, now-30*86400000, now));
+            const prev = statDefs.map(s => paceStat(s.m, now-60*86400000, now-30*86400000));
+            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
+              statDefs.map((s,i) => {
+                const vCur = cur[i], vPrev = prev[i];
+                // Pour allure : amélioration = valeur qui BAISSE (pace plus basse = plus vite)
+                const pct = (vCur&&vPrev&&vPrev>0) ? Math.round(((vPrev-vCur)/vPrev)*100) : null;
+                const chip = deltaChip(pct, true); // baisse = amélioration, donc betterHigh=true sur delta inversé
+                return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
+                  h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},s.label),
+                  h('div',{style:{marginTop:'10px'}},
+                    h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?'#201e1d':'#bab6b6'}},
+                      vCur ? fmtPL(vCur)+' /km' : '—'
+                    )
+                  ),
+                  h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
+                    chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
+                    chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
+                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},'vs 30 j préc.')
+                  ),
+                  h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
+                    vPrev ? fmtPL(vPrev)+' /km précédemment' : 'pas de données préc.'
+                  )
+                );
+              })
             );
           })(),
           h('section',{style:{padding:'28px 32px 32px'}},
@@ -1708,58 +1769,27 @@ function App() {
           )
         ),
         athleteSection==='Fréquence cardiaque'&&h('div',null,
-          // Bande de contrôle : sélecteur sport uniquement
-          h('section',{style:{display:'flex',alignItems:'flex-start',gap:'0',borderBottom:'2px solid #201e1d'}},
-            h('div',{style:{padding:'20px 32px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'10px'}},
-              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
-              h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
-                (top3Sports.length ? top3Sports : ['Course','Trail','Vélo']).map(sp =>
-                  h('button',{key:sp,type:'button',onClick:()=>setHrSport(sp),
-                    style:{...btnStyle(hrSport===sp),padding:'8px 14px',textAlign:'left'},
-                    onMouseEnter:e=>{if(hrSport!==sp)e.currentTarget.style.background='#ffe0d9';},
-                    onMouseLeave:e=>{e.currentTarget.style.background=hrSport===sp?'#ec3013':'transparent';}
-                  },
-                    sp === 'Trail' ? 'Trail · VAP' : sp
-                  )
-                )
-              )
-            ),
-            h('div',{style:{padding:'20px 32px',display:'flex',flexDirection:'column',gap:'6px'}},
-              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Légende'),
-              h('div',{style:{display:'flex',flexDirection:'column',gap:'6px',marginTop:'4px'}},
-                [
-                  {color:'#ec3013',dash:false,label:'1 mois'},
-                  {color:'#f97a60',dash:false,label:'3 mois'},
-                  {color:'#605d5d',dash:true, label:'6 mois'},
-                  {color:'#bab6b6',dash:true, label:'1 an'},
-                ].map(item=>h('div',{key:item.label,style:{display:'flex',alignItems:'center',gap:'8px'}},
-                  h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:item.color,borderTop:item.dash?'2px dashed '+item.color:'none',opacity:item.dash?1:undefined}}),
-                  h('span',{style:{fontSize:'12px',fontWeight:'600',color:item.dash?'#605d5d':'#201e1d'}},item.label)
-                ))
-              )
-            )
-          ),
           (()=>{
-            // Zones FC selon fcMax + fcRest (Karvonen si dispo, sinon % fcMax)
             const fcMax = Number(profile.fcMax)||190;
             const fcRest = Number(profile.fcRest)||50;
             const reserve = fcMax - fcRest;
             const karvonen = pct => Math.round(fcRest + reserve * pct);
             const useKarv = !!Number(profile.fcRest);
             const zoneDefs = [
-              {label:'Z1 · récup',     lo: useKarv?karvonen(0.5):Math.round(fcMax*0.5),  hi: useKarv?karvonen(0.6):Math.round(fcMax*0.6)},
-              {label:'Z2 · endurance', lo: useKarv?karvonen(0.6):Math.round(fcMax*0.6),  hi: useKarv?karvonen(0.7):Math.round(fcMax*0.7)},
-              {label:'Z3 · tempo',     lo: useKarv?karvonen(0.7):Math.round(fcMax*0.7),  hi: useKarv?karvonen(0.8):Math.round(fcMax*0.8)},
-              {label:'Z4 · seuil',     lo: useKarv?karvonen(0.8):Math.round(fcMax*0.8),  hi: useKarv?karvonen(0.9):Math.round(fcMax*0.9)},
-              {label:'Z5 · VMA',       lo: useKarv?karvonen(0.9):Math.round(fcMax*0.9),  hi: fcMax},
+              {label:'Z1 · récup',     lo: useKarv?karvonen(0.5):Math.round(fcMax*0.5), hi: useKarv?karvonen(0.6):Math.round(fcMax*0.6)},
+              {label:'Z2 · endurance', lo: useKarv?karvonen(0.6):Math.round(fcMax*0.6), hi: useKarv?karvonen(0.7):Math.round(fcMax*0.7)},
+              {label:'Z3 · tempo',     lo: useKarv?karvonen(0.7):Math.round(fcMax*0.7), hi: useKarv?karvonen(0.8):Math.round(fcMax*0.8)},
+              {label:'Z4 · seuil',     lo: useKarv?karvonen(0.8):Math.round(fcMax*0.8), hi: useKarv?karvonen(0.9):Math.round(fcMax*0.9)},
+              {label:'Z5 · VMA',       lo: useKarv?karvonen(0.9):Math.round(fcMax*0.9), hi: fcMax},
             ];
             const isBikeFC = hrSport === 'Vélo';
             const fmtPZ = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
-            // Pour chaque zone : accumuler vitesse/puissance s/s depuis streams
-            const zoneStats = zoneDefs.map(z => {
+            const now = Date.now();
+            // Accumuler s/s par zone, sur 30 j et 30–60 j (pour delta)
+            const accumZone = (daysStart, daysEnd) => zoneDefs.map(z => {
               let sumV = 0, cnt = 0;
-              const cutoff = Date.now() - 365*86400000;
-              data.filter(a => a.sport===hrSport && a.date.getTime()>=cutoff).forEach(a => {
+              const d0 = now - daysEnd*86400000, d1 = now - daysStart*86400000;
+              data.filter(a => a.sport===hrSport && a.date.getTime()>=d0 && a.date.getTime()<d1).forEach(a => {
                 const s = actStreams[a.id];
                 if (!s || s==='error' || !s.hr) return;
                 const metric = isBikeFC ? s.pow : s.vel;
@@ -1773,21 +1803,33 @@ function App() {
                 }
               });
               if (!cnt) return null;
-              const avg = sumV / cnt;
+              const avg = sumV/cnt;
               return isBikeFC ? Math.round(avg) : Math.round((1000/60/avg)*100)/100;
             });
-            const nCols = zoneDefs.length;
-            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat('+nCols+',1fr)',borderBottom:'2px solid #201e1d'}},
+            const zoneCur  = accumZone(0, 30);
+            const zonePrev = accumZone(30, 60);
+            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
               zoneDefs.map((z,i) => {
-                const val = zoneStats[i];
-                return h('div',{key:i,style:{padding:'16px 20px 18px',borderRight:i<nCols-1?'2px solid #201e1d':undefined}},
+                const vCur = zoneCur[i], vPrev = zonePrev[i];
+                // Pour vélo : hausse = meilleur. Pour course : baisse allure = meilleur.
+                const raw = (vCur&&vPrev&&vPrev>0) ? Math.round(((vCur-vPrev)/vPrev)*100) : null;
+                const pct = isBikeFC ? raw : (raw !== null ? -raw : null);
+                const chip = deltaChip(pct, true);
+                return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
                   h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},z.label),
-                  h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#bab6b6'}},z.lo+'–'+z.hi+' bpm'),
-                  h('span',{style:{display:'block',marginTop:'6px',fontSize:'18px',fontWeight:'800',letterSpacing:'-0.02em',color:val?'#201e1d':'#bab6b6'}},
-                    val ? (isBikeFC ? val+' W' : fmtPZ(val)+' /km') : '—'
+                  h('span',{style:{display:'block',marginTop:'4px',fontSize:'10px',color:'#bab6b6',letterSpacing:'0.06em'}},z.lo+'–'+z.hi+' bpm'),
+                  h('div',{style:{marginTop:'8px'}},
+                    h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?'#201e1d':'#bab6b6'}},
+                      vCur ? (isBikeFC ? vCur+' W' : fmtPZ(vCur)+' /km') : '—'
+                    )
                   ),
-                  h('span',{style:{display:'block',marginTop:'2px',fontSize:'11px',color:'#605d5d'}},
-                    val ? (isBikeFC ? 'puissance moy.' : 'allure moy.') : 'pas de données'
+                  h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
+                    chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
+                    chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
+                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},'vs 30 j préc.')
+                  ),
+                  h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
+                    vPrev ? (isBikeFC ? vPrev+' W précédemment' : fmtPZ(vPrev)+' /km précédemment') : 'pas de données préc.'
                   )
                 );
               })
@@ -1835,7 +1877,18 @@ function App() {
                   ? 'Allure (min/km, VAP) par bpm, seconde par seconde. Une courbe qui descend (allure plus rapide) à même FC indique un gain de forme.'
                   : 'Allure (min/km) par bpm, calculée seconde par seconde sur toutes les sorties course. Une courbe qui descend à même FC = progression.'
             ),
-            h('div',{style:{height:'calc(100vh - 340px)',minHeight:'320px'}},h('canvas',{ref:hrRef}))
+            h('div',{style:{position:'relative',height:'calc(100vh - 340px)',minHeight:'320px'}},
+              h('div',{style:{position:'absolute',top:'4px',left:'12px',zIndex:10,display:'flex',gap:'6px'}},
+                (top3Sports.length ? top3Sports : ['Course','Trail','Vélo']).map(sp =>
+                  h('button',{key:sp,type:'button',onClick:()=>setHrSport(sp),
+                    style:{padding:'5px 12px',border:'2px solid '+(hrSport===sp?'#ec3013':'#d7d3d3'),background:hrSport===sp?'#ec3013':'#f3f2f2',color:hrSport===sp?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'},
+                    onMouseEnter:e=>{if(hrSport!==sp){e.currentTarget.style.borderColor='#ec3013';e.currentTarget.style.color='#ec3013';}},
+                    onMouseLeave:e=>{if(hrSport!==sp){e.currentTarget.style.borderColor='#d7d3d3';e.currentTarget.style.color='#605d5d';}}
+                  }, sp==='Trail'?'Trail · VAP':sp)
+                )
+              ),
+              h('canvas',{ref:hrRef})
+            )
           )
         )
       ),
