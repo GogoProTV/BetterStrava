@@ -424,6 +424,7 @@ function App() {
     });
   }, [profile.weight, profile.bikeMass]);
   // ── Accordéon inline ─────────────────────────────────────────────────────
+  const [openRowId, setOpenRowId] = useState(null);
   const [rowStreams, setRowStreams] = useState({});
   const rowChartInsts = useRef({});
 
