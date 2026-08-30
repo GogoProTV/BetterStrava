@@ -294,8 +294,9 @@ function App() {
   const ago365Str = new Date(Date.now()-365*86400000).toISOString().slice(0,10);
   const [powDateA0, setPowDateA0] = useState(ago90Str);
   const [powDateA1, setPowDateA1] = useState(todayStr);
-  const [powDateB0, setPowDateB0] = useState(ago365Str);
-  const [powDateB1, setPowDateB1] = useState(ago180Str);
+  // B = même fenêtre que A mais décalée d'un an
+  const [powDateB0, setPowDateB0] = useState(new Date(Date.now()-365*86400000-90*86400000).toISOString().slice(0,10));
+  const [powDateB1, setPowDateB1] = useState(ago365Str);
   // ── Cache streams unifié ─────────────────────────────────────────────────
   // id → { vel: Float32Array, dist: Float32Array, alt: Float32Array, hr: Float32Array } | 'error'
   const [actStreams, setActStreams] = useState({});
@@ -1589,31 +1590,29 @@ function App() {
             );
           })(),
           h('section',{style:{padding:'28px 32px 32px'}},
-            // Barre de chargement unifiée
+            // Barre de chargement — masquée si tout est prêt
             (()=>{
               const eligible = data.filter(a => a.sport==='Vélo'||a.sport==='Course'||a.sport==='Trail');
               const withData = eligible.filter(a => actStreams[a.id] && actStreams[a.id]!=='error');
+              const allDone = withData.length === eligible.length && eligible.length > 0;
               const isLoading = streamFetchStatus === 'loading';
               const totalMass = (Number(profile.weight)||0)+(Number(profile.bikeMass)||0);
+              if (allDone && !isLoading) return null;
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
                     isLoading ? 'Calcul en cours… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités'
-                    : withData.length ? withData.length+' / '+eligible.length+' activités chargées'
                     : !totalMass ? 'Renseigne le poids cycliste + vélo dans le Profil pour la puissance estimée'
                     : 'Streams non chargés — clique sur Calculer'
                   ),
                   isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
                     h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((streamFetchProgress.done/Math.max(1,streamFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
-                  ),
-                  !isLoading && withData.length>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    'Puissance estimée · Crr='+CRR+' · CdA='+CDA+' · masse '+totalMass.toFixed(1)+' kg · fenêtre glissante s/s'
                   )
                 ),
                 h('div',{style:{display:'flex',gap:'8px'}},
                   !isLoading && h('button',{type:'button',onClick:fetchAllStreams,disabled:!localStorage.getItem('strava_token'),
                     style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
-                  }, withData.length ? 'Recalculer' : 'Calculer la courbe'),
+                  }, 'Calculer la courbe'),
                   isLoading && h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},
                     style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
                   },'Annuler')
@@ -1681,29 +1680,27 @@ function App() {
             )
           ),
           h('section',{style:{padding:'28px 32px 32px'}},
-            // Barre de chargement unifiée
+            // Barre de chargement — masquée si tout est prêt
             (()=>{
               const runs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
               const withData = runs.filter(a => actStreams[a.id] && actStreams[a.id]!=='error');
+              const allDone = withData.length === runs.length && runs.length > 0;
               const isLoading = streamFetchStatus === 'loading';
+              if (allDone && !isLoading) return null;
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
                     isLoading ? 'Calcul en cours… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités'
-                    : withData.length ? withData.length+' / '+runs.length+' sorties chargées — fenêtre glissante s/s'
                     : 'Streams non chargés — affichage par allure moyenne de sortie'
                   ),
                   isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
                     h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((streamFetchProgress.done/Math.max(1,streamFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
-                  ),
-                  !isLoading && withData.length>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    'Meilleure allure sur chaque distance par fenêtre glissante seconde par seconde'
                   )
                 ),
                 h('div',{style:{display:'flex',gap:'8px'}},
                   !isLoading && h('button',{type:'button',onClick:fetchAllStreams,disabled:!localStorage.getItem('strava_token'),
                     style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
-                  }, withData.length ? 'Recalculer' : 'Charger les streams'),
+                  }, 'Charger les streams'),
                   isLoading && h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},
                     style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
                   },'Annuler')
@@ -1794,29 +1791,27 @@ function App() {
             )
           ),
           h('section',{style:{padding:'28px 32px 32px'}},
-            // Barre de chargement unifiée
+            // Barre de chargement — masquée si tout est prêt
             (()=>{
               const eligible = data.filter(a => a.sport==='Course'||a.sport==='Trail'||a.sport==='Vélo');
               const withData = eligible.filter(a => actStreams[a.id] && actStreams[a.id]!=='error');
+              const allDone = withData.length === eligible.length && eligible.length > 0;
               const isLoading = streamFetchStatus === 'loading';
+              if (allDone && !isLoading) return null;
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
                     isLoading ? 'Chargement… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités'
-                    : withData.length ? withData.length+' / '+eligible.length+' activités chargées — données s/s'
                     : 'Streams non chargés — fallback sur FC + données résumé'
                   ),
                   isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
                     h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((streamFetchProgress.done/Math.max(1,streamFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
-                  ),
-                  !isLoading && withData.length>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    'Chaque seconde classée dans son bin de FC · '+hrSport+(hrSport==='Trail' ? ' · VAP' : hrSport==='Vélo' ? ' · puissance estimée (W)' : '')
                   )
                 ),
                 h('div',{style:{display:'flex',gap:'8px'}},
                   !isLoading && h('button',{type:'button',onClick:fetchAllStreams,disabled:!localStorage.getItem('strava_token'),
                     style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
-                  }, withData.length ? 'Recalculer' : 'Charger les streams'),
+                  }, 'Charger les streams'),
                   isLoading && h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},
                     style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
                   },'Annuler')
