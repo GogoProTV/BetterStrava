@@ -1619,7 +1619,7 @@ function App() {
                 h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveA?'#ec3013':'#bab6b6'}}),
               ),
               h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setPowRangeA(o.d);setShowCurveA(true);},
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===powRangeA&&showCurveA){setShowCurveA(false);}else{setPowRangeA(o.d);setShowCurveA(true);}},
                   style:{padding:'5px 10px',border:'2px solid '+(powRangeA===o.d&&showCurveA?'#ec3013':'#d7d3d3'),background:powRangeA===o.d&&showCurveA?'#ec3013':'transparent',color:powRangeA===o.d&&showCurveA?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
                   onMouseEnter:e=>{if(!(powRangeA===o.d&&showCurveA))e.currentTarget.style.background='#ffe0d9';},
                   onMouseLeave:e=>{if(!(powRangeA===o.d&&showCurveA))e.currentTarget.style.background='transparent';}
@@ -1633,7 +1633,7 @@ function App() {
                 h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:showCurveB?'#bab6b6':'#d7d3d3',borderTop:'2px dashed '+(showCurveB?'#bab6b6':'#d7d3d3')}}),
               ),
               h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setPowRangeB(o.d);setShowCurveB(true);},
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===powRangeB&&showCurveB){setShowCurveB(false);}else{setPowRangeB(o.d);setShowCurveB(true);}},
                   style:{padding:'5px 10px',border:'2px solid '+(powRangeB===o.d&&showCurveB?'#201e1d':'#d7d3d3'),background:powRangeB===o.d&&showCurveB?'#201e1d':'transparent',color:powRangeB===o.d&&showCurveB?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
                   onMouseEnter:e=>{if(!(powRangeB===o.d&&showCurveB))e.currentTarget.style.background='#eae9e9';},
                   onMouseLeave:e=>{if(!(powRangeB===o.d&&showCurveB))e.currentTarget.style.background='transparent';}
@@ -1777,7 +1777,7 @@ function App() {
                 h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveA?'#ec3013':'#bab6b6'}}),
               ),
               h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setPaceRangeA(o.d);setShowCurveA(true);},
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===paceRangeA&&showCurveA){setShowCurveA(false);}else{setPaceRangeA(o.d);setShowCurveA(true);}},
                   style:{padding:'5px 10px',border:'2px solid '+(paceRangeA===o.d&&showCurveA?'#ec3013':'#d7d3d3'),background:paceRangeA===o.d&&showCurveA?'#ec3013':'transparent',color:paceRangeA===o.d&&showCurveA?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
                   onMouseEnter:e=>{if(!(paceRangeA===o.d&&showCurveA))e.currentTarget.style.background='#ffe0d9';},
                   onMouseLeave:e=>{if(!(paceRangeA===o.d&&showCurveA))e.currentTarget.style.background='transparent';}
@@ -1791,7 +1791,7 @@ function App() {
                 h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:showCurveB?'#bab6b6':'#d7d3d3',borderTop:'2px dashed '+(showCurveB?'#bab6b6':'#d7d3d3')}}),
               ),
               h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setPaceRangeB(o.d);setShowCurveB(true);},
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===paceRangeB&&showCurveB){setShowCurveB(false);}else{setPaceRangeB(o.d);setShowCurveB(true);}},
                   style:{padding:'5px 10px',border:'2px solid '+(paceRangeB===o.d&&showCurveB?'#201e1d':'#d7d3d3'),background:paceRangeB===o.d&&showCurveB?'#201e1d':'transparent',color:paceRangeB===o.d&&showCurveB?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
                   onMouseEnter:e=>{if(!(paceRangeB===o.d&&showCurveB))e.currentTarget.style.background='#eae9e9';},
                   onMouseLeave:e=>{if(!(paceRangeB===o.d&&showCurveB))e.currentTarget.style.background='transparent';}
@@ -1914,7 +1914,7 @@ function App() {
                 h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveA?'#ec3013':'#bab6b6'}}),
               ),
               h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setHrRangeA(o.d);setShowCurveA(true);},
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===hrRangeA&&showCurveA){setShowCurveA(false);}else{setHrRangeA(o.d);setShowCurveA(true);}},
                   style:{padding:'5px 10px',border:'2px solid '+(hrRangeA===o.d&&showCurveA?'#ec3013':'#d7d3d3'),background:hrRangeA===o.d&&showCurveA?'#ec3013':'transparent',color:hrRangeA===o.d&&showCurveA?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
                   onMouseEnter:e=>{if(!(hrRangeA===o.d&&showCurveA))e.currentTarget.style.background='#ffe0d9';},
                   onMouseLeave:e=>{if(!(hrRangeA===o.d&&showCurveA))e.currentTarget.style.background='transparent';}
@@ -1928,7 +1928,7 @@ function App() {
                 h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:showCurveB?'#bab6b6':'#d7d3d3',borderTop:'2px dashed '+(showCurveB?'#bab6b6':'#d7d3d3')}}),
               ),
               h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setHrRangeB(o.d);setShowCurveB(true);},
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===hrRangeB&&showCurveB){setShowCurveB(false);}else{setHrRangeB(o.d);setShowCurveB(true);}},
                   style:{padding:'5px 10px',border:'2px solid '+(hrRangeB===o.d&&showCurveB?'#201e1d':'#d7d3d3'),background:hrRangeB===o.d&&showCurveB?'#201e1d':'transparent',color:hrRangeB===o.d&&showCurveB?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
                   onMouseEnter:e=>{if(!(hrRangeB===o.d&&showCurveB))e.currentTarget.style.background='#eae9e9';},
                   onMouseLeave:e=>{if(!(hrRangeB===o.d&&showCurveB))e.currentTarget.style.background='transparent';}
@@ -2148,7 +2148,9 @@ function App() {
                 );
               })
             ),
-        h('section',{style:{display:'grid',gridTemplateColumns:'3fr 1fr',gridTemplateRows:'auto auto',borderBottom:'2px solid #201e1d'}},
+        (()=>{
+          const isTousLayout = sport === 'Tous';
+          return h('section',{style:{display:'grid',gridTemplateColumns:'3fr 1fr',gridTemplateRows:'auto auto',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{gridColumn:'1',gridRow:'1',minWidth:0,padding:'28px 32px 32px',borderRight:'2px solid #201e1d',borderBottom:'2px solid #201e1d'}},
             h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'20px'}},
               h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},range<=90?'Volume par semaine':'Volume par mois'),
@@ -2159,7 +2161,25 @@ function App() {
             ),
             h('div',{style:{height:'252px'}},h('canvas',{ref:lineRef}))
           ),
-          h('div',{style:{gridColumn:'2',gridRow:'1',minWidth:0,padding:'20px 24px 24px',borderBottom:'2px solid #201e1d'}},
+          isTousLayout
+            ? h('div',{style:{gridColumn:'2',gridRow:'1 / span 2',minWidth:0,padding:'20px 24px 24px'}},
+                h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'4px',marginBottom:'12px'}},
+                  h('h2',{style:{margin:0,fontSize:'14px',fontWeight:'800',letterSpacing:'-0.01em'}},'Zones cardiaques'),
+                  h('span',{style:{fontSize:'10px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Répartition')
+                ),
+                h('p',{style:{margin:'0 0 12px',fontSize:'11px',color:'#605d5d'}},acts.some(a=>a.hr)?'Minutes dans chaque zone de FC sur la période.':'Donnée manquante — aucune fréquence cardiaque.'),
+                h('div',{style:{height:'320px'}},h('canvas',{ref:zoneRef})),
+                h('div',{style:{display:'flex',flexDirection:'column',marginTop:'14px'}},
+                  zm.map((z,i)=>h('div',{key:i,style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'4px 10px',padding:'6px 0',borderBottom:'1px solid #d7d3d3'}},
+                    h('span',{style:{flexShrink:0,width:'12px',height:'12px',background:z.color,border:'1px solid #d7d3d3'}}),
+                    h('span',{style:{flex:'1 0 auto',fontSize:'12px',fontWeight:'600'}},z.label),
+                    h('span',{style:{fontSize:'12px',fontVariantNumeric:'tabular-nums'}},fmtH(z.min)),
+                    h('span',{style:{fontSize:'12px',color:'#605d5d',fontVariantNumeric:'tabular-nums'}},Math.round((z.min/zmTotal)*100)+' %')
+                  ))
+                )
+              )
+            : null,
+          !isTousLayout && h('div',{style:{gridColumn:'2',gridRow:'1',minWidth:0,padding:'20px 24px 24px',borderBottom:'2px solid #201e1d'}},
             h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px',marginBottom:'14px'}},
               h('h2',{style:{margin:0,fontSize:'14px',fontWeight:'800',letterSpacing:'-0.01em'}},'Meilleurs efforts'),
               h('span',{style:{fontSize:'10px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},sport==='Tous'?'Tous sports':sport)
@@ -2174,48 +2194,46 @@ function App() {
                   ? [{d:100,l:'100 m'},{d:200,l:'200 m'},{d:400,l:'400 m'},{d:1000,l:'1 km'},{d:1500,l:'1500 m'}]
                   : [{d:400,l:'400 m'},{d:1000,l:'1 km'},{d:2000,l:'2 km'},{d:5000,l:'5 km'},{d:10000,l:'10 km'},{d:20000,l:'20 km'},{d:40000,l:'40 km'}];
               // Calculer depuis actStreams (réutiliser le cache déjà fetchés)
-              const prVals = prDefs.map(({d:targetM}) => {
-                let best = null;
+              // prVals[i] = best value, prActIds[i] = id de l'activité source
+              const prResults = prDefs.map(({d:targetM}) => {
+                let best = null, bestId = null;
                 for (const a of acts) {
                   const s = actStreams[a.id];
                   if (sport==='Vélo') {
-                    if (s && s.pow && s.pow.length >= Math.round(targetM/25)) {
-                      // Vitesse max sur la distance : utiliser dist+vel
-                      if (s.dist && s.vel) {
-                        let bestV = null;
-                        let j2=0;
-                        for (let i2=0;i2<s.dist.length;i2++) {
-                          while(j2<s.dist.length-1&&s.dist[j2]-s.dist[i2]<targetM)j2++;
-                          if(s.dist[j2]-s.dist[i2]>=targetM){
-                            const secs=j2-i2;
-                            if(secs>0){const v=(targetM/secs)*3.6;if(bestV===null||v>bestV)bestV=v;}
-                          }
+                    if (s && s.dist && s.vel) {
+                      let bestV = null;
+                      let j2=0;
+                      for (let i2=0;i2<s.dist.length;i2++) {
+                        while(j2<s.dist.length-1&&s.dist[j2]-s.dist[i2]<targetM)j2++;
+                        if(s.dist[j2]-s.dist[i2]>=targetM){
+                          const secs=j2-i2;
+                          if(secs>0){const v=(targetM/secs)*3.6;if(bestV===null||v>bestV)bestV=v;}
                         }
-                        if(bestV!==null)best=best===null?bestV:Math.max(best,bestV);
                       }
+                      if(bestV!==null&&(best===null||bestV>best)){best=bestV;bestId=a.id;}
                     } else if (a.dist*1000>=targetM && a.dist && a.time) {
-                      const v=a.dist/(a.time/60);if(best===null||v>best)best=v;
+                      const v=a.dist/(a.time/60);if(best===null||v>best){best=v;bestId=a.id;}
                     }
                   } else if (sport==='Natation') {
-                    // Natation : allure /100m
                     if (s && s.dist && s.vel && s.dist[s.dist.length-1]>=targetM) {
                       const v=bestPaceWindow(s.dist,s.vel,targetM);
-                      if(v&&v<=MAX_PACE)best=best===null?v:Math.min(best,v);
+                      if(v&&v<=MAX_PACE&&(best===null||v<best)){best=v;bestId=a.id;}
                     } else if (a.dist*1000>=targetM && a.pace) {
-                      best=best===null?a.pace:Math.min(best,a.pace);
+                      if(best===null||a.pace<best){best=a.pace;bestId=a.id;}
                     }
                   } else {
-                    // Course/Trail : allure /km
                     if (s && s.dist && s.vel && s.dist[s.dist.length-1]>=targetM) {
                       const v=bestPaceWindow(s.dist,s.vel,targetM);
-                      if(v&&v<=MAX_PACE)best=best===null?v:Math.min(best,v);
+                      if(v&&v<=MAX_PACE&&(best===null||v<best)){best=v;bestId=a.id;}
                     } else if (a.dist*1000>=targetM && a.pace && a.pace<=MAX_PACE) {
-                      best=best===null?a.pace:Math.min(best,a.pace);
+                      if(best===null||a.pace<best){best=a.pace;bestId=a.id;}
                     }
                   }
                 }
-                return best;
+                return {val:best, id:bestId};
               });
+              const prVals = prResults.map(r=>r.val);
+              const prActIds = prResults.map(r=>r.id);
               return h('div',{style:{display:'flex',flexDirection:'column',gap:'0'}},
                 prDefs.map((def,i)=>{
                   const val = prVals[i];
@@ -2224,15 +2242,25 @@ function App() {
                   else if (sport==='Vélo') display = fmtSpeed(val)||'—';
                   else if (sport==='Natation') display = fmtPR(val*10)||'—';
                   else display = (fmtPR(val)||'—')+' /km';
-                  return h('div',{key:def.l,style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid #d7d3d3'}},
+                  return h('div',{key:def.l,onClick:prActIds[i]?()=>{
+                          setExpanded(true);
+                          setTimeout(()=>{
+                            const el=document.getElementById('act-row-'+prActIds[i]);
+                            if(el){el.scrollIntoView({behavior:'smooth',block:'center'});
+                            const act=acts.find(a=>a.id===prActIds[i]);if(act)toggleRow(act);}
+                          },120);
+                        }:undefined,
+                        onMouseEnter:e=>{if(prActIds[i])e.currentTarget.style.background='#fdf1ee';},
+                        onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
+                        style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',cursor:prActIds[i]?'pointer':'default',padding:'5px 0',borderBottom:'1px solid #d7d3d3'}},
                     h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.06em',textTransform:'uppercase',color:'#605d5d'}},def.l),
-                    h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.01em',color:val?'#201e1d':'#bab6b6'}},display)
+                    h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.01em',color:val?'#201e1d':'#bab6b6'}},display),prActIds[i]&&h('span',{style:{fontSize:'10px',color:'#bab6b6',marginLeft:'4px'}},'→')
                   );
                 })
               );
             })()
           ),
-          h('div',{style:{gridColumn:'2',gridRow:'2',minWidth:0,padding:'20px 24px 24px'}},
+          !isTousLayout && h('div',{style:{gridColumn:'2',gridRow:'2',minWidth:0,padding:'20px 24px 24px'}},
             h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'4px',marginBottom:'10px'}},
               h('h2',{style:{margin:0,fontSize:'14px',fontWeight:'800',letterSpacing:'-0.01em'}},'Zones cardiaques'),
               h('span',{style:{fontSize:'10px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Répartition')
@@ -2256,7 +2284,8 @@ function App() {
             h('p',{style:{margin:'0 0 14px',fontSize:'12px',color:'#605d5d',maxWidth:'62ch'}},!acts.length?'Donnée manquante — aucune activité importée.':"Minutes d'activité par jour. Les week-ends sont en gris."),
             h('div',{style:{height:'252px'}},h('canvas',{ref:dailyRef}))
           )
-        ),
+        );
+        })(),
         h('section',{style:{padding:'28px 32px 48px'}},
           h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'20px'}},
             h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Séances de la sélection'),
@@ -2276,6 +2305,7 @@ function App() {
                 const items = [
                   h('tr',{
                     key:'row-'+ri,
+                    id:'act-row-'+row.id,
                     style:{borderBottom: isOpen?'0':'1px solid #d7d3d3', cursor:'pointer', background: isOpen?'#fdf1ee':'transparent'},
                     onClick:() => toggleRow(row.act),
                     onMouseEnter:e=>{ if(!isOpen) e.currentTarget.style.background='#fdf1ee'; },
