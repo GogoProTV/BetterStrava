@@ -301,6 +301,11 @@ function App() {
   const [wattFetchStatus, setWattFetchStatus] = useState('idle'); // 'idle'|'loading'|'ready'
   const [wattFetchProgress, setWattFetchProgress] = useState({ done:0, total:0 });
   const wattFetchAbort = useRef(false);
+  // Cache streams allure : id → { dist: Float32Array, vel: Float32Array } | 'error'
+  const [paceStreams, setPaceStreams] = useState({});
+  const [paceFetchStatus, setPaceFetchStatus] = useState('idle');
+  const [paceFetchProgress, setPaceFetchProgress] = useState({ done:0, total:0 });
+  const paceFetchAbort = useRef(false);
   const [paceRange, setPaceRange] = useState(90);
   const [paceCompare, setPaceCompare] = useState(365);
   const [hrRange, setHrRange] = useState(90);
@@ -594,13 +599,94 @@ function App() {
     const end = Date.now() - (offset||0)*days*86400000, start = end - days*86400000;
     return powerCurveByDate(new Date(start).toISOString().slice(0,10), new Date(end).toISOString().slice(0,10)).map(v => v ? v.w : 0);
   }
+
+  // Fenêtre glissante sur distance : meilleure vitesse moyenne (m/s) sur exactement `targetDist` mètres
+  function bestPaceWindow(distArr, velArr, targetDist) {
+    if (!distArr || !velArr || distArr.length < 2) return null;
+    const total = distArr[distArr.length - 1];
+    if (total < targetDist) return null;
+    let best = null; // meilleur temps en secondes pour parcourir targetDist m
+    let j = 0;
+    for (let i = 0; i < distArr.length; i++) {
+      // avancer j jusqu'à ce que distArr[j] - distArr[i] >= targetDist
+      while (j < distArr.length - 1 && distArr[j] - distArr[i] < targetDist) j++;
+      const coveredDist = distArr[j] - distArr[i];
+      if (coveredDist >= targetDist) {
+        const secs = j - i; // 1 point = 1 seconde
+        if (secs > 0) {
+          const t = secs * (targetDist / coveredDist); // interpolation linéaire
+          if (best === null || t < best) best = t;
+        }
+      }
+    }
+    if (best === null) return null;
+    // Convertir en min/km
+    return Math.round((best / targetDist / 60) * 1000 * 100) / 100;
+  }
+
+  // Courbe d'allure par distance depuis les streams en cache
+  function paceCurveByDate(d0, d1) {
+    const start = new Date(d0).getTime(), end = new Date(d1).getTime() + 86400000;
+    const runs = data.filter(a =>
+      (a.sport === 'Course' || a.sport === 'Trail') && a.date.getTime() >= start && a.date.getTime() < end
+    );
+    return PACE_DISTANCES.map(({ d: km }) => {
+      const targetM = km * 1000;
+      let best = null;
+      for (const a of runs) {
+        const ps = paceStreams[a.id];
+        if (ps && ps.dist && ps.vel) {
+          const v = bestPaceWindow(ps.dist, ps.vel, targetM);
+          if (v !== null) best = best === null ? v : Math.min(best, v);
+        } else if (a.dist >= km && a.pace) {
+          // Fallback : allure moyenne de la sortie si pas de streams
+          best = best === null ? a.pace : Math.min(best, a.pace);
+        }
+      }
+      return best !== null ? Math.round(best * 100) / 100 : null;
+    });
+  }
+
+  // Fetch des streams velocity_smooth + distance pour toutes les sorties course/trail
+  async function fetchPaceStreams() {
+    const token = localStorage.getItem('strava_token');
+    if (!token) return;
+    const runs = data.filter(a => a.sport === 'Course' || a.sport === 'Trail');
+    const toFetch = runs.filter(a => !paceStreams[a.id] || paceStreams[a.id] === 'error');
+    if (!toFetch.length) { setPaceFetchStatus('ready'); return; }
+    setPaceFetchStatus('loading');
+    setPaceFetchProgress({ done: 0, total: toFetch.length });
+    paceFetchAbort.current = false;
+    const tk = await freshToken(token);
+    let done = 0;
+    for (const a of toFetch) {
+      if (paceFetchAbort.current) break;
+      try {
+        const res = await stravaApi(
+          '/activities/' + a.id + '/streams?keys=velocity_smooth,distance&key_by_type=true', tk
+        );
+        const vel = res && res.velocity_smooth && res.velocity_smooth.data;
+        const dist = res && res.distance && res.distance.data;
+        if (vel && dist && vel.length) {
+          setPaceStreams(prev => ({ ...prev, [a.id]: {
+            vel: new Float32Array(vel),
+            dist: new Float32Array(dist),
+          }}));
+        } else {
+          setPaceStreams(prev => ({ ...prev, [a.id]: 'error' }));
+        }
+      } catch(e) {
+        setPaceStreams(prev => ({ ...prev, [a.id]: 'error' }));
+      }
+      done++;
+      setPaceFetchProgress({ done, total: toFetch.length });
+      await new Promise(r => setTimeout(r, 150));
+    }
+    setPaceFetchStatus('ready');
+  }
+
   const PACE_DISTANCES = [{ d:1,l:'1 km'},{d:2,l:'2 km'},{d:5,l:'5 km'},{d:10,l:'10 km'},{d:15,l:'15 km'},{d:21.1,l:'Semi'},{d:30,l:'30 km'},{d:42.2,l:'Marathon'}];
   const HR_BINS = [{ min:100,max:120,l:'100-120'},{min:120,max:130,l:'120-130'},{min:130,max:140,l:'130-140'},{min:140,max:150,l:'140-150'},{min:150,max:160,l:'150-160'},{min:160,max:170,l:'160-170'},{min:170,max:180,l:'170-180'},{min:180,max:200,l:'180+'}];
-  function paceCurve(days, offset) {
-    const end = Date.now()-(offset||0)*days*86400000, start = end-days*86400000;
-    const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail')&&a.pace&&a.dist&&a.date.getTime()>=start&&a.date.getTime()<end);
-    return PACE_DISTANCES.map(x => { let best=null; runs.forEach(a => { if (a.dist>=x.d&&(best===null||a.pace<best)) best=a.pace; }); return best===null?null:Math.round(best*100)/100; });
-  }
   function hrSpeedCurve(days, offset) {
     const end = Date.now()-(offset||0)*days*86400000, start = end-days*86400000;
     const acts = data.filter(a => a.hr&&a.dist&&a.time&&a.date.getTime()>=start&&a.date.getTime()<end);
@@ -709,12 +795,14 @@ function App() {
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Allure') return;
     chartDefaults();
-    const fmtP = v => Math.floor(v)+':'+String(Math.round((v%1)*60)).padStart(2,'0');
+    const fmtP = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
+    const curA = paceCurveByDate(powDateA0, powDateA1);
+    const curB = paceCurveByDate(powDateB0, powDateB1);
     upsert('pace', paceRef, {
       type:'line',
       data:{ labels:PACE_DISTANCES.map(x=>x.l), datasets:[
-        { label:'Comparaison', data:paceCurve(paceCompare,1), borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true },
-        { label:'Actuel', data:paceCurve(paceRange,0), borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true },
+        { label:'Comparaison', data:curB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true },
+        { label:'Actuel', data:curA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true },
       ]},
       options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
         plugins:{ legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}}, tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':fmtP(c.parsed.y)+' /km')}} },
@@ -722,7 +810,7 @@ function App() {
       },
     });
     return () => destroyChart('pace');
-  }, [tab, athleteSection, data, paceRange, paceCompare]);
+  }, [tab, athleteSection, data, paceStreams, powDateA0, powDateA1, powDateB0, powDateB1]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Fréquence cardiaque') return;
@@ -1434,14 +1522,107 @@ function App() {
           )
         ),
         athleteSection==='Allure'&&h('div',null,
-          h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
-            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période de calcul'),h(BtnRow,{options:mkOptions(powPeriods,paceRange,setPaceRange)})),
-            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison'),h(BtnRow,{options:mkOptions(powPeriods,paceCompare,setPaceCompare)}))
+          // Bande de contrôle : deux périodes par date (partagées avec Puissance)
+          h('section',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',borderBottom:'2px solid #201e1d'}},
+            h('div',{style:{padding:'20px 32px',borderRight:'2px solid #201e1d'}},
+              h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}},
+                h('span',{style:{display:'inline-block',width:'16px',height:'3px',background:'#ec3013'}}),
+                h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#ec3013'}},'Période actuelle')
+              ),
+              h('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}},
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Du'),
+                  h('input',{type:'date',value:powDateA0,onChange:e=>setPowDateA0(e.target.value),style:{padding:'8px 10px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
+                ),
+                h('span',{style:{fontSize:'14px',color:'#605d5d',marginTop:'18px'}},'→'),
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Au'),
+                  h('input',{type:'date',value:powDateA1,onChange:e=>setPowDateA1(e.target.value),style:{padding:'8px 10px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
+                ),
+                h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'18px'}},
+                  [{l:'30 j',d:30},{l:'90 j',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>
+                    h('button',{key:o.l,type:'button',onClick:()=>{const t=new Date().toISOString().slice(0,10);const f=new Date(Date.now()-o.d*86400000).toISOString().slice(0,10);setPowDateA0(f);setPowDateA1(t);},style:{...btnStyle(false),padding:'6px 10px',fontSize:'11px'}},o.l)
+                  )
+                )
+              )
+            ),
+            h('div',{style:{padding:'20px 32px'}},
+              h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}},
+                h('span',{style:{display:'inline-block',width:'16px',height:'2px',background:'#bab6b6',borderTop:'2px dashed #bab6b6'}}),
+                h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison')
+              ),
+              h('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}},
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Du'),
+                  h('input',{type:'date',value:powDateB0,onChange:e=>setPowDateB0(e.target.value),style:{padding:'8px 10px',border:'2px solid #d7d3d3',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
+                ),
+                h('span',{style:{fontSize:'14px',color:'#605d5d',marginTop:'18px'}},'→'),
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Au'),
+                  h('input',{type:'date',value:powDateB1,onChange:e=>setPowDateB1(e.target.value),style:{padding:'8px 10px',border:'2px solid #d7d3d3',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
+                ),
+                h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'18px'}},
+                  [{l:'30 j',d:30},{l:'90 j',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>
+                    h('button',{key:o.l,type:'button',onClick:()=>{const t=new Date(Date.now()-90*86400000).toISOString().slice(0,10);const f=new Date(Date.now()-(90+o.d)*86400000).toISOString().slice(0,10);setPowDateB0(f);setPowDateB1(t);},style:{...btnStyle(false),padding:'6px 10px',fontSize:'11px'}},o.l)
+                  )
+                )
+              )
+            )
           ),
           h('section',{style:{padding:'28px 32px 32px'}},
-            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Meilleure allure par distance'),h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : '+powLabel(paceRange)+' · Gris : '+powLabel(paceCompare)+' précédents')),
-            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},data.some(a=>(a.sport==='Course'||a.sport==='Trail')&&a.pace)?"Meilleure allure moyenne par distance. Estimation calculée à partir de l'allure moyenne de chaque sortie.":'Donnée manquante — aucune sortie course ou trail.'),
-            h('div',{style:{height:'calc(100vh - 320px)',minHeight:'380px'}},h('canvas',{ref:paceRef}))
+            // Barre de chargement / bouton
+            (()=>{
+              const runs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
+              const withData = runs.filter(a => paceStreams[a.id] && paceStreams[a.id] !== 'error');
+              const isLoading = paceFetchStatus === 'loading';
+              return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
+                h('div',null,
+                  h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
+                    isLoading
+                      ? 'Calcul en cours… ' + paceFetchProgress.done + ' / ' + paceFetchProgress.total + ' sorties'
+                      : withData.length
+                        ? withData.length + ' / ' + runs.length + ' sorties chargées — fenêtre glissante s/s'
+                        : 'Streams non chargés — affichage par allure moyenne de sortie'
+                  ),
+                  isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
+                    h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((paceFetchProgress.done/Math.max(1,paceFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
+                  ),
+                  !isLoading && withData.length>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
+                    'Meilleure allure sur chaque distance par fenêtre glissante seconde par seconde'
+                  ),
+                  !isLoading && !withData.length && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
+                    'Charge les streams pour obtenir la vraie meilleure allure par distance (comme Garmin / Strava PR)'
+                  )
+                ),
+                h('div',{style:{display:'flex',gap:'8px'}},
+                  !isLoading && h('button',{type:'button',
+                    onClick: fetchPaceStreams,
+                    disabled: isLoading || !localStorage.getItem('strava_token'),
+                    style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:isLoading?'not-allowed':'pointer'}
+                  }, withData.length ? 'Recalculer' : 'Charger les streams'),
+                  isLoading && h('button',{type:'button',
+                    onClick:()=>{ paceFetchAbort.current=true; setPaceFetchStatus('idle'); },
+                    style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
+                  }, 'Annuler')
+                )
+              );
+            })(),
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Meilleure allure par distance'),
+              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
+                data.filter(a=>a.sport==='Course'||a.sport==='Trail').some(a=>paceStreams[a.id]&&paceStreams[a.id]!=='error')
+                  ? 'Fenêtre glissante s/s · Rouge : période actuelle · Gris : comparaison'
+                  : 'Rouge : période actuelle · Gris : comparaison'
+              )
+            ),
+            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
+              data.some(a=>(a.sport==='Course'||a.sport==='Trail')&&a.pace)
+                ? data.filter(a=>a.sport==='Course'||a.sport==='Trail').some(a=>paceStreams[a.id]&&paceStreams[a.id]!=='error')
+                  ? 'Meilleure allure calculée par fenêtre glissante seconde par seconde — équivalent des PR Strava/Garmin.'
+                  : "Affichage par allure moyenne de sortie. Charge les streams pour la vraie meilleure allure par distance."
+                : 'Donnée manquante — aucune sortie course ou trail.'
+            ),
+            h('div',{style:{height:'calc(100vh - 400px)',minHeight:'320px'}},h('canvas',{ref:paceRef}))
           )
         ),
         athleteSection==='Fréquence cardiaque'&&h('div',null,
