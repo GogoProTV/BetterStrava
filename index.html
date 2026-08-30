@@ -568,6 +568,29 @@ function App() {
     const velData  = (streamsData.velocity_smooth && streamsData.velocity_smooth.data) || [];
     const distData = (streamsData.distance && streamsData.distance.data) || [];
     const estPowData = (streamsData._estPow && streamsData._estPow.data) || [];
+
+    // Lissage par moyenne glissante (Strava-style) puis sous-échantillonnage
+    function smooth(arr, win) {
+      if (!arr.length) return [];
+      const out = new Array(arr.length);
+      let sum = 0, count = 0;
+      const half = Math.floor(win / 2);
+      // Initialiser la fenêtre
+      for (let i = 0; i < Math.min(win, arr.length); i++) {
+        if (arr[i] != null) { sum += arr[i]; count++; }
+      }
+      for (let i = 0; i < arr.length; i++) {
+        out[i] = count > 0 ? sum / count : null;
+        // Sortant
+        const out_idx = i - half;
+        if (out_idx >= 0 && arr[out_idx] != null) { sum -= arr[out_idx]; count--; }
+        // Entrant
+        const in_idx = i + half + 1;
+        if (in_idx < arr.length && arr[in_idx] != null) { sum += arr[in_idx]; count++; }
+      }
+      return out;
+    }
+
     const N = Math.max(1, Math.floor(timeData.length / 800));
     const thin = arr => arr.filter((_, i) => i % N === 0);
     const thinDist = thin(distData);
@@ -577,17 +600,22 @@ function App() {
     const altMin = altData.length ? Math.floor(Math.min(...altData) / 10) * 10 : 0;
     const altMax = altMin + 1000;
     const datasets = [];
-    if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(hrData), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
-    if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(altData), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
+    // FC : fenêtre 10 s
+    if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(smooth(hrData, 10)), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
+    // Altitude : fenêtre 10 s
+    if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(smooth(altData, 10)), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
     if (velData.length && vis.vel) {
+      // Allure / vitesse : fenêtre 30 s (comme Strava "smoothed pace")
+      const smoothedVel = smooth(velData, 30);
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => {
-        if (v <= 0) return null;
-        const pace = 1000 / 60 / v; // min/km
+        if (!v || v <= 0) return null;
+        const pace = 1000 / 60 / v;
         return (pace >= 2 && pace <= 10) ? Math.round(pace * 100) / 100 : null;
       };
-      datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
+      datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(smoothedVel).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
-    if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(estPowData), borderColor: '#7c4dbc', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
+    // Puissance : fenêtre 30 s
+    if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(smooth(Array.from(estPowData), 30)), borderColor: '#7c4dbc', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
     const scales = { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } } };
     if (hrData.length && vis.fc) scales.yHr = { position: 'left', grid: { color: 'rgba(236,48,19,0.12)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
     if (altData.length && vis.alt) scales.yAlt = { position: 'right', min: altMin, max: altMax, grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
