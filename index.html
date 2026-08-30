@@ -948,20 +948,29 @@ function App() {
     });
     const showEstPow = sport==='Vélo' && totalMass > 0 && powVals.some(v=>v!==null);
 
-    // ── Échelles persistantes : max sur toute la durée de vie des données ──
+    // ── Échelles persistantes : max calculé dans la même unité que l'affichage, sur toutes les données ──
     const allActsSp = filtered(data, 365*10, sport);
-    const wkKeyOf = d => weekStart(d).getTime();
-    const allWkBuckets = new Map();
+    // Même logique byWeek que l'affichage
+    const globalBuckets = new Map();
+    const globalKeyOf = d => byWeek ? weekStart(d).getTime() : new Date(d.getFullYear(),d.getMonth(),1).getTime();
     allActsSp.forEach(a => {
-      const k = wkKeyOf(a.date);
-      if (!allWkBuckets.has(k)) allWkBuckets.set(k, {km:0,h:0,elev:0});
-      const b = allWkBuckets.get(k);
+      const k = globalKeyOf(a.date);
+      if (!globalBuckets.has(k)) globalBuckets.set(k, {km:0,h:0,elev:0});
+      const b = globalBuckets.get(k);
       b.km += a.dist; b.h += a.time/60; b.elev += a.elev;
     });
-    const allWkVals = [...allWkBuckets.values()];
-    const yMaxKm  = Math.ceil(Math.max(1, ...allWkVals.map(b=>b.km))  / 10)  * 10;
-    const yMaxElev= Math.ceil(Math.max(1, ...allWkVals.map(b=>b.elev)) / 100) * 100;
-    const yMaxH   = Math.ceil(Math.max(1, ...allWkVals.map(b=>b.h))    / 2)   * 2;
+    const gv = [...globalBuckets.values()];
+    const yMaxKm   = Math.ceil(Math.max(1, ...gv.map(b=>b.km))   / 10)  * 10;
+    const yMaxElev = Math.ceil(Math.max(1, ...gv.map(b=>b.elev)) / 100) * 100;
+    // Heures empilées : même bucket, toutes les données sans filtre sport pour cohérence
+    const globalHBuckets = new Map();
+    data.forEach(a => {
+      if (sport!=='Tous'&&a.sport!==sport) return;
+      const k = globalKeyOf(a.date);
+      globalHBuckets.set(k, (globalHBuckets.get(k)||0)+a.time/60);
+    });
+    const yMaxH = Math.ceil(Math.max(1, ...[...globalHBuckets.values()]) / 2) * 2;
+    // Max minutes/jour : toujours en jours, indépendant du byWeek
     const allDayMap2 = new Map();
     data.forEach(a => {
       if (sport!=='Tous'&&a.sport!==sport) return;
