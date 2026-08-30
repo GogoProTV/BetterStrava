@@ -2233,39 +2233,46 @@ function App() {
               const prAllTime = prDefs.map(({d:m}) => calcPR(allTimeActs, m));
               const fmt = v => { if (!v) return '—'; if (isVelo) return fmtSpeed(v)||'—'; if (isSwim) return fmtSwim(v)||'—'; return (fmtPR(v)||'—')+' /km'; };
               const navTo = id => id ? () => { setExpanded(true); setTimeout(()=>{ const el=document.getElementById('act-row-'+id); if(el){el.scrollIntoView({behavior:'smooth',block:'center'}); const act=data.find(a=>a.id===id); if(act)toggleRow(act);} },120); } : undefined;
+              // En-tête du tableau
               return h('div',{style:{display:'flex',flexDirection:'column'}},
+                // Header
+                h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:'0',padding:'4px 0 6px',borderBottom:'2px solid #201e1d',marginBottom:'2px'}},
+                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#bab6b6'}},'Dist.'),
+                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#ec3013'}},'Période'),
+                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Record'),
+                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#bab6b6'}},'Δ')
+                ),
                 prDefs.map((def,i)=>{
                   const per=prPeriod[i], all=prAllTime[i];
                   const isAtBest = per.val&&all.val&&(isVelo ? per.val>=all.val*0.999 : per.val<=all.val*1.001);
-                  // delta : combien la période est loin du record (négatif = en dessous du record)
                   const dPct = (per.val&&all.val&&all.val>0) ? (isVelo ? Math.round(((per.val-all.val)/all.val)*100) : Math.round(((all.val-per.val)/all.val)*100)) : null;
-                  const chip = dPct!==null ? deltaChip(dPct, true) : null;
-                  return h('div',{key:def.l,style:{borderBottom:'1px solid #d7d3d3',padding:'7px 0'}},
-                    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'3px'}},
-                      h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},def.l),
-                      isAtBest&&h('span',{style:{fontSize:'9px',fontWeight:'800',color:'#ec3013',letterSpacing:'0.1em',textTransform:'uppercase',padding:'1px 5px',border:'1px solid #ec3013'}},'PR')
+                  const chip = (dPct!==null&&dPct!==0) ? deltaChip(dPct, true) : null;
+                  return h('div',{key:def.l,
+                    onClick: navTo(per.id),
+                    onMouseEnter:e=>{ if(per.id) e.currentTarget.style.background='#fdf1ee'; },
+                    onMouseLeave:e=>{ e.currentTarget.style.background='transparent'; },
+                    style:{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:'0',padding:'5px 0',borderBottom:'1px solid #d7d3d3',alignItems:'baseline',cursor:per.id?'pointer':'default'}
+                  },
+                    // Col 1 : distance + badge PR
+                    h('div',{style:{display:'flex',alignItems:'center',gap:'4px'}},
+                      h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',color:'#605d5d'}},def.l),
+                      isAtBest&&h('span',{style:{fontSize:'8px',fontWeight:'800',color:'#ec3013',letterSpacing:'0.08em',padding:'0 3px',border:'1px solid #ec3013',lineHeight:'14px'}},'PR')
                     ),
-                    h('div',{onClick:navTo(per.id),onMouseEnter:e=>{if(per.id)e.currentTarget.style.background='#fdf1ee';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
-                      style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',cursor:per.id?'pointer':'default',padding:'1px 4px',margin:'0 -4px',borderRadius:'0'}},
-                      h('span',{style:{fontSize:'10px',color:'#605d5d',fontWeight:'600',minWidth:'48px'}},'Période'),
-                      h('div',{style:{display:'flex',alignItems:'baseline',gap:'4px'}},
-                        h('span',{style:{fontSize:'14px',fontWeight:'800',letterSpacing:'-0.02em',color:per.val?(isAtBest?'#ec3013':'#201e1d'):'#bab6b6'}},fmt(per.val)),
-                        per.id&&h('span',{style:{fontSize:'9px',color:'#bab6b6'}},'→')
-                      )
+                    // Col 2 : période (orange)
+                    h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',color:per.val?(isAtBest?'#ec3013':'#ec3013'):'#bab6b6'}},
+                      per.val ? fmt(per.val) : '—'
                     ),
-                    h('div',{onClick:navTo(all.id),onMouseEnter:e=>{if(all.id)e.currentTarget.style.background='#fdf1ee';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
-                      style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',cursor:all.id?'pointer':'default',padding:'1px 4px',margin:'0 -4px'}},
-                      h('span',{style:{fontSize:'10px',color:'#605d5d',fontWeight:'600',minWidth:'48px'}},'Record'),
-                      h('div',{style:{display:'flex',alignItems:'baseline',gap:'4px'}},
-                        h('span',{style:{fontSize:'14px',fontWeight:'800',letterSpacing:'-0.02em',color:all.val?'#605d5d':'#bab6b6'}},fmt(all.val)),
-                        all.id&&h('span',{style:{fontSize:'9px',color:'#bab6b6'}},'→')
-                      )
+                    // Col 3 : record all-time (noir)
+                    h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',color:all.val?'#201e1d':'#bab6b6'}},
+                      all.val ? fmt(all.val) : '—'
                     ),
-                    chip&&dPct!==0&&h('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginTop:'3px'}},
-                      chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
-                      chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'1px 6px',fontSize:'11px'}},chip.text),
-                      h('span',{style:{fontSize:'10px',color:'#bab6b6'}},'vs record')
-                    )
+                    // Col 4 : delta
+                    chip
+                      ? h('div',{style:{display:'flex',alignItems:'center',gap:'3px'}},
+                          chip.arrow&&h('span',{style:{...chip.arrowStyle,fontSize:'11px'}},chip.arrow),
+                          h('span',{style:{...chip.style,padding:'1px 5px',fontSize:'10px'}},chip.text)
+                        )
+                      : h('span',{style:{fontSize:'11px',color:'#bab6b6'}},per.val&&all.val&&dPct===0?'=':'—')
                   );
                 })
               );
