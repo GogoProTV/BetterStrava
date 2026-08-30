@@ -662,28 +662,30 @@ function App() {
     return powerCurveByDate(new Date(start).toISOString().slice(0,10), new Date(end).toISOString().slice(0,10)).map(v => v ? v.w : 0);
   }
 
+  const MAX_PACE = 30; // min/km — au-delà = arrêt ou données GPS aberrantes
+
   // Fenêtre glissante sur distance : meilleure vitesse moyenne (m/s) sur exactement `targetDist` mètres
   function bestPaceWindow(distArr, velArr, targetDist) {
     if (!distArr || !velArr || distArr.length < 2) return null;
     const total = distArr[distArr.length - 1];
     if (total < targetDist) return null;
-    let best = null; // meilleur temps en secondes pour parcourir targetDist m
+    let best = null;
     let j = 0;
     for (let i = 0; i < distArr.length; i++) {
-      // avancer j jusqu'à ce que distArr[j] - distArr[i] >= targetDist
       while (j < distArr.length - 1 && distArr[j] - distArr[i] < targetDist) j++;
       const coveredDist = distArr[j] - distArr[i];
       if (coveredDist >= targetDist) {
-        const secs = j - i; // 1 point = 1 seconde
+        const secs = j - i;
         if (secs > 0) {
-          const t = secs * (targetDist / coveredDist); // interpolation linéaire
+          const t = secs * (targetDist / coveredDist);
           if (best === null || t < best) best = t;
         }
       }
     }
     if (best === null) return null;
-    // Convertir en min/km
-    return Math.round((best / targetDist / 60) * 1000 * 100) / 100;
+    const pace = (best / targetDist / 60) * 1000; // min/km
+    if (pace > MAX_PACE || pace <= 0) return null; // garde-fou
+    return Math.round(pace * 100) / 100;
   }
 
   // Courbe d'allure par distance depuis le cache unifié
@@ -699,8 +701,8 @@ function App() {
         const ps = actStreams[a.id];
         if (ps && ps.dist && ps.vel) {
           const v = bestPaceWindow(ps.dist, ps.vel, targetM);
-          if (v !== null) best = best === null ? v : Math.min(best, v);
-        } else if (a.dist >= km && a.pace) {
+          if (v !== null && v <= MAX_PACE) best = best === null ? v : Math.min(best, v);
+        } else if (a.dist >= km && a.pace && a.pace <= MAX_PACE) {
           best = best === null ? a.pace : Math.min(best, a.pace);
         }
       }
@@ -732,6 +734,9 @@ function App() {
           const bi = HR_BINS.findIndex(b => s.hr[i] >= b.min && s.hr[i] < b.max);
           if (bi < 0) continue;
           const v = metric[i];
+          // Garde-fou : pour course/trail, ignorer les secondes < 0.3 m/s (< 1 km/h = arrêt)
+          // et > 7 m/s (> 25 km/h = données GPS aberrantes)
+          if (!isBike && (v < 0.3 || v > 7)) continue;
           if (v > 0) { bins[bi].sum += v; bins[bi].count += 1; }
         }
       } else {
@@ -749,7 +754,8 @@ function App() {
           }
         } else {
           const v_ms = (a.dist * 1000) / secs;
-          if (v_ms > 0.5) { bins[bi].sum += v_ms * secs; bins[bi].count += secs; }
+          // Garde-fou : entre 0.3 m/s (1 km/h) et 7 m/s (25 km/h)
+          if (v_ms >= 0.3 && v_ms <= 7) { bins[bi].sum += v_ms * secs; bins[bi].count += secs; }
         }
       }
     }
@@ -896,8 +902,10 @@ function App() {
     const isTrail = hrSport === 'Trail';
     const resA = hrCurveByDate(powDateA0, powDateA1, hrSport);
     const resB = hrCurveByDate(powDateB0, powDateB1, hrSport);
+    // Si période B vide, essayer de décaler automatiquement sur l'année précédente
+    const bHasData = resB.vals.some(v => v !== null);
     const fmtP = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
-    const tooltipFmt = v => v==null ? 'donnée manquante' : isBike ? v+' W' : fmtP(v)+' /km';
+    const tooltipFmt = v => v==null ? '—' : isBike ? v+' W' : fmtP(v)+' /km';
     const yTitle = isBike ? 'Puissance estimée (W)' : isTrail ? 'Allure VAP (min/km)' : 'Allure (min/km)';
     upsert('hr', hrRef, {
       type:'line',
@@ -1609,11 +1617,10 @@ function App() {
             // Barre de chargement — masquée si tout est prêt
             (()=>{
               const eligible = data.filter(a => a.sport==='Vélo'||a.sport==='Course'||a.sport==='Trail');
-              const withData = eligible.filter(a => actStreams[a.id] && actStreams[a.id]!=='error');
-              const allDone = withData.length === eligible.length && eligible.length > 0;
+              const processed = eligible.filter(a => actStreams[a.id]); // succès ou erreur
               const isLoading = streamFetchStatus === 'loading';
               const totalMass = (Number(profile.weight)||0)+(Number(profile.bikeMass)||0);
-              if (allDone && !isLoading) return null;
+              if (processed.length === eligible.length && eligible.length > 0 && !isLoading) return null;
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
@@ -1696,31 +1703,26 @@ function App() {
             )
           ),
           h('section',{style:{padding:'28px 32px 32px'}},
-            // Barre de chargement — masquée si tout est prêt
+            // Barre de chargement — masquée si tout est prêt ou en erreur
             (()=>{
               const runs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
-              const withData = runs.filter(a => actStreams[a.id] && actStreams[a.id]!=='error');
-              const allDone = withData.length === runs.length && runs.length > 0;
+              const processed = runs.filter(a => actStreams[a.id]); // chargé OU erreur
               const isLoading = streamFetchStatus === 'loading';
-              if (allDone && !isLoading) return null;
+              // Disparaît quand tout est traité (succès ou erreur) et qu'on ne charge pas
+              if (processed.length === runs.length && runs.length > 0 && !isLoading) return null;
+              if (!isLoading && processed.length === 0) return null; // pas encore démarré — silencieux
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
-                    isLoading ? 'Calcul en cours… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités'
-                    : 'Streams non chargés — affichage par allure moyenne de sortie'
+                    isLoading ? 'Calcul en cours… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités' : ''
                   ),
                   isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
                     h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((streamFetchProgress.done/Math.max(1,streamFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
                   )
                 ),
-                h('div',{style:{display:'flex',gap:'8px'}},
-                  !isLoading && h('button',{type:'button',onClick:fetchAllStreams,disabled:!localStorage.getItem('strava_token'),
-                    style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
-                  }, 'Charger les streams'),
-                  isLoading && h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},
-                    style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
-                  },'Annuler')
-                )
+                isLoading && h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},
+                  style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
+                },'Annuler')
               );
             })(),
             h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
@@ -1810,10 +1812,9 @@ function App() {
             // Barre de chargement — masquée si tout est prêt
             (()=>{
               const eligible = data.filter(a => a.sport==='Course'||a.sport==='Trail'||a.sport==='Vélo');
-              const withData = eligible.filter(a => actStreams[a.id] && actStreams[a.id]!=='error');
-              const allDone = withData.length === eligible.length && eligible.length > 0;
+              const processed = eligible.filter(a => actStreams[a.id]); // succès ou erreur
               const isLoading = streamFetchStatus === 'loading';
-              if (allDone && !isLoading) return null;
+              if (processed.length === eligible.length && eligible.length > 0 && !isLoading) return null;
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
@@ -1848,6 +1849,9 @@ function App() {
                 : hrSport==='Trail'
                   ? 'Allure en min/km (VAP — vitesse sur terrain plat équivalent) par plage de FC. Utile pour comparer des sorties avec dénivelé variable.'
                   : 'Allure (min/km) par plage de FC. Une courbe qui descend (allure plus rapide) à même FC indique un gain de forme.'
+            ),
+            !bHasData && h('p',{style:{margin:'-10px 0 14px',fontSize:'12px',color:'#ec3013',fontWeight:'600'}},
+              '⚠ Aucune activité ' + hrSport + ' dans la période de comparaison — ajuste les dates Comparaison.'
             ),
             h('div',{style:{height:'calc(100vh - 400px)',minHeight:'320px'}},h('canvas',{ref:hrRef}))
           )
