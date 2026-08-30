@@ -815,24 +815,35 @@ function App() {
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Puissance') return;
     chartDefaults();
-    const curveA = powerCurveByDate(powDateA0, powDateA1);
-    const curveB = powerCurveByDate(powDateB0, powDateB1);
-    const wA = curveA.map(v => v ? v.w : null);
-    const wB = curveB.map(v => v ? v.w : null);
-    const jA = curveA.map(v => v ? v.j : null);
-    const jB = curveB.map(v => v ? v.j : null);
+    const PERIODS_POW = [
+      { days:30,  label:'1 mois', color:'#ec3013', width:2.5, dash:[] },
+      { days:90,  label:'3 mois', color:'#f97a60', width:2,   dash:[] },
+      { days:180, label:'6 mois', color:'#605d5d', width:1.5, dash:[4,3] },
+      { days:365, label:'1 an',   color:'#bab6b6', width:1.5, dash:[4,3] },
+    ];
     const ftpVal = Number(profile.ftp) || ftpEstimated || null;
-    const wmaxA = wA.filter(Boolean).length ? Math.max(...wA.filter(Boolean)) : null;
-    const wmaxB = wB.filter(Boolean).length ? Math.max(...wB.filter(Boolean)) : null;
     const hasRealPower = data.some(a => a.sport==='Vélo' && a.power);
     const hasEstPower = data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow);
-    const estSuffix = !hasRealPower && hasEstPower ? ' (estimée)' : '';
+    const estSuffix = !hasRealPower && hasEstPower ? ' (est.)' : '';
     const labels = POWER_DURATIONS.map(d => d.l);
-    const datasets = [
-      { label:'Comparaison'+estSuffix, data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' },
-      { label:'Actuel'+estSuffix, data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true, yAxisID:'yW' },
-    ];
-    if (ftpVal) { datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' }); }
+    const curves = PERIODS_POW.map(p => {
+      const end = Date.now(), start = end - p.days * 86400000;
+      const curve = powerCurveByDate(new Date(start).toISOString().slice(0,10), new Date(end).toISOString().slice(0,10));
+      return { ...p, vals: curve.map(v => v ? v.w : null), jVals: curve.map(v => v ? v.j : null) };
+    });
+    const datasets = curves.map(c => ({
+      label: c.label + estSuffix, data: c.vals,
+      borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
+      backgroundColor: c.color === '#ec3013' ? 'rgba(236,48,19,0.08)' : 'transparent',
+      fill: c.color === '#ec3013', tension: 0.2,
+      pointRadius: 3, pointBackgroundColor: c.color, pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5,
+      pointHoverRadius: 5, spanGaps: true, yAxisID: 'yW',
+    }));
+    if (ftpVal) {
+      datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
+    }
+    const wmaxAll = curves.flatMap(c => c.vals.filter(Boolean));
+    const wmax = wmaxAll.length ? Math.max(...wmaxAll) : null;
     upsert('power', powerRef, {
       type:'line', plugins:[crosshairPlugin],
       data:{ labels, datasets },
@@ -846,19 +857,17 @@ function App() {
               label: c => {
                 const v = c.parsed.y; if (v===null) return null;
                 if (c.dataset.label.startsWith('FTP')) return '─── ' + c.dataset.label;
-                const iA = c.datasetIndex===1; const iB = c.datasetIndex===0;
-                const jVal = iA ? jA[c.dataIndex] : iB ? jB[c.dataIndex] : null;
+                const jVal = curves[c.datasetIndex] ? curves[c.datasetIndex].jVals[c.dataIndex] : null;
                 const jStr = jVal ? '  ·  ' + (jVal>=1000 ? Math.round(jVal/100)/10+' kJ' : jVal+' J') : '';
                 const wpkg = profile.weight ? '  ·  ' + Math.round(v/Number(profile.weight)*100)/100+' W/kg' : '';
                 return c.dataset.label + ' : ' + v + ' W' + jStr + wpkg;
               },
-              afterBody: items => {
-                const lines = [];
-                if (wmaxA) lines.push('Wmax actuel : ' + wmaxA + ' W');
-                if (wmaxB) lines.push('Wmax compar. : ' + wmaxB + ' W');
-                if (ftpVal) lines.push('FTP : ' + ftpVal + ' W' + (profile.weight ? '  ·  ' + Math.round(ftpVal/Number(profile.weight)*100)/100 + ' W/kg' : ''));
-                if (!hasRealPower && hasEstPower) lines.push('⚠ Puissance estimée (modèle physique, pas de capteur)');
-                return lines;
+              afterBody: () => {
+                const ls = [];
+                if (wmax) ls.push('Wmax : ' + wmax + ' W');
+                if (ftpVal) ls.push('FTP : ' + ftpVal + ' W' + (profile.weight ? '  ·  ' + Math.round(ftpVal/Number(profile.weight)*100)/100 + ' W/kg' : ''));
+                if (!hasRealPower && hasEstPower) ls.push('⚠ Puissance estimée (modèle physique)');
+                return ls;
               }
             }
           }
@@ -870,27 +879,77 @@ function App() {
       },
     });
     return () => destroyChart('power');
-  }, [tab, athleteSection, data, actStreams, powDateA0, powDateA1, powDateB0, powDateB1, profile.ftp, profile.weight, ftpEstimated]);
+  }, [tab, athleteSection, data, actStreams, profile.ftp, profile.weight, ftpEstimated]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Allure') return;
     chartDefaults();
     const fmtP = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
-    const curA = paceCurveByDate(powDateA0, powDateA1);
-    const curB = paceCurveByDate(powDateB0, powDateB1);
+    const PERIODS_PACE = [
+      { days:30,  label:'1 mois', color:'#ec3013', width:2.5, dash:[] },
+      { days:90,  label:'3 mois', color:'#f97a60', width:2,   dash:[] },
+      { days:180, label:'6 mois', color:'#605d5d', width:1.5, dash:[4,3] },
+      { days:365, label:'1 an',   color:'#bab6b6', width:1.5, dash:[4,3] },
+    ];
+    // Distances de 200m à 42200m par pas de 100m
+    const PACE_DISTS_FINE = [];
+    for (let m = 200; m <= 42200; m += 100) PACE_DISTS_FINE.push(m);
+    // Labels : afficher seulement aux distances clés
+    const KEY_DISTS = new Set([200, 400, 500, 1000, 2000, 5000, 10000, 15000, 21097, 30000, 42195]);
+    const paceLabels = PACE_DISTS_FINE.map(m => KEY_DISTS.has(m) ? (m >= 1000 ? (m/1000 % 1 === 0 ? m/1000 + ' km' : (m/1000).toFixed(1) + ' km') : m + ' m') : '');
+    // Calculer les 4 courbes par fenêtre glissante
+    const paceCurves = PERIODS_PACE.map(p => {
+      const end = Date.now(), start = end - p.days * 86400000;
+      const d0 = new Date(start).toISOString().slice(0,10);
+      const d1 = new Date(end).toISOString().slice(0,10);
+      const t0 = new Date(d0).getTime(), t1 = new Date(d1).getTime() + 86400000;
+      const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.date.getTime()>=t0 && a.date.getTime()<t1);
+      const vals = PACE_DISTS_FINE.map(targetM => {
+        let best = null;
+        for (const a of runs) {
+          const ps = actStreams[a.id];
+          if (ps && ps.dist && ps.vel) {
+            const v = bestPaceWindow(ps.dist, ps.vel, targetM);
+            if (v !== null && v <= MAX_PACE) best = best === null ? v : Math.min(best, v);
+          } else if (a.dist*1000 >= targetM && a.pace && a.pace <= MAX_PACE) {
+            best = best === null ? a.pace : Math.min(best, a.pace);
+          }
+        }
+        return best !== null ? Math.round(best * 100) / 100 : null;
+      });
+      return { ...p, vals };
+    });
+    const paceDatasetsNew = paceCurves.map(c => ({
+      label: c.label, data: c.vals,
+      borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
+      backgroundColor: c.color === '#ec3013' ? 'rgba(236,48,19,0.08)' : 'transparent',
+      fill: c.color === '#ec3013', tension: 0.3,
+      pointRadius: 0, pointHoverRadius: 4, spanGaps: true,
+    }));
     upsert('pace', paceRef, {
       type:'line',
-      data:{ labels:PACE_DISTANCES.map(x=>x.l), datasets:[
-        { label:'Comparaison', data:curB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true },
-        { label:'Actuel', data:curA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true },
-      ]},
+      data:{ labels: paceLabels, datasets: paceDatasetsNew },
       options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
-        plugins:{ legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}}, tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':fmtP(c.parsed.y)+' /km')}} },
-        scales:{ x:{grid:{display:false},title:{display:true,text:'Distance',color:'#605d5d'}}, y:{reverse:true,grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},ticks:{callback:v=>fmtP(v)},title:{display:true,text:'Allure (min/km)',color:'#605d5d'}} },
+        plugins:{
+          legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}},
+          tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
+            callbacks:{
+              title: items => {
+                const m = PACE_DISTS_FINE[items[0].dataIndex];
+                return m >= 1000 ? (m/1000 % 1 === 0 ? m/1000+' km' : (m/1000).toFixed(1)+' km') : m+' m';
+              },
+              label: c => c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':fmtP(c.parsed.y)+' /km'),
+            }
+          }
+        },
+        scales:{
+          x:{grid:{display:false},title:{display:true,text:'Distance',color:'#605d5d'},ticks:{maxRotation:0,autoSkipPadding:20}},
+          y:{reverse:true,grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},ticks:{callback:v=>fmtP(v)},title:{display:true,text:'Allure (min/km)',color:'#605d5d'}}
+        },
       },
     });
     return () => destroyChart('pace');
-  }, [tab, athleteSection, data, actStreams, powDateA0, powDateA1, powDateB0, powDateB1]);
+  }, [tab, athleteSection, data, actStreams]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Fréquence cardiaque') return;
@@ -1492,49 +1551,20 @@ function App() {
           )
         ),
         athleteSection==='Puissance'&&h('div',null,
-          h('section',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',borderBottom:'2px solid #201e1d'}},
-            h('div',{style:{padding:'20px 32px',borderRight:'2px solid #201e1d'}},
-              h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}},
-                h('span',{style:{display:'inline-block',width:'16px',height:'3px',background:'#ec3013'}}),
-                h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#ec3013'}},'Période actuelle')
-              ),
-              h('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}},
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
-                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Du'),
-                  h('input',{type:'date',value:powDateA0,onChange:e=>setPowDateA0(e.target.value),style:{padding:'8px 10px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
-                ),
-                h('span',{style:{fontSize:'14px',color:'#605d5d',marginTop:'18px'}},'\u2192'),
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
-                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Au'),
-                  h('input',{type:'date',value:powDateA1,onChange:e=>setPowDateA1(e.target.value),style:{padding:'8px 10px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
-                ),
-                h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'18px'}},
-                  [{l:'30 j',d:30},{l:'90 j',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>
-                    h('button',{key:o.l,type:'button',onClick:()=>{const t=new Date().toISOString().slice(0,10);const f=new Date(Date.now()-o.d*86400000).toISOString().slice(0,10);setPowDateA0(f);setPowDateA1(t);},style:{...btnStyle(false),padding:'6px 10px',fontSize:'11px'}},o.l)
-                  )
-                )
-              )
-            ),
-            h('div',{style:{padding:'20px 32px'}},
-              h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}},
-                h('span',{style:{display:'inline-block',width:'16px',height:'2px',background:'#bab6b6',borderTop:'2px dashed #bab6b6'}}),
-                h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison')
-              ),
-              h('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}},
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
-                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Du'),
-                  h('input',{type:'date',value:powDateB0,onChange:e=>setPowDateB0(e.target.value),style:{padding:'8px 10px',border:'2px solid #d7d3d3',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
-                ),
-                h('span',{style:{fontSize:'14px',color:'#605d5d',marginTop:'18px'}},'\u2192'),
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
-                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Au'),
-                  h('input',{type:'date',value:powDateB1,onChange:e=>setPowDateB1(e.target.value),style:{padding:'8px 10px',border:'2px solid #d7d3d3',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
-                ),
-                h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'18px'}},
-                  [{l:'30 j',d:30},{l:'90 j',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>
-                    h('button',{key:o.l,type:'button',onClick:()=>{const t=new Date(Date.now()-90*86400000).toISOString().slice(0,10);const f=new Date(Date.now()-(90+o.d)*86400000).toISOString().slice(0,10);setPowDateB0(f);setPowDateB1(t);},style:{...btnStyle(false),padding:'6px 10px',fontSize:'11px'}},o.l)
-                  )
-                )
+          // Bande de contrôle : légende 4 courbes uniquement
+          h('section',{style:{display:'flex',alignItems:'flex-start',gap:'0',borderBottom:'2px solid #201e1d'}},
+            h('div',{style:{padding:'20px 32px',display:'flex',flexDirection:'column',gap:'6px'}},
+              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Périodes'),
+              h('div',{style:{display:'flex',flexDirection:'column',gap:'6px',marginTop:'4px'}},
+                [
+                  {color:'#ec3013',dash:false,label:'1 mois'},
+                  {color:'#f97a60',dash:false,label:'3 mois'},
+                  {color:'#605d5d',dash:true, label:'6 mois'},
+                  {color:'#bab6b6',dash:true, label:'1 an'},
+                ].map(item=>h('div',{key:item.label,style:{display:'flex',alignItems:'center',gap:'8px'}},
+                  h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:item.color,borderTop:item.dash?'2px dashed '+item.color:'none'}}),
+                  h('span',{style:{fontSize:'12px',fontWeight:'600',color:item.dash?'#605d5d':'#201e1d'}},item.label)
+                ))
               )
             )
           ),
@@ -1599,49 +1629,20 @@ function App() {
           )
         ),
         athleteSection==='Allure'&&h('div',null,
-          h('section',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',borderBottom:'2px solid #201e1d'}},
-            h('div',{style:{padding:'20px 32px',borderRight:'2px solid #201e1d'}},
-              h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}},
-                h('span',{style:{display:'inline-block',width:'16px',height:'3px',background:'#ec3013'}}),
-                h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#ec3013'}},'Période actuelle')
-              ),
-              h('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}},
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
-                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Du'),
-                  h('input',{type:'date',value:powDateA0,onChange:e=>setPowDateA0(e.target.value),style:{padding:'8px 10px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
-                ),
-                h('span',{style:{fontSize:'14px',color:'#605d5d',marginTop:'18px'}},'\u2192'),
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
-                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Au'),
-                  h('input',{type:'date',value:powDateA1,onChange:e=>setPowDateA1(e.target.value),style:{padding:'8px 10px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
-                ),
-                h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'18px'}},
-                  [{l:'30 j',d:30},{l:'90 j',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>
-                    h('button',{key:o.l,type:'button',onClick:()=>{const t=new Date().toISOString().slice(0,10);const f=new Date(Date.now()-o.d*86400000).toISOString().slice(0,10);setPowDateA0(f);setPowDateA1(t);},style:{...btnStyle(false),padding:'6px 10px',fontSize:'11px'}},o.l)
-                  )
-                )
-              )
-            ),
-            h('div',{style:{padding:'20px 32px'}},
-              h('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'10px'}},
-                h('span',{style:{display:'inline-block',width:'16px',height:'2px',background:'#bab6b6',borderTop:'2px dashed #bab6b6'}}),
-                h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison')
-              ),
-              h('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}},
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
-                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Du'),
-                  h('input',{type:'date',value:powDateB0,onChange:e=>setPowDateB0(e.target.value),style:{padding:'8px 10px',border:'2px solid #d7d3d3',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
-                ),
-                h('span',{style:{fontSize:'14px',color:'#605d5d',marginTop:'18px'}},'\u2192'),
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
-                  h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Au'),
-                  h('input',{type:'date',value:powDateB1,onChange:e=>setPowDateB1(e.target.value),style:{padding:'8px 10px',border:'2px solid #d7d3d3',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',fontWeight:'600',cursor:'pointer'}})
-                ),
-                h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'18px'}},
-                  [{l:'30 j',d:30},{l:'90 j',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>
-                    h('button',{key:o.l,type:'button',onClick:()=>{const t=new Date(Date.now()-90*86400000).toISOString().slice(0,10);const f=new Date(Date.now()-(90+o.d)*86400000).toISOString().slice(0,10);setPowDateB0(f);setPowDateB1(t);},style:{...btnStyle(false),padding:'6px 10px',fontSize:'11px'}},o.l)
-                  )
-                )
+          // Bande de contrôle : légende 4 courbes uniquement
+          h('section',{style:{display:'flex',alignItems:'flex-start',gap:'0',borderBottom:'2px solid #201e1d'}},
+            h('div',{style:{padding:'20px 32px',display:'flex',flexDirection:'column',gap:'6px'}},
+              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Périodes'),
+              h('div',{style:{display:'flex',flexDirection:'column',gap:'6px',marginTop:'4px'}},
+                [
+                  {color:'#ec3013',dash:false,label:'1 mois'},
+                  {color:'#f97a60',dash:false,label:'3 mois'},
+                  {color:'#605d5d',dash:true, label:'6 mois'},
+                  {color:'#bab6b6',dash:true, label:'1 an'},
+                ].map(item=>h('div',{key:item.label,style:{display:'flex',alignItems:'center',gap:'8px'}},
+                  h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:item.color,borderTop:item.dash?'2px dashed '+item.color:'none'}}),
+                  h('span',{style:{fontSize:'12px',fontWeight:'600',color:item.dash?'#605d5d':'#201e1d'}},item.label)
+                ))
               )
             )
           ),
@@ -1666,13 +1667,11 @@ function App() {
             })(),
             h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
               h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Meilleure allure par distance'),
-              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
-                data.filter(a=>a.sport==='Course'||a.sport==='Trail').some(a=>actStreams[a.id] && actStreams[a.id]!=='error') ? 'Fenêtre glissante s/s · Rouge : période actuelle · Gris : comparaison' : 'Rouge : période actuelle · Gris : comparaison'
-              )
+              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'100 m par 100 m · fenêtre glissante s/s')
             ),
             h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
               data.some(a=>(a.sport==='Course'||a.sport==='Trail')&&a.pace)
-                ? data.filter(a=>a.sport==='Course'||a.sport==='Trail').some(a=>actStreams[a.id] && actStreams[a.id]!=='error') ? 'Meilleure allure calculée par fenêtre glissante seconde par seconde — équivalent des PR Strava/Garmin.' : "Affichage par allure moyenne de sortie. Charge les streams pour la vraie meilleure allure par distance."
+                ? 'Meilleure allure par fenêtre glissante seconde par seconde, de 200 m à 42,2 km tous les 100 m. Charge les streams Strava pour la précision maximale.'
                 : 'Donnée manquante — aucune sortie course ou trail.'
             ),
             h('div',{style:{height:'calc(100vh - 400px)',minHeight:'320px'}},h('canvas',{ref:paceRef}))
