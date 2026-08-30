@@ -850,7 +850,7 @@ function App() {
       options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
         interaction:{mode:'index',intersect:false,axis:'x'}, hover:{animationDuration:0},
         plugins:{
-          legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}},
+          legend:{display:true,position:'top',align:'end',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:true}},
           tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:12,displayColors:true,
             callbacks:{
               title: items => 'Effort : ' + POWER_DURATIONS[items[0].dataIndex].l,
@@ -894,9 +894,23 @@ function App() {
     // Distances de 200m à 42200m par pas de 100m
     const PACE_DISTS_FINE = [];
     for (let m = 200; m <= 42200; m += 100) PACE_DISTS_FINE.push(m);
-    // Labels : afficher seulement aux distances clés
-    const KEY_DISTS = new Set([200, 400, 500, 1000, 2000, 5000, 10000, 15000, 21097, 30000, 42195]);
-    const paceLabels = PACE_DISTS_FINE.map(m => KEY_DISTS.has(m) ? (m >= 1000 ? (m/1000 % 1 === 0 ? m/1000 + ' km' : (m/1000).toFixed(1) + ' km') : m + ' m') : '');
+    const paceLabels = PACE_DISTS_FINE.map(m => {
+      if (m < 1000) return m % 500 === 0 ? m + ' m' : '';
+      const km = m / 1000;
+      // Points clés nommés
+      if (m === 1000) return '1 km';
+      if (m === 2000) return '2 km';
+      if (m === 3000) return '3 km';
+      if (m === 5000) return '5 km';
+      if (m === 10000) return '10 km';
+      if (m === 15000) return '15 km';
+      if (m === 21100) return 'Semi';
+      if (m === 30000) return '30 km';
+      if (m === 42200) return 'Marathon';
+      // Tous les 5 km entre 5 et 30
+      if (m > 5000 && m <= 30000 && m % 5000 === 0) return km + ' km';
+      return '';
+    });
     // Calculer les 4 courbes par fenêtre glissante
     const paceCurves = PERIODS_PACE.map(p => {
       const end = Date.now(), start = end - p.days * 86400000;
@@ -919,8 +933,18 @@ function App() {
       });
       return { ...p, vals };
     });
+    // Adapter l'échelle aux données disponibles
+    let paceIdxMin = PACE_DISTS_FINE.length - 1, paceIdxMax = 0;
+    paceCurves.forEach(c => {
+      c.vals.forEach((v, i) => {
+        if (v !== null) { paceIdxMin = Math.min(paceIdxMin, i); paceIdxMax = Math.max(paceIdxMax, i); }
+      });
+    });
+    // Fallback si aucune donnée
+    if (paceIdxMin > paceIdxMax) { paceIdxMin = 0; paceIdxMax = PACE_DISTS_FINE.length - 1; }
+    const paceLabelsSlice = paceLabels.slice(paceIdxMin, paceIdxMax + 1);
     const paceDatasetsNew = paceCurves.map(c => ({
-      label: c.label, data: c.vals,
+      label: c.label, data: c.vals.slice(paceIdxMin, paceIdxMax + 1),
       borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
       backgroundColor: c.color === '#ec3013' ? 'rgba(236,48,19,0.08)' : 'transparent',
       fill: c.color === '#ec3013', tension: 0.3,
@@ -928,10 +952,10 @@ function App() {
     }));
     upsert('pace', paceRef, {
       type:'line',
-      data:{ labels: paceLabels, datasets: paceDatasetsNew },
+      data:{ labels: paceLabelsSlice, datasets: paceDatasetsNew },
       options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
         plugins:{
-          legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}},
+          legend:{display:true,position:'top',align:'end',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:true}},
           tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
             callbacks:{
               title: items => {
@@ -943,7 +967,7 @@ function App() {
           }
         },
         scales:{
-          x:{grid:{display:false},title:{display:true,text:'Distance',color:'#605d5d'},ticks:{maxRotation:0,autoSkipPadding:20}},
+          x:{grid:{display:false},title:{display:false},ticks:{maxRotation:0,autoSkip:false,maxTicksLimit:9999,callback:(val,i)=>paceLabels[i]||null}},
           y:{reverse:true,grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},ticks:{callback:v=>fmtP(v)},title:{display:true,text:'Allure (min/km)',color:'#605d5d'}}
         },
       },
@@ -1006,7 +1030,7 @@ function App() {
         responsive:true, maintainAspectRatio:false, animation:{duration:240},
         interaction:{mode:'index',intersect:false},
         plugins:{
-          legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}},
+          legend:{display:true,position:'top',align:'end',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:true}},
           tooltip:{
             backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
             callbacks:{
@@ -1551,23 +1575,6 @@ function App() {
           )
         ),
         athleteSection==='Puissance'&&h('div',null,
-          // Bande de contrôle : légende 4 courbes uniquement
-          h('section',{style:{display:'flex',alignItems:'flex-start',gap:'0',borderBottom:'2px solid #201e1d'}},
-            h('div',{style:{padding:'20px 32px',display:'flex',flexDirection:'column',gap:'6px'}},
-              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Périodes'),
-              h('div',{style:{display:'flex',flexDirection:'column',gap:'6px',marginTop:'4px'}},
-                [
-                  {color:'#ec3013',dash:false,label:'1 mois'},
-                  {color:'#f97a60',dash:false,label:'3 mois'},
-                  {color:'#605d5d',dash:true, label:'6 mois'},
-                  {color:'#bab6b6',dash:true, label:'1 an'},
-                ].map(item=>h('div',{key:item.label,style:{display:'flex',alignItems:'center',gap:'8px'}},
-                  h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:item.color,borderTop:item.dash?'2px dashed '+item.color:'none'}}),
-                  h('span',{style:{fontSize:'12px',fontWeight:'600',color:item.dash?'#605d5d':'#201e1d'}},item.label)
-                ))
-              )
-            )
-          ),
           (()=>{
             const ftpVal = Number(profile.ftp)||ftpEstimated||null;
             const isEstimatedFtp = !Number(profile.ftp) && !!ftpEstimated;
@@ -1629,23 +1636,6 @@ function App() {
           )
         ),
         athleteSection==='Allure'&&h('div',null,
-          // Bande de contrôle : légende 4 courbes uniquement
-          h('section',{style:{display:'flex',alignItems:'flex-start',gap:'0',borderBottom:'2px solid #201e1d'}},
-            h('div',{style:{padding:'20px 32px',display:'flex',flexDirection:'column',gap:'6px'}},
-              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Périodes'),
-              h('div',{style:{display:'flex',flexDirection:'column',gap:'6px',marginTop:'4px'}},
-                [
-                  {color:'#ec3013',dash:false,label:'1 mois'},
-                  {color:'#f97a60',dash:false,label:'3 mois'},
-                  {color:'#605d5d',dash:true, label:'6 mois'},
-                  {color:'#bab6b6',dash:true, label:'1 an'},
-                ].map(item=>h('div',{key:item.label,style:{display:'flex',alignItems:'center',gap:'8px'}},
-                  h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:item.color,borderTop:item.dash?'2px dashed '+item.color:'none'}}),
-                  h('span',{style:{fontSize:'12px',fontWeight:'600',color:item.dash?'#605d5d':'#201e1d'}},item.label)
-                ))
-              )
-            )
-          ),
           h('section',{style:{padding:'28px 32px 32px'}},
             (()=>{
               const runs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
