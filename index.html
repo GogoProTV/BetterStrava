@@ -948,34 +948,31 @@ function App() {
     });
     const showEstPow = sport==='Vélo' && totalMass > 0 && powVals.some(v=>v!==null);
 
-    // ── Échelles persistantes : max calculé dans la même unité que l'affichage, sur toutes les données ──
+    // ── Échelle fixe : max calculé en mois sur 12 mois, valable pour toutes les périodes ──
     const allActsSp = filtered(data, 365*10, sport);
-    // Même logique byWeek que l'affichage
-    const globalBuckets = new Map();
-    const globalKeyOf = d => byWeek ? weekStart(d).getTime() : new Date(d.getFullYear(),d.getMonth(),1).getTime();
+    const moKeyOf = d => new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+    const moBuckets = new Map();
     allActsSp.forEach(a => {
-      const k = globalKeyOf(a.date);
-      if (!globalBuckets.has(k)) globalBuckets.set(k, {km:0,h:0,elev:0});
-      const b = globalBuckets.get(k);
+      const k = moKeyOf(a.date);
+      if (!moBuckets.has(k)) moBuckets.set(k, {km:0, h:0, elev:0});
+      const b = moBuckets.get(k);
       b.km += a.dist; b.h += a.time/60; b.elev += a.elev;
     });
-    const gv = [...globalBuckets.values()];
-    const yMaxKm   = Math.ceil(Math.max(1, ...gv.map(b=>b.km))   / 10)  * 10;
-    const yMaxElev = Math.ceil(Math.max(1, ...gv.map(b=>b.elev)) / 100) * 100;
-    // Heures empilées : même bucket, toutes les données sans filtre sport pour cohérence
-    const globalHBuckets = new Map();
+    const moVals = [...moBuckets.values()];
+    const yMaxKm   = Math.ceil(Math.max(1, ...moVals.map(b => b.km))   / 10)  * 10;
+    const yMaxElev = Math.ceil(Math.max(1, ...moVals.map(b => b.elev)) / 100) * 100;
+    const moHBuckets = new Map();
     data.forEach(a => {
-      if (sport!=='Tous'&&a.sport!==sport) return;
-      const k = globalKeyOf(a.date);
-      globalHBuckets.set(k, (globalHBuckets.get(k)||0)+a.time/60);
+      if (sport !== 'Tous' && a.sport !== sport) return;
+      const k = moKeyOf(a.date);
+      moHBuckets.set(k, (moHBuckets.get(k) || 0) + a.time / 60);
     });
-    const yMaxH = Math.ceil(Math.max(1, ...[...globalHBuckets.values()]) / 2) * 2;
-    // Max minutes/jour : toujours en jours, indépendant du byWeek
+    const yMaxH = Math.ceil(Math.max(1, ...[...moHBuckets.values()]) / 2) * 2;
     const allDayMap2 = new Map();
     data.forEach(a => {
-      if (sport!=='Tous'&&a.sport!==sport) return;
+      if (sport !== 'Tous' && a.sport !== sport) return;
       const k = a.date.toDateString();
-      allDayMap2.set(k, (allDayMap2.get(k)||0)+a.time);
+      allDayMap2.set(k, (allDayMap2.get(k) || 0) + a.time);
     });
     const yMaxDay = Math.ceil(Math.max(1, ...[...allDayMap2.values()]) / 30) * 30;
 
