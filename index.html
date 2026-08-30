@@ -2185,76 +2185,87 @@ function App() {
               h('span',{style:{fontSize:'10px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},sport==='Tous'?'Tous sports':sport)
             ),
             (()=>{
-              const fmtPR = v => { if (!v) return null; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
-              const fmtSpeed = v => v ? fmtNum(v,1)+' km/h' : null;
-              // Définir les distances selon le sport
-              const prDefs = sport==='Vélo'
+              const fmtPR = v => { if (!v||!isFinite(v)) return null; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
+              const fmtSpeed = v => v ? fmtNum(Math.round(v*10)/10,1)+' km/h' : null;
+              // Natation : v est en min/km (allure), convertir en min/100m
+              const fmtSwim = v => { if (!v||!isFinite(v)) return null; const p100=v/10; const m=Math.floor(p100); const s=Math.round((p100-m)*60); return m+"'"+String(s).padStart(2,'0')+'" /100m'; };
+              const isVelo=sport==='Vélo', isSwim=sport==='Natation';
+              const prDefs = isVelo
                 ? [{d:1000,l:'1 km'},{d:5000,l:'5 km'},{d:10000,l:'10 km'},{d:20000,l:'20 km'},{d:40000,l:'40 km'},{d:100000,l:'100 km'}]
-                : sport==='Natation'
+                : isSwim
                   ? [{d:100,l:'100 m'},{d:200,l:'200 m'},{d:400,l:'400 m'},{d:1000,l:'1 km'},{d:1500,l:'1500 m'}]
                   : [{d:400,l:'400 m'},{d:1000,l:'1 km'},{d:2000,l:'2 km'},{d:5000,l:'5 km'},{d:10000,l:'10 km'},{d:20000,l:'20 km'},{d:40000,l:'40 km'}];
-              // Calculer depuis actStreams (réutiliser le cache déjà fetchés)
-              // prVals[i] = best value, prActIds[i] = id de l'activité source
-              const prResults = prDefs.map(({d:targetM}) => {
-                let best = null, bestId = null;
-                for (const a of acts) {
-                  const s = actStreams[a.id];
-                  if (sport==='Vélo') {
-                    if (s && s.dist && s.vel) {
-                      let bestV = null;
-                      let j2=0;
+              const calcPR = (pool, targetM) => {
+                let best=null, bestId=null;
+                for (const a of pool) {
+                  const s=actStreams[a.id];
+                  if (isVelo) {
+                    if (s&&s.dist&&s.vel) {
+                      let bestV=null,j2=0;
                       for (let i2=0;i2<s.dist.length;i2++) {
                         while(j2<s.dist.length-1&&s.dist[j2]-s.dist[i2]<targetM)j2++;
-                        if(s.dist[j2]-s.dist[i2]>=targetM){
-                          const secs=j2-i2;
-                          if(secs>0){const v=(targetM/secs)*3.6;if(bestV===null||v>bestV)bestV=v;}
-                        }
+                        if(s.dist[j2]-s.dist[i2]>=targetM){const secs=j2-i2;if(secs>0){const v=(targetM/secs)*3.6;if(bestV===null||v>bestV)bestV=v;}}
                       }
                       if(bestV!==null&&(best===null||bestV>best)){best=bestV;bestId=a.id;}
-                    } else if (a.dist*1000>=targetM && a.dist && a.time) {
+                    } else if (a.dist*1000>=targetM&&a.dist&&a.time) {
                       const v=a.dist/(a.time/60);if(best===null||v>best){best=v;bestId=a.id;}
                     }
-                  } else if (sport==='Natation') {
-                    if (s && s.dist && s.vel && s.dist[s.dist.length-1]>=targetM) {
+                  } else if (isSwim) {
+                    if (s&&s.dist&&s.vel&&s.dist[s.dist.length-1]>=targetM) {
                       const v=bestPaceWindow(s.dist,s.vel,targetM);
                       if(v&&v<=MAX_PACE&&(best===null||v<best)){best=v;bestId=a.id;}
-                    } else if (a.dist*1000>=targetM && a.pace) {
+                    } else if (a.dist*1000>=targetM&&a.pace) {
                       if(best===null||a.pace<best){best=a.pace;bestId=a.id;}
                     }
                   } else {
-                    if (s && s.dist && s.vel && s.dist[s.dist.length-1]>=targetM) {
+                    if (s&&s.dist&&s.vel&&s.dist[s.dist.length-1]>=targetM) {
                       const v=bestPaceWindow(s.dist,s.vel,targetM);
                       if(v&&v<=MAX_PACE&&(best===null||v<best)){best=v;bestId=a.id;}
-                    } else if (a.dist*1000>=targetM && a.pace && a.pace<=MAX_PACE) {
+                    } else if (a.dist*1000>=targetM&&a.pace&&a.pace<=MAX_PACE) {
                       if(best===null||a.pace<best){best=a.pace;bestId=a.id;}
                     }
                   }
                 }
-                return {val:best, id:bestId};
-              });
-              const prVals = prResults.map(r=>r.val);
-              const prActIds = prResults.map(r=>r.id);
-              return h('div',{style:{display:'flex',flexDirection:'column',gap:'0'}},
+                return {val:best,id:bestId};
+              };
+              const allTimeActs = data.filter(a => isVelo ? a.sport==='Vélo' : isSwim ? a.sport==='Natation' : a.sport==='Course'||a.sport==='Trail');
+              const prPeriod  = prDefs.map(({d:m}) => calcPR(acts, m));
+              const prAllTime = prDefs.map(({d:m}) => calcPR(allTimeActs, m));
+              const fmt = v => { if (!v) return '—'; if (isVelo) return fmtSpeed(v)||'—'; if (isSwim) return fmtSwim(v)||'—'; return (fmtPR(v)||'—')+' /km'; };
+              const navTo = id => id ? () => { setExpanded(true); setTimeout(()=>{ const el=document.getElementById('act-row-'+id); if(el){el.scrollIntoView({behavior:'smooth',block:'center'}); const act=data.find(a=>a.id===id); if(act)toggleRow(act);} },120); } : undefined;
+              return h('div',{style:{display:'flex',flexDirection:'column'}},
                 prDefs.map((def,i)=>{
-                  const val = prVals[i];
-                  let display;
-                  if (!val) display = '—';
-                  else if (sport==='Vélo') display = fmtSpeed(val)||'—';
-                  else if (sport==='Natation') display = fmtPR(val*10)||'—';
-                  else display = (fmtPR(val)||'—')+' /km';
-                  return h('div',{key:def.l,onClick:prActIds[i]?()=>{
-                          setExpanded(true);
-                          setTimeout(()=>{
-                            const el=document.getElementById('act-row-'+prActIds[i]);
-                            if(el){el.scrollIntoView({behavior:'smooth',block:'center'});
-                            const act=acts.find(a=>a.id===prActIds[i]);if(act)toggleRow(act);}
-                          },120);
-                        }:undefined,
-                        onMouseEnter:e=>{if(prActIds[i])e.currentTarget.style.background='#fdf1ee';},
-                        onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
-                        style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',cursor:prActIds[i]?'pointer':'default',padding:'5px 0',borderBottom:'1px solid #d7d3d3'}},
-                    h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.06em',textTransform:'uppercase',color:'#605d5d'}},def.l),
-                    h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.01em',color:val?'#201e1d':'#bab6b6'}},display),prActIds[i]&&h('span',{style:{fontSize:'10px',color:'#bab6b6',marginLeft:'4px'}},'→')
+                  const per=prPeriod[i], all=prAllTime[i];
+                  const isAtBest = per.val&&all.val&&(isVelo ? per.val>=all.val*0.999 : per.val<=all.val*1.001);
+                  // delta : combien la période est loin du record (négatif = en dessous du record)
+                  const dPct = (per.val&&all.val&&all.val>0) ? (isVelo ? Math.round(((per.val-all.val)/all.val)*100) : Math.round(((all.val-per.val)/all.val)*100)) : null;
+                  const chip = dPct!==null ? deltaChip(dPct, true) : null;
+                  return h('div',{key:def.l,style:{borderBottom:'1px solid #d7d3d3',padding:'7px 0'}},
+                    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'3px'}},
+                      h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},def.l),
+                      isAtBest&&h('span',{style:{fontSize:'9px',fontWeight:'800',color:'#ec3013',letterSpacing:'0.1em',textTransform:'uppercase',padding:'1px 5px',border:'1px solid #ec3013'}},'PR')
+                    ),
+                    h('div',{onClick:navTo(per.id),onMouseEnter:e=>{if(per.id)e.currentTarget.style.background='#fdf1ee';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
+                      style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',cursor:per.id?'pointer':'default',padding:'1px 4px',margin:'0 -4px',borderRadius:'0'}},
+                      h('span',{style:{fontSize:'10px',color:'#605d5d',fontWeight:'600',minWidth:'48px'}},'Période'),
+                      h('div',{style:{display:'flex',alignItems:'baseline',gap:'4px'}},
+                        h('span',{style:{fontSize:'14px',fontWeight:'800',letterSpacing:'-0.02em',color:per.val?(isAtBest?'#ec3013':'#201e1d'):'#bab6b6'}},fmt(per.val)),
+                        per.id&&h('span',{style:{fontSize:'9px',color:'#bab6b6'}},'→')
+                      )
+                    ),
+                    h('div',{onClick:navTo(all.id),onMouseEnter:e=>{if(all.id)e.currentTarget.style.background='#fdf1ee';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
+                      style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',cursor:all.id?'pointer':'default',padding:'1px 4px',margin:'0 -4px'}},
+                      h('span',{style:{fontSize:'10px',color:'#605d5d',fontWeight:'600',minWidth:'48px'}},'Record'),
+                      h('div',{style:{display:'flex',alignItems:'baseline',gap:'4px'}},
+                        h('span',{style:{fontSize:'14px',fontWeight:'800',letterSpacing:'-0.02em',color:all.val?'#605d5d':'#bab6b6'}},fmt(all.val)),
+                        all.id&&h('span',{style:{fontSize:'9px',color:'#bab6b6'}},'→')
+                      )
+                    ),
+                    chip&&dPct!==0&&h('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginTop:'3px'}},
+                      chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
+                      chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'1px 6px',fontSize:'11px'}},chip.text),
+                      h('span',{style:{fontSize:'10px',color:'#bab6b6'}},'vs record')
+                    )
                   );
                 })
               );
