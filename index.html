@@ -927,15 +927,20 @@ function App() {
     chartDefaults();
     const grid = { color:'rgba(32,30,29,0.12)', drawTicks:false };
     const acts = filtered(data, range, sport);
-    const byWeek = range<=90;
+    // Toujours par semaine — cohérence d'échelle entre 30j, 90j, 6m, 12m
+    const keyOf = d => weekStart(d).getTime();
+    const nW = Math.ceil(range / 7);
     const buckets = new Map();
-    const keyOf = d => byWeek ? weekStart(d).getTime() : new Date(d.getFullYear(),d.getMonth(),1).getTime();
-    if (byWeek) { const nW=Math.ceil(range/7); for(let i=nW-1;i>=0;i--) buckets.set(keyOf(new Date(Date.now()-i*7*86400000)),{km:0,h:0,elev:0}); }
-    else { const nM=Math.max(3,Math.round(range/30)); for(let i=nM-1;i>=0;i--){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);buckets.set(keyOf(d),{km:0,h:0,elev:0});} }
-    acts.forEach(a => { const w=buckets.get(keyOf(a.date)); if(w){w.km+=a.dist;w.h+=a.time/60;w.elev+=a.elev;} });
-    const labels = [...buckets.keys()].map(k=>new Date(k).toLocaleDateString('fr-FR',byWeek?{day:'numeric',month:'short'}:{month:'short',year:'2-digit'}));
-    const vals = [...buckets.values()].map(w=>Math.round(w.km*10)/10);
-    const elevVals = [...buckets.values()].map(w=>Math.round(w.elev));
+    for (let i = nW - 1; i >= 0; i--) buckets.set(keyOf(new Date(Date.now() - i * 7 * 86400000)), {km:0, h:0, elev:0});
+    acts.forEach(a => { const w = buckets.get(keyOf(a.date)); if (w) { w.km += a.dist; w.h += a.time/60; w.elev += a.elev; } });
+    const labels = [...buckets.keys()].map(k => {
+      const d = new Date(k);
+      return range <= 90
+        ? d.toLocaleDateString('fr-FR', {day:'numeric', month:'short'})
+        : d.toLocaleDateString('fr-FR', {day:'numeric', month:'short', year:'2-digit'});
+    });
+    const vals = [...buckets.values()].map(w => Math.round(w.km * 10) / 10);
+    const elevVals = [...buckets.values()].map(w => Math.round(w.elev));
     const totalMass = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
     const powVals = [...buckets.keys()].map(k => {
       const bucketActs = acts.filter(a => a.sport==='Vélo' && a.dist && a.time && keyOf(a.date)===k);
@@ -949,26 +954,32 @@ function App() {
     });
     const showEstPow = sport==='Vélo' && totalMass > 0 && powVals.some(v=>v!==null);
 
-    // ── Échelle fixe : max calculé en mois sur 12 mois, valable pour toutes les périodes ──
+    // ── Échelle fixe : max calculé par semaine sur toute la carrière ──
     const allActsSp = filtered(data, 365*10, sport);
-    const moKeyOf = d => new Date(d.getFullYear(), d.getMonth(), 1).getTime();
-    const moBuckets = new Map();
+    const allWkBuckets = new Map();
     allActsSp.forEach(a => {
-      const k = moKeyOf(a.date);
-      if (!moBuckets.has(k)) moBuckets.set(k, {km:0, h:0, elev:0});
-      const b = moBuckets.get(k);
+      const k = keyOf(a.date);
+      if (!allWkBuckets.has(k)) allWkBuckets.set(k, {km:0, h:0, elev:0, pow:[]});
+      const b = allWkBuckets.get(k);
       b.km += a.dist; b.h += a.time/60; b.elev += a.elev;
+      if (a.sport==='Vélo' && totalMass > 0) {
+        const v = a.dist/(a.time/60);
+        const slope = a.elev&&a.dist?(a.elev/(a.dist*1000))*100:0;
+        const p = estimatePower(v, slope, totalMass);
+        if (p) b.pow.push(p);
+      }
     });
-    const moVals = [...moBuckets.values()];
-    const yMaxKm   = Math.ceil(Math.max(1, ...moVals.map(b => b.km))   / 10)  * 10;
-    const yMaxElev = Math.ceil(Math.max(1, ...moVals.map(b => b.elev)) / 100) * 100;
-    const moHBuckets = new Map();
+    const allWkVals = [...allWkBuckets.values()];
+    const yMaxKm   = Math.ceil(Math.max(1, ...allWkVals.map(b => b.km))   / 10)  * 10;
+    const yMaxElev = Math.ceil(Math.max(1, ...allWkVals.map(b => b.elev)) / 100) * 100;
+    const yMaxPow  = Math.ceil(Math.max(1, ...allWkVals.map(b => b.pow.length ? b.pow.reduce((s,v)=>s+v,0)/b.pow.length : 0)) / 10) * 10;
+    const allHBuckets = new Map();
     data.forEach(a => {
       if (sport !== 'Tous' && a.sport !== sport) return;
-      const k = moKeyOf(a.date);
-      moHBuckets.set(k, (moHBuckets.get(k) || 0) + a.time / 60);
+      const k = keyOf(a.date);
+      allHBuckets.set(k, (allHBuckets.get(k) || 0) + a.time / 60);
     });
-    const yMaxH = Math.ceil(Math.max(1, ...[...moHBuckets.values()]) / 2) * 2;
+    const yMaxH = Math.ceil(Math.max(1, ...[...allHBuckets.values()]) / 2) * 2;
     const allDayMap2 = new Map();
     data.forEach(a => {
       if (sport !== 'Tous' && a.sport !== sport) return;
@@ -1003,7 +1014,12 @@ function App() {
           }
         }
       },
-      scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,max:yMaxKm,title:{display:true,text:'Distance (km)',color:'#605d5d'}},y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,max:yMaxElev,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}},y2:{display:showEstPow,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,title:{display:true,text:'W estimés (moy.)',color:'#605d5d'}}}
+      scales:{
+        x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:'Semaines',color:'#605d5d'}},
+        y:{grid,border:{display:false},beginAtZero:true,max:yMaxKm,title:{display:true,text:'Distance (km)',color:'#605d5d'}},
+        y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,max:yMaxElev,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}},
+        y2:{display:showEstPow,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,max:yMaxPow,title:{display:true,text:'W estimés (moy.)',color:'#605d5d'}}
+      }
     } });
     const days=[]; const dayStart=new Date(); dayStart.setHours(0,0,0,0);
     for(let i=range-1;i>=0;i--) days.push(new Date(dayStart.getTime()-i*86400000));
@@ -1016,7 +1032,7 @@ function App() {
     upsert('zone', zoneRef, { type:'doughnut', data:{labels:zoneMin.map(z=>z.label),datasets:[{data:zoneMin.map(z=>z.min),backgroundColor:zoneMin.map(z=>z.color),borderColor:'#f3f2f2',borderWidth:2}]}, options:{ responsive:true, maintainAspectRatio:false, cutout:'46%', plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.label+' · '+Math.round(c.parsed/60)+' h ('+Math.round((c.parsed/zoneMin.reduce((s,z)=>s+z.min,0))*100)+' %)'}}} } });
     const splitKeys=[...buckets.keys()];
     const shown=sport==='Tous'?sports:[sport];
-    upsert('bar', barRef, { type:'bar', data:{labels,datasets:shown.map(sp=>({label:sp,backgroundColor:shades[sp],borderWidth:0,data:splitKeys.map(k=>Math.round(acts.filter(a=>a.sport===sp&&keyOf(a.date)===k).reduce((s,a)=>s+a.time/60,0)*10)/10)}))}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:shown.length>1,position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true}}, scales:{x:{stacked:true,grid:{display:false},title:{display:true,text:byWeek?'Semaines':'Mois',color:'#605d5d'}},y:{stacked:true,grid,border:{display:false},beginAtZero:true,max:yMaxH,title:{display:true,text:'Heures',color:'#605d5d'}}} } });
+    upsert('bar', barRef, { type:'bar', data:{labels,datasets:shown.map(sp=>({label:sp,backgroundColor:shades[sp],borderWidth:0,data:splitKeys.map(k=>Math.round(acts.filter(a=>a.sport===sp&&keyOf(a.date)===k).reduce((s,a)=>s+a.time/60,0)*10)/10)}))}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{legend:{display:shown.length>1,position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true}}, scales:{x:{stacked:true,grid:{display:false},title:{display:true,text:'Semaines',color:'#605d5d'}},y:{stacked:true,grid,border:{display:false},beginAtZero:true,max:yMaxH,title:{display:true,text:'Heures',color:'#605d5d'}}} } });
     return () => { destroyChart('line'); destroyChart('daily'); destroyChart('zone'); destroyChart('bar'); };
   }, [tab, data, range, sport, showElev, profile.fcMax, profile.weight, profile.bikeMass]);
 
