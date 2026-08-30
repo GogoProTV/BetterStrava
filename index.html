@@ -392,6 +392,16 @@ function App() {
     try { localStorage.setItem('bs_race', JSON.stringify(race)); } catch(e) {}
   }, [race]);
 
+  // ── Auto-fetch streams dès que les données sont disponibles ───────────────
+  useEffect(() => {
+    if (!data.length) return;
+    if (!localStorage.getItem('strava_token')) return;
+    if (streamFetchStatus === 'loading') return;
+    const eligible = data.filter(a => a.sport==='Vélo'||a.sport==='Course'||a.sport==='Trail');
+    const missing = eligible.filter(a => !actStreams[a.id] || actStreams[a.id]==='error');
+    if (missing.length) fetchAllStreams();
+  }, [data]);
+
   // ── Recalcul puissance estimée si masse change après fetch ────────────────
   useEffect(() => {
     const totalMass = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
@@ -700,8 +710,13 @@ function App() {
   const PACE_DISTANCES = [{ d:1,l:'1 km'},{d:2,l:'2 km'},{d:5,l:'5 km'},{d:10,l:'10 km'},{d:15,l:'15 km'},{d:21.1,l:'Semi'},{d:30,l:'30 km'},{d:42.2,l:'Marathon'}];
   const HR_BINS = [{ min:100,max:120,l:'100-120'},{min:120,max:130,l:'120-130'},{min:130,max:140,l:'130-140'},{min:140,max:150,l:'140-150'},{min:150,max:160,l:'150-160'},{min:160,max:170,l:'160-170'},{min:170,max:180,l:'170-180'},{min:180,max:200,l:'180+'}];
 
-  // Calcule puissance ou allure par bin FC depuis le cache unifié
-  // Vélo → W estimés par bin FC ; Course/Trail → allure min/km par bin FC
+  // Top 3 sports par temps total parmi ceux avec FC
+  const top3Sports = (() => {
+    const totals = {};
+    data.forEach(a => { if (a.hr) totals[a.sport] = (totals[a.sport]||0) + a.time; });
+    return Object.entries(totals).sort((a,b)=>b[1]-a[1]).slice(0,3).map(e=>e[0]);
+  })();
+
   function hrCurveByDate(d0, d1, sp) {
     const start = new Date(d0).getTime(), end = new Date(d1).getTime() + 86400000;
     const acts = data.filter(a => a.sport===sp && a.date.getTime()>=start && a.date.getTime()<end);
@@ -709,47 +724,50 @@ function App() {
     const bins = HR_BINS.map(() => ({ sum:0, count:0 }));
     for (const a of acts) {
       const s = actStreams[a.id];
-      if (s && s.hr) {
-        const metric = isBike ? s.pow : s.vel; // W estimés | m/s
+      if (s && s.hr && s.hr.length) {
+        const metric = isBike ? s.pow : s.vel;
         if (!metric) continue;
         for (let i = 0; i < s.hr.length; i++) {
-          const bpm = s.hr[i];
-          const bi = HR_BINS.findIndex(b => bpm >= b.min && bpm < b.max);
+          const bi = HR_BINS.findIndex(b => s.hr[i] >= b.min && s.hr[i] < b.max);
           if (bi < 0) continue;
           const v = metric[i];
           if (v > 0) { bins[bi].sum += v; bins[bi].count += 1; }
         }
       } else {
-        // Fallback résumé activité
         if (!a.hr || !a.dist || !a.time) continue;
         const bi = HR_BINS.findIndex(b => a.hr >= b.min && a.hr < b.max);
         if (bi < 0) continue;
+        const secs = a.time * 60;
         if (isBike) {
-          // fallback vélo : puissance estimée depuis vitesse moyenne
           const totalMass = (Number(profile.weight)||0)+(Number(profile.bikeMass)||0);
           if (totalMass > 0) {
             const v_kmh = a.dist / (a.time / 60);
             const slope = a.elev && a.dist ? (a.elev/(a.dist*1000))*100 : 0;
             const p = estimatePower(v_kmh, slope, totalMass);
-            if (p) { bins[bi].sum += p; bins[bi].count += 1; }
+            if (p) { bins[bi].sum += p * secs; bins[bi].count += secs; }
           }
         } else {
-          const v_ms = (a.dist * 1000) / (a.time * 60);
-          if (v_ms > 0.5) { bins[bi].sum += v_ms; bins[bi].count += a.time; }
+          const v_ms = (a.dist * 1000) / secs;
+          if (v_ms > 0.5) { bins[bi].sum += v_ms * secs; bins[bi].count += secs; }
         }
       }
     }
     const vals = bins.map(b => {
       if (!b.count) return null;
       const avg = b.sum / b.count;
-      if (isBike) return Math.round(avg); // W
+      if (isBike) return Math.round(avg);
       const pace = avg > 0.5 ? (1000 / 60 / avg) : null;
       return pace ? Math.round(pace * 100) / 100 : null;
     });
     return { vals, unit: isBike ? 'W' : 'min/km' };
   }
 
-  const [hrSport, setHrSport] = useState('Course');
+  const [hrSport, setHrSport] = useState(() => {
+    // Initialiser sur le sport le plus représenté avec FC
+    const totals = {};
+    // sera recalculé après data load, on garde 'Course' par défaut
+    return 'Course';
+  });
 
   // ── FTP estimée — déclarée ici pour être disponible dans les useEffect ────
   const ftpEstimated = (() => {
@@ -1688,7 +1706,7 @@ function App() {
             h('div',{style:{padding:'20px 32px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'10px'}},
               h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
               h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
-                ['Course','Trail','Vélo'].map(sp =>
+                (top3Sports.length ? top3Sports : ['Course','Trail','Vélo']).map(sp =>
                   h('button',{key:sp,type:'button',onClick:()=>setHrSport(sp),
                     style:{...btnStyle(hrSport===sp),padding:'8px 14px',textAlign:'left'},
                     onMouseEnter:e=>{if(hrSport!==sp)e.currentTarget.style.background='#ffe0d9';},
