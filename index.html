@@ -361,10 +361,6 @@ function App() {
     setStreamFetchStatus('ready');
   }
 
-  // Alias pour compatibilité avec les fonctions qui lisaient les anciens caches
-  const wattStreams  = actStreams; // .pow par activité vélo
-  const paceStreams  = actStreams; // .vel + .dist par activité course/trail
-  const hrStreams    = actStreams; // .hr + .vel par activité
   const [paceRange, setPaceRange] = useState(90);
   const [paceCompare, setPaceCompare] = useState(365);
   const [hrRange, setHrRange] = useState(90);
@@ -426,7 +422,7 @@ function App() {
       }
       return changed ? next : prev;
     });
-  }, [profile.weight, profile.bikeMass, data]);
+  }, [profile.weight, profile.bikeMass]);
   // ── Accordéon inline ─────────────────────────────────────────────────────
   const [rowStreams, setRowStreams] = useState({});
   const rowChartInsts = useRef({});
@@ -804,7 +800,7 @@ function App() {
     const wmaxB = wB.filter(Boolean).length ? Math.max(...wB.filter(Boolean)) : null;
     // "est." si pas de capteur de puissance réelle
     const hasRealPower = data.some(a => a.sport==='Vélo' && a.power);
-    const hasEstPower = data.filter(a=>a.sport==='Vélo').some(a=>wattStreams[a.id] instanceof Float32Array);
+    const hasEstPower = data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow);
     const estSuffix = !hasRealPower && hasEstPower ? ' (estimée)' : '';
     const labels = POWER_DURATIONS.map(d => d.l);
     const datasets = [
@@ -1528,7 +1524,7 @@ function App() {
             const best20idx = POWER_DURATIONS.findIndex(d=>d.s===1200);
             const kjBest = curA[best20idx] ? Math.round(curA[best20idx].j/1000*10)/10 : null;
             const wkg = ftpVal && profile.weight ? Math.round(ftpVal/Number(profile.weight)*100)/100 : null;
-            const hasStreams = data.filter(a=>a.sport==='Vélo').some(a=>wattStreams[a.id] instanceof Float32Array);
+            const hasStreams = data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow);
             const estTag = hasStreams && !data.some(a=>a.sport==='Vélo'&&a.power) ? ' (est.)' : '';
             const cells = [
               {label:'FTP'+estTag,          value: ftpVal?ftpVal+' W':'Donnée manquante', sub: isEstimatedFtp?'Estimée depuis tes sorties':'Renseignée manuellement', accent: true},
@@ -1581,7 +1577,7 @@ function App() {
               h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Axe droit pointillé : énergie (kJ)')
             ),
             h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
-              data.filter(a=>a.sport==='Vélo').some(a=>wattStreams[a.id] instanceof Float32Array)
+              data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow)
                 ? "Puissance estimée par fenêtre glissante seconde par seconde (modèle physique Crr/CdA). Survole pour voir W, kJ et W/kg."
                 : "Clique sur « Calculer la courbe » pour fetcher les streams vitesse/altitude de chaque sortie et calculer la puissance estimée seconde par seconde."
             ),
@@ -1669,14 +1665,14 @@ function App() {
             h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
               h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Meilleure allure par distance'),
               h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
-                data.filter(a=>a.sport==='Course'||a.sport==='Trail').some(a=>paceStreams[a.id]&&paceStreams[a.id]!=='error')
+                data.filter(a=>a.sport==='Course'||a.sport==='Trail').some(a=>actStreams[a.id] && actStreams[a.id]!=='error')
                   ? 'Fenêtre glissante s/s · Rouge : période actuelle · Gris : comparaison'
                   : 'Rouge : période actuelle · Gris : comparaison'
               )
             ),
             h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
               data.some(a=>(a.sport==='Course'||a.sport==='Trail')&&a.pace)
-                ? data.filter(a=>a.sport==='Course'||a.sport==='Trail').some(a=>paceStreams[a.id]&&paceStreams[a.id]!=='error')
+                ? data.filter(a=>a.sport==='Course'||a.sport==='Trail').some(a=>actStreams[a.id] && actStreams[a.id]!=='error')
                   ? 'Meilleure allure calculée par fenêtre glissante seconde par seconde — équivalent des PR Strava/Garmin.'
                   : "Affichage par allure moyenne de sortie. Charge les streams pour la vraie meilleure allure par distance."
                 : 'Donnée manquante — aucune sortie course ou trail.'
