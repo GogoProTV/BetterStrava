@@ -296,16 +296,75 @@ function App() {
   const [powDateA1, setPowDateA1] = useState(todayStr);
   const [powDateB0, setPowDateB0] = useState(ago365Str);
   const [powDateB1, setPowDateB1] = useState(ago180Str);
-  // Cache streams watts : id → Float32Array (seconde par seconde) | 'error'
-  const [wattStreams, setWattStreams] = useState({});
-  const [wattFetchStatus, setWattFetchStatus] = useState('idle'); // 'idle'|'loading'|'ready'
-  const [wattFetchProgress, setWattFetchProgress] = useState({ done:0, total:0 });
-  const wattFetchAbort = useRef(false);
-  // Cache streams allure : id → { dist: Float32Array, vel: Float32Array } | 'error'
-  const [paceStreams, setPaceStreams] = useState({});
-  const [paceFetchStatus, setPaceFetchStatus] = useState('idle');
-  const [paceFetchProgress, setPaceFetchProgress] = useState({ done:0, total:0 });
-  const paceFetchAbort = useRef(false);
+  // ── Cache streams unifié ─────────────────────────────────────────────────
+  // id → { vel: Float32Array, dist: Float32Array, alt: Float32Array, hr: Float32Array } | 'error'
+  const [actStreams, setActStreams] = useState({});
+  const [streamFetchStatus, setStreamFetchStatus] = useState('idle'); // 'idle'|'loading'|'ready'
+  const [streamFetchProgress, setStreamFetchProgress] = useState({ done:0, total:0 });
+  const streamFetchAbort = useRef(false);
+
+  // Un seul fetch pour toutes les activités vélo/course/trail
+  async function fetchAllStreams() {
+    const token = localStorage.getItem('strava_token');
+    if (!token) return;
+    const totalMass = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
+    const eligible = data.filter(a => a.sport==='Vélo' || a.sport==='Course' || a.sport==='Trail');
+    const toFetch = eligible.filter(a => !actStreams[a.id] || actStreams[a.id]==='error');
+    if (!toFetch.length) { setStreamFetchStatus('ready'); return; }
+    setStreamFetchStatus('loading');
+    setStreamFetchProgress({ done:0, total:toFetch.length });
+    streamFetchAbort.current = false;
+    const tk = await freshToken(token);
+    let done = 0;
+    for (const a of toFetch) {
+      if (streamFetchAbort.current) break;
+      try {
+        const res = await stravaApi(
+          '/activities/'+a.id+'/streams?keys=velocity_smooth,altitude,distance,heartrate&key_by_type=true', tk
+        );
+        const vel  = res && res.velocity_smooth && res.velocity_smooth.data;
+        const alt  = res && res.altitude        && res.altitude.data;
+        const dist = res && res.distance        && res.distance.data;
+        const hr   = res && res.heartrate       && res.heartrate.data;
+        if (vel && vel.length) {
+          // Calculer puissance estimée pour le vélo (stockée dans le cache)
+          let pow = null;
+          if (a.sport==='Vélo' && totalMass > 0) {
+            pow = new Float32Array(vel.length);
+            for (let i = 0; i < vel.length; i++) {
+              const v_kmh = vel[i] * 3.6;
+              let slope = 0;
+              if (alt && i > 0) {
+                const dAlt = alt[i] - alt[i-1];
+                const dDist = Math.max(0.1, vel[i]);
+                slope = Math.max(-30, Math.min(30, (dAlt / dDist) * 100));
+              }
+              const p = estimatePower(v_kmh, slope, totalMass);
+              pow[i] = p !== null ? p : 0;
+            }
+          }
+          setActStreams(prev => ({ ...prev, [a.id]: {
+            vel:  new Float32Array(vel),
+            dist: dist ? new Float32Array(dist) : null,
+            alt:  alt  ? new Float32Array(alt)  : null,
+            hr:   hr   ? new Float32Array(hr)   : null,
+            pow,
+          }}));
+        } else {
+          setActStreams(prev => ({ ...prev, [a.id]: 'error' }));
+        }
+      } catch(e) { setActStreams(prev => ({ ...prev, [a.id]: 'error' })); }
+      done++;
+      setStreamFetchProgress({ done, total:toFetch.length });
+      await new Promise(r => setTimeout(r, 150));
+    }
+    setStreamFetchStatus('ready');
+  }
+
+  // Alias pour compatibilité avec les fonctions qui lisaient les anciens caches
+  const wattStreams  = actStreams; // .pow par activité vélo
+  const paceStreams  = actStreams; // .vel + .dist par activité course/trail
+  const hrStreams    = actStreams; // .hr + .vel par activité
   const [paceRange, setPaceRange] = useState(90);
   const [paceCompare, setPaceCompare] = useState(365);
   const [hrRange, setHrRange] = useState(90);
@@ -522,7 +581,6 @@ function App() {
     return Math.round(best / dur);
   }
 
-  // Calcule la courbe de puissance réelle depuis les streams en cache
   function powerCurveByDate(d0, d1) {
     const start = new Date(d0).getTime(), end = new Date(d1).getTime() + 86400000;
     const rides = data.filter(a =>
@@ -531,68 +589,14 @@ function App() {
     return POWER_DURATIONS.map(({ s: dur }) => {
       let bestW = null;
       for (const a of rides) {
-        const ws = wattStreams[a.id];
-        if (ws && ws instanceof Float32Array && ws.length >= dur) {
-          const v = bestAvgWindow(ws, dur);
+        const s = actStreams[a.id];
+        if (s && s.pow && s.pow.length >= dur) {
+          const v = bestAvgWindow(s.pow, dur);
           if (v !== null) bestW = bestW === null ? v : Math.max(bestW, v);
         }
       }
       return bestW !== null ? { w: bestW, j: Math.round(bestW * dur) } : null;
     });
-  }
-
-  // Fetch des streams velocity_smooth + altitude pour toutes les sorties vélo,
-  // calcule la puissance estimée seconde par seconde et la met en cache.
-  async function fetchWattStreams() {
-    const token = localStorage.getItem('strava_token');
-    if (!token) return;
-    const totalMass = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
-    if (!totalMass) { alert('Renseigne le poids cycliste et le poids vélo dans le Profil pour activer la courbe de puissance estimée.'); return; }
-    const rides = data.filter(a => a.sport === 'Vélo');
-    const toFetch = rides.filter(a => !wattStreams[a.id] || wattStreams[a.id] === 'error');
-    if (!toFetch.length) { setWattFetchStatus('ready'); return; }
-    setWattFetchStatus('loading');
-    setWattFetchProgress({ done: 0, total: toFetch.length });
-    wattFetchAbort.current = false;
-    const tk = await freshToken(token);
-    let done = 0;
-    for (const a of toFetch) {
-      if (wattFetchAbort.current) break;
-      try {
-        const res = await stravaApi(
-          '/activities/' + a.id + '/streams?keys=velocity_smooth,altitude,distance&key_by_type=true', tk
-        );
-        const vel = res && res.velocity_smooth && res.velocity_smooth.data;
-        const alt = res && res.altitude && res.altitude.data;
-        if (vel && vel.length) {
-          // Puissance estimée seconde par seconde
-          const arr = new Float32Array(vel.length);
-          for (let i = 0; i < vel.length; i++) {
-            const v_kmh = vel[i] * 3.6;
-            let slope = 0;
-            if (alt && i > 0) {
-              const dAlt = alt[i] - alt[i-1];
-              // distance entre deux points : 1 s × vitesse m/s
-              const dDist = Math.max(0.1, vel[i]);
-              slope = (dAlt / dDist) * 100;
-              // Limiter les pentes aberrantes (données GPS bruitées)
-              slope = Math.max(-30, Math.min(30, slope));
-            }
-            const p = estimatePower(v_kmh, slope, totalMass);
-            arr[i] = p !== null ? p : 0;
-          }
-          setWattStreams(prev => ({ ...prev, [a.id]: arr }));
-        } else {
-          setWattStreams(prev => ({ ...prev, [a.id]: 'error' }));
-        }
-      } catch(e) {
-        setWattStreams(prev => ({ ...prev, [a.id]: 'error' }));
-      }
-      done++;
-      setWattFetchProgress({ done, total: toFetch.length });
-      await new Promise(r => setTimeout(r, 150));
-    }
-    setWattFetchStatus('ready');
   }
 
   function powerCurve(days, offset) {
@@ -624,7 +628,7 @@ function App() {
     return Math.round((best / targetDist / 60) * 1000 * 100) / 100;
   }
 
-  // Courbe d'allure par distance depuis les streams en cache
+  // Courbe d'allure par distance depuis le cache unifié
   function paceCurveByDate(d0, d1) {
     const start = new Date(d0).getTime(), end = new Date(d1).getTime() + 86400000;
     const runs = data.filter(a =>
@@ -634,12 +638,11 @@ function App() {
       const targetM = km * 1000;
       let best = null;
       for (const a of runs) {
-        const ps = paceStreams[a.id];
+        const ps = actStreams[a.id];
         if (ps && ps.dist && ps.vel) {
           const v = bestPaceWindow(ps.dist, ps.vel, targetM);
           if (v !== null) best = best === null ? v : Math.min(best, v);
         } else if (a.dist >= km && a.pace) {
-          // Fallback : allure moyenne de la sortie si pas de streams
           best = best === null ? a.pace : Math.min(best, a.pace);
         }
       }
@@ -647,124 +650,59 @@ function App() {
     });
   }
 
-  // Fetch des streams velocity_smooth + distance pour toutes les sorties course/trail
-  async function fetchPaceStreams() {
-    const token = localStorage.getItem('strava_token');
-    if (!token) return;
-    const runs = data.filter(a => a.sport === 'Course' || a.sport === 'Trail');
-    const toFetch = runs.filter(a => !paceStreams[a.id] || paceStreams[a.id] === 'error');
-    if (!toFetch.length) { setPaceFetchStatus('ready'); return; }
-    setPaceFetchStatus('loading');
-    setPaceFetchProgress({ done: 0, total: toFetch.length });
-    paceFetchAbort.current = false;
-    const tk = await freshToken(token);
-    let done = 0;
-    for (const a of toFetch) {
-      if (paceFetchAbort.current) break;
-      try {
-        const res = await stravaApi(
-          '/activities/' + a.id + '/streams?keys=velocity_smooth,distance&key_by_type=true', tk
-        );
-        const vel = res && res.velocity_smooth && res.velocity_smooth.data;
-        const dist = res && res.distance && res.distance.data;
-        if (vel && dist && vel.length) {
-          setPaceStreams(prev => ({ ...prev, [a.id]: {
-            vel: new Float32Array(vel),
-            dist: new Float32Array(dist),
-          }}));
-        } else {
-          setPaceStreams(prev => ({ ...prev, [a.id]: 'error' }));
-        }
-      } catch(e) {
-        setPaceStreams(prev => ({ ...prev, [a.id]: 'error' }));
-      }
-      done++;
-      setPaceFetchProgress({ done, total: toFetch.length });
-      await new Promise(r => setTimeout(r, 150));
-    }
-    setPaceFetchStatus('ready');
-  }
-
   const PACE_DISTANCES = [{ d:1,l:'1 km'},{d:2,l:'2 km'},{d:5,l:'5 km'},{d:10,l:'10 km'},{d:15,l:'15 km'},{d:21.1,l:'Semi'},{d:30,l:'30 km'},{d:42.2,l:'Marathon'}];
   const HR_BINS = [{ min:100,max:120,l:'100-120'},{min:120,max:130,l:'120-130'},{min:130,max:140,l:'130-140'},{min:140,max:150,l:'140-150'},{min:150,max:160,l:'150-160'},{min:160,max:170,l:'160-170'},{min:170,max:180,l:'170-180'},{min:180,max:200,l:'180+'}];
 
-  // Cache streams FC : id → { hr: Float32Array, vel: Float32Array } | 'error'
-  const [hrStreams, setHrStreams] = useState({});
-  const [hrFetchStatus, setHrFetchStatus] = useState('idle');
-  const [hrFetchProgress, setHrFetchProgress] = useState({ done:0, total:0 });
-  const hrFetchAbort = useRef(false);
-  const [hrSport, setHrSport] = useState('Course'); // 'Course'|'Trail'|'Vélo'
-
-  // Fetch heartrate + velocity_smooth pour toutes les activités avec FC
-  async function fetchHrStreams() {
-    const token = localStorage.getItem('strava_token');
-    if (!token) return;
-    const acts = data.filter(a => a.hr && (a.sport==='Course'||a.sport==='Trail'||a.sport==='Vélo'));
-    const toFetch = acts.filter(a => !hrStreams[a.id] || hrStreams[a.id]==='error');
-    if (!toFetch.length) { setHrFetchStatus('ready'); return; }
-    setHrFetchStatus('loading');
-    setHrFetchProgress({ done:0, total:toFetch.length });
-    hrFetchAbort.current = false;
-    const tk = await freshToken(token);
-    let done = 0;
-    for (const a of toFetch) {
-      if (hrFetchAbort.current) break;
-      try {
-        const res = await stravaApi('/activities/'+a.id+'/streams?keys=heartrate,velocity_smooth&key_by_type=true', tk);
-        const hr  = res && res.heartrate        && res.heartrate.data;
-        const vel = res && res.velocity_smooth  && res.velocity_smooth.data;
-        if (hr && vel && hr.length) {
-          setHrStreams(prev => ({ ...prev, [a.id]: { hr: new Float32Array(hr), vel: new Float32Array(vel) } }));
-        } else {
-          setHrStreams(prev => ({ ...prev, [a.id]: 'error' }));
-        }
-      } catch(e) { setHrStreams(prev => ({ ...prev, [a.id]: 'error' })); }
-      done++;
-      setHrFetchProgress({ done, total: toFetch.length });
-      await new Promise(r => setTimeout(r, 150));
-    }
-    setHrFetchStatus('ready');
-  }
-
-  // Calcule vitesse/allure moyenne par bin FC pour un sport donné, sur une plage de dates
-  // sport : 'Course'|'Trail'|'Vélo'
-  // Retourne : { vals: number|null[], unit: 'km/h'|'min/km', isVap: bool }
+  // Calcule puissance ou allure par bin FC depuis le cache unifié
+  // Vélo → W estimés par bin FC ; Course/Trail → allure min/km par bin FC
   function hrCurveByDate(d0, d1, sp) {
     const start = new Date(d0).getTime(), end = new Date(d1).getTime() + 86400000;
-    const acts = data.filter(a => a.sport===sp && a.hr && a.date.getTime()>=start && a.date.getTime()<end);
+    const acts = data.filter(a => a.sport===sp && a.date.getTime()>=start && a.date.getTime()<end);
     const isBike = sp === 'Vélo';
-    // Pour chaque bin : accumuler distance et temps depuis les streams s/s si dispo, sinon fallback
-    const bins = HR_BINS.map(() => ({ dist:0, secs:0 }));
+    const bins = HR_BINS.map(() => ({ sum:0, count:0 }));
     for (const a of acts) {
-      const hs = hrStreams[a.id];
-      if (hs && hs.hr && hs.vel) {
-        // s/s : classer chaque seconde dans son bin
-        for (let i = 0; i < hs.hr.length; i++) {
-          const bpm = hs.hr[i];
-          const bi = HR_BINS.findIndex((b,j) => bpm >= b.min && bpm < b.max);
+      const s = actStreams[a.id];
+      if (s && s.hr) {
+        const metric = isBike ? s.pow : s.vel; // W estimés | m/s
+        if (!metric) continue;
+        for (let i = 0; i < s.hr.length; i++) {
+          const bpm = s.hr[i];
+          const bi = HR_BINS.findIndex(b => bpm >= b.min && bpm < b.max);
           if (bi < 0) continue;
-          bins[bi].dist += hs.vel[i]; // m/s × 1 s = m
-          bins[bi].secs += 1;
+          const v = metric[i];
+          if (v > 0) { bins[bi].sum += v; bins[bi].count += 1; }
         }
       } else {
-        // Fallback : activité entière dans le bin de sa FC moyenne
+        // Fallback résumé activité
         if (!a.hr || !a.dist || !a.time) continue;
         const bi = HR_BINS.findIndex(b => a.hr >= b.min && a.hr < b.max);
         if (bi < 0) continue;
-        bins[bi].dist += a.dist * 1000; // km → m
-        bins[bi].secs += a.time * 60;   // min → s
+        if (isBike) {
+          // fallback vélo : puissance estimée depuis vitesse moyenne
+          const totalMass = (Number(profile.weight)||0)+(Number(profile.bikeMass)||0);
+          if (totalMass > 0) {
+            const v_kmh = a.dist / (a.time / 60);
+            const slope = a.elev && a.dist ? (a.elev/(a.dist*1000))*100 : 0;
+            const p = estimatePower(v_kmh, slope, totalMass);
+            if (p) { bins[bi].sum += p; bins[bi].count += 1; }
+          }
+        } else {
+          const v_ms = (a.dist * 1000) / (a.time * 60);
+          if (v_ms > 0.5) { bins[bi].sum += v_ms; bins[bi].count += a.time; }
+        }
       }
     }
     const vals = bins.map(b => {
-      if (!b.secs || !b.dist) return null;
-      const v_ms = b.dist / b.secs; // m/s
-      if (isBike) return Math.round(v_ms * 3.6 * 10) / 10; // km/h
-      // Course/Trail : allure min/km
-      const pace_minkm = v_ms > 0.5 ? (1000 / 60 / v_ms) : null;
-      return pace_minkm ? Math.round(pace_minkm * 100) / 100 : null;
+      if (!b.count) return null;
+      const avg = b.sum / b.count;
+      if (isBike) return Math.round(avg); // W
+      const pace = avg > 0.5 ? (1000 / 60 / avg) : null;
+      return pace ? Math.round(pace * 100) / 100 : null;
     });
-    return { vals, unit: isBike ? 'km/h' : 'min/km', isVap: !isBike };
+    return { vals, unit: isBike ? 'W' : 'min/km' };
   }
+
+  const [hrSport, setHrSport] = useState('Course');
 
   // ── FTP estimée — déclarée ici pour être disponible dans les useEffect ────
   const ftpEstimated = (() => {
@@ -863,7 +801,7 @@ function App() {
       },
     });
     return () => destroyChart('power');
-  }, [tab, athleteSection, data, wattStreams, powDateA0, powDateA1, powDateB0, powDateB1, profile.ftp, profile.weight, ftpEstimated]);
+  }, [tab, athleteSection, data, actStreams, powDateA0, powDateA1, powDateB0, powDateB1, profile.ftp, profile.weight, ftpEstimated]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Allure') return;
@@ -883,7 +821,7 @@ function App() {
       },
     });
     return () => destroyChart('pace');
-  }, [tab, athleteSection, data, paceStreams, powDateA0, powDateA1, powDateB0, powDateB1]);
+  }, [tab, athleteSection, data, actStreams, powDateA0, powDateA1, powDateB0, powDateB1]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Fréquence cardiaque') return;
@@ -893,13 +831,13 @@ function App() {
     const resA = hrCurveByDate(powDateA0, powDateA1, hrSport);
     const resB = hrCurveByDate(powDateB0, powDateB1, hrSport);
     const fmtP = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
-    const tooltipFmt = v => v==null ? 'donnée manquante' : isBike ? v+' km/h' : fmtP(v)+' /km';
-    const yTitle = isBike ? 'Vitesse (km/h)' : isTrail ? 'Allure VAP (min/km)' : 'Allure (min/km)';
+    const tooltipFmt = v => v==null ? 'donnée manquante' : isBike ? v+' W' : fmtP(v)+' /km';
+    const yTitle = isBike ? 'Puissance estimée (W)' : isTrail ? 'Allure VAP (min/km)' : 'Allure (min/km)';
     upsert('hr', hrRef, {
       type:'line',
       data:{ labels:HR_BINS.map(b=>b.l), datasets:[
         { label:'Comparaison', data:resB.vals, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true },
-        { label:'Actuel', data:resA.vals, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:!isBike, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true },
+        { label:'Actuel', data:resA.vals, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, spanGaps:true },
       ]},
       options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
         plugins:{
@@ -916,7 +854,7 @@ function App() {
       },
     });
     return () => destroyChart('hr');
-  }, [tab, athleteSection, data, hrStreams, hrSport, powDateA0, powDateA1, powDateB0, powDateB1]);
+  }, [tab, athleteSection, data, actStreams, hrSport, powDateA0, powDateA1, powDateB0, powDateB1]);
 
   useEffect(() => {
     if (tab!=='activites') return;
@@ -1557,44 +1495,34 @@ function App() {
             );
           })(),
           h('section',{style:{padding:'28px 32px 32px'}},
-            // Barre de chargement / bouton
+            // Barre de chargement unifiée
             (()=>{
-              const rides = data.filter(a => a.sport==='Vélo');
-              const cached = rides.filter(a => wattStreams[a.id] && wattStreams[a.id] !== 'error');
-              const withData = rides.filter(a => wattStreams[a.id] instanceof Float32Array);
-              const isLoading = wattFetchStatus === 'loading';
+              const eligible = data.filter(a => a.sport==='Vélo'||a.sport==='Course'||a.sport==='Trail');
+              const withData = eligible.filter(a => actStreams[a.id] && actStreams[a.id]!=='error');
+              const isLoading = streamFetchStatus === 'loading';
               const totalMass = (Number(profile.weight)||0)+(Number(profile.bikeMass)||0);
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
-                    isLoading
-                      ? 'Calcul en cours… ' + wattFetchProgress.done + ' / ' + wattFetchProgress.total + ' sorties'
-                      : withData.length
-                        ? withData.length + ' / ' + rides.length + ' sorties calculées'
-                        : !totalMass
-                          ? 'Renseigne le poids cycliste + poids vélo dans le Profil'
-                          : 'Puissance estimée non calculée — clique sur Calculer'
+                    isLoading ? 'Calcul en cours… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités'
+                    : withData.length ? withData.length+' / '+eligible.length+' activités chargées'
+                    : !totalMass ? 'Renseigne le poids cycliste + vélo dans le Profil pour la puissance estimée'
+                    : 'Streams non chargés — clique sur Calculer'
                   ),
                   isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
-                    h('div',{style:{height:'100%',background:'#ec3013',width: Math.round((wattFetchProgress.done/Math.max(1,wattFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
+                    h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((streamFetchProgress.done/Math.max(1,streamFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
                   ),
                   !isLoading && withData.length>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    'Modèle physique Crr='+CRR+' · CdA='+CDA+' · masse '+totalMass.toFixed(1)+' kg · fenêtre glissante s/s'
-                  ),
-                  !isLoading && !withData.length && totalMass>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    'Masse système : '+totalMass.toFixed(1)+' kg · Crr '+CRR+' · CdA '+CDA+' m²'
+                    'Puissance estimée · Crr='+CRR+' · CdA='+CDA+' · masse '+totalMass.toFixed(1)+' kg · fenêtre glissante s/s'
                   )
                 ),
                 h('div',{style:{display:'flex',gap:'8px'}},
-                  !isLoading && h('button',{type:'button',
-                    onClick: fetchWattStreams,
-                    disabled: isLoading || !localStorage.getItem('strava_token') || !totalMass,
-                    style:{padding:'10px 16px',border:'2px solid #ec3013',background: (!localStorage.getItem('strava_token')||!totalMass)?'#bab6b6':'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor: (!localStorage.getItem('strava_token')||!totalMass)?'not-allowed':'pointer'}
+                  !isLoading && h('button',{type:'button',onClick:fetchAllStreams,disabled:!localStorage.getItem('strava_token'),
+                    style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
                   }, withData.length ? 'Recalculer' : 'Calculer la courbe'),
-                  isLoading && h('button',{type:'button',
-                    onClick:()=>{ wattFetchAbort.current = true; setWattFetchStatus('idle'); },
+                  isLoading && h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},
                     style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
-                  }, 'Annuler')
+                  },'Annuler')
                 )
               );
             })(),
@@ -1659,40 +1587,32 @@ function App() {
             )
           ),
           h('section',{style:{padding:'28px 32px 32px'}},
-            // Barre de chargement / bouton
+            // Barre de chargement unifiée
             (()=>{
               const runs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
-              const withData = runs.filter(a => paceStreams[a.id] && paceStreams[a.id] !== 'error');
-              const isLoading = paceFetchStatus === 'loading';
+              const withData = runs.filter(a => actStreams[a.id] && actStreams[a.id]!=='error');
+              const isLoading = streamFetchStatus === 'loading';
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
-                    isLoading
-                      ? 'Calcul en cours… ' + paceFetchProgress.done + ' / ' + paceFetchProgress.total + ' sorties'
-                      : withData.length
-                        ? withData.length + ' / ' + runs.length + ' sorties chargées — fenêtre glissante s/s'
-                        : 'Streams non chargés — affichage par allure moyenne de sortie'
+                    isLoading ? 'Calcul en cours… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités'
+                    : withData.length ? withData.length+' / '+runs.length+' sorties chargées — fenêtre glissante s/s'
+                    : 'Streams non chargés — affichage par allure moyenne de sortie'
                   ),
                   isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
-                    h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((paceFetchProgress.done/Math.max(1,paceFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
+                    h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((streamFetchProgress.done/Math.max(1,streamFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
                   ),
                   !isLoading && withData.length>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
                     'Meilleure allure sur chaque distance par fenêtre glissante seconde par seconde'
-                  ),
-                  !isLoading && !withData.length && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    'Charge les streams pour obtenir la vraie meilleure allure par distance (comme Garmin / Strava PR)'
                   )
                 ),
                 h('div',{style:{display:'flex',gap:'8px'}},
-                  !isLoading && h('button',{type:'button',
-                    onClick: fetchPaceStreams,
-                    disabled: isLoading || !localStorage.getItem('strava_token'),
-                    style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:isLoading?'not-allowed':'pointer'}
+                  !isLoading && h('button',{type:'button',onClick:fetchAllStreams,disabled:!localStorage.getItem('strava_token'),
+                    style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
                   }, withData.length ? 'Recalculer' : 'Charger les streams'),
-                  isLoading && h('button',{type:'button',
-                    onClick:()=>{ paceFetchAbort.current=true; setPaceFetchStatus('idle'); },
+                  isLoading && h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},
                     style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
-                  }, 'Annuler')
+                  },'Annuler')
                 )
               );
             })(),
@@ -1780,43 +1700,38 @@ function App() {
             )
           ),
           h('section',{style:{padding:'28px 32px 32px'}},
-            // Bouton de chargement
+            // Barre de chargement unifiée
             (()=>{
-              const eligible = data.filter(a => a.hr && (a.sport==='Course'||a.sport==='Trail'||a.sport==='Vélo'));
-              const withData = eligible.filter(a => hrStreams[a.id] && hrStreams[a.id]!=='error');
-              const isLoading = hrFetchStatus === 'loading';
+              const eligible = data.filter(a => a.sport==='Course'||a.sport==='Trail'||a.sport==='Vélo');
+              const withData = eligible.filter(a => actStreams[a.id] && actStreams[a.id]!=='error');
+              const isLoading = streamFetchStatus === 'loading';
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
-                    isLoading
-                      ? 'Chargement… ' + hrFetchProgress.done + ' / ' + hrFetchProgress.total + ' sorties'
-                      : withData.length
-                        ? withData.length + ' / ' + eligible.length + ' sorties chargées — données s/s'
-                        : 'Streams non chargés — fallback sur FC moyenne par sortie'
+                    isLoading ? 'Chargement… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités'
+                    : withData.length ? withData.length+' / '+eligible.length+' activités chargées — données s/s'
+                    : 'Streams non chargés — fallback sur FC + données résumé'
                   ),
                   isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
-                    h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((hrFetchProgress.done/Math.max(1,hrFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
+                    h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((streamFetchProgress.done/Math.max(1,streamFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
                   ),
                   !isLoading && withData.length>0 && h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    'Chaque seconde classée dans son bin de FC · '+hrSport+(hrSport==='Trail'?' · VAP (vitesse ascensionnelle positive)':'')
+                    'Chaque seconde classée dans son bin de FC · '+hrSport+(hrSport==='Trail' ? ' · VAP' : hrSport==='Vélo' ? ' · puissance estimée (W)' : '')
                   )
                 ),
                 h('div',{style:{display:'flex',gap:'8px'}},
-                  !isLoading && h('button',{type:'button',
-                    onClick: fetchHrStreams,
-                    disabled: isLoading || !localStorage.getItem('strava_token'),
+                  !isLoading && h('button',{type:'button',onClick:fetchAllStreams,disabled:!localStorage.getItem('strava_token'),
                     style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
                   }, withData.length ? 'Recalculer' : 'Charger les streams'),
-                  isLoading && h('button',{type:'button',
-                    onClick:()=>{ hrFetchAbort.current=true; setHrFetchStatus('idle'); },
+                  isLoading && h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},
                     style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}
-                  }, 'Annuler')
+                  },'Annuler')
                 )
               );
             })(),
             h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
               h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},
-                hrSport==='Vélo' ? 'Vitesse par fréquence cardiaque · Vélo'
+                hrSport==='Vélo' ? 'Puissance estimée par fréquence cardiaque · Vélo'
                 : hrSport==='Trail' ? 'Allure (VAP) par fréquence cardiaque · Trail'
                 : 'Allure par fréquence cardiaque · Course'
               ),
@@ -1824,7 +1739,7 @@ function App() {
             ),
             h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
               hrSport==='Vélo'
-                ? 'Vitesse moyenne (km/h) par plage de FC. Une courbe qui monte indique un gain d\'efficacité à même FC.'
+                ? 'Puissance estimée (W) par plage de FC. Une courbe qui monte indique qu\'à même effort cardiaque, tu génères plus de watts — signe de progression.'
                 : hrSport==='Trail'
                   ? 'Allure en min/km (VAP — vitesse sur terrain plat équivalent) par plage de FC. Utile pour comparer des sorties avec dénivelé variable.'
                   : 'Allure (min/km) par plage de FC. Une courbe qui descend (allure plus rapide) à même FC indique un gain de forme.'
