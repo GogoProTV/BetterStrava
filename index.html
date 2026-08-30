@@ -776,6 +776,9 @@ function App() {
 
   const [hrSport, setHrSport] = useState('Course');
   // Intervalles A/B pour chaque onglet (jours)
+  const [showCurveA, setShowCurveA] = useState(true);
+  const [showCurveB, setShowCurveB] = useState(true);
+  const [showCurveSel, setShowCurveSel] = useState(true);
   const [powRangeA, setPowRangeA] = useState(30);
   const [powRangeB, setPowRangeB] = useState(90);
   const [paceRangeA, setPaceRangeA] = useState(30);
@@ -839,13 +842,11 @@ function App() {
     const wB = curveB.map(v => v ? v.w : null);
     const jA = curveA.map(v => v ? v.j : null);
     const jB = curveB.map(v => v ? v.j : null);
-    const datasets = [
-      { label:'Comparaison'+estSuffix, data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' },
-      { label:'Actuelle'+estSuffix, data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:3, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, spanGaps:true, yAxisID:'yW' },
-    ];
+    const datasets = [];
+    if (showCurveB) datasets.push({ label:'Comparaison'+estSuffix, data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' });
+    if (showCurveA) datasets.push({ label:'Actuelle'+estSuffix, data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:3, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, spanGaps:true, yAxisID:'yW' });
     if (ftpVal) datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
-    // Séance sélectionnée — courbe s/s de puissance en violet
-    if (selActId) {
+    if (selActId && showCurveSel) {
       const s = actStreams[selActId];
       if (s && s.pow && s.pow.length) {
         const actPowCurve = POWER_DURATIONS.map(({s:dur}) => bestAvgWindow(s.pow, dur));
@@ -890,7 +891,7 @@ function App() {
       },
     });
     return () => destroyChart('power');
-  }, [tab, athleteSection, data, actStreams, profile.ftp, profile.weight, ftpEstimated, powRangeA, powRangeB, selActId]);
+  }, [tab, athleteSection, data, actStreams, profile.ftp, profile.weight, ftpEstimated, powRangeA, powRangeB, selActId, showCurveA, showCurveB, showCurveSel]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Allure') return;
@@ -940,7 +941,7 @@ function App() {
         cSel = { label:'Séance', vals, color:'#7c4dbc', dash:[], width:2 };
       }
     }
-    const allCurves = [cB, cA, ...(cSel ? [cSel] : [])];
+    const allCurves = [...(showCurveB&&cB?[cB]:[]), ...(showCurveA&&cA?[cA]:[]), ...(cSel&&showCurveSel?[cSel]:[])];
     let paceIdxMin = PACE_DISTS_FINE.length - 1, paceIdxMax = 0;
     allCurves.forEach(c => c.vals.forEach((v,i) => { if (v!==null) { paceIdxMin=Math.min(paceIdxMin,i); paceIdxMax=Math.max(paceIdxMax,i); }}));
     if (paceIdxMin > paceIdxMax) { paceIdxMin=0; paceIdxMax=PACE_DISTS_FINE.length-1; }
@@ -972,7 +973,7 @@ function App() {
       },
     });
     return () => destroyChart('pace');
-  }, [tab, athleteSection, data, actStreams, paceRangeA, paceRangeB, selActId]);
+  }, [tab, athleteSection, data, actStreams, paceRangeA, paceRangeB, selActId, showCurveA, showCurveB, showCurveSel]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Fréquence cardiaque') return;
@@ -1069,9 +1070,9 @@ function App() {
       return {label,data:vals,borderColor:color,borderWidth:width,borderDash:dash,backgroundColor:'transparent',fill:false,tension:0.3,pointRadius:0,pointHoverRadius:4,spanGaps:true};
     };
     const datasets = [
-      makeDataset(resB, '#bab6b6', [5,4], 2, 'Comparaison'),
-      makeDataset(resA, '#ec3013', [],    2.5, 'Actuelle'),
-      resSel ? makeDataset(resSel, '#7c4dbc', [], 2, 'Séance') : null,
+      showCurveB && makeDataset(resB, '#bab6b6', [5,4], 2, 'Comparaison'),
+      showCurveA && makeDataset(resA, '#ec3013', [],    2.5, 'Actuelle'),
+      resSel && showCurveSel ? makeDataset(resSel, '#7c4dbc', [], 2, 'Séance') : null,
     ].filter(Boolean);
     const yTitle = isBike ? 'Puissance estimée (W)' : hrSport==='Trail' ? 'Allure VAP (min/km)' : 'Allure (min/km)';
     upsert('hr', hrRef, {
@@ -1091,7 +1092,7 @@ function App() {
       },
     });
     return () => destroyChart('hr');
-  }, [tab, athleteSection, data, actStreams, hrSport, hrRangeA, hrRangeB, selActId]);
+  }, [tab, athleteSection, data, actStreams, hrSport, hrRangeA, hrRangeB, selActId, showCurveA, showCurveB, showCurveSel]);
 
 
   useEffect(() => {
@@ -1611,46 +1612,54 @@ function App() {
         athleteSection==='Puissance'&&h('div',null,
           // Bande de contrôle : Actuelle | Comparaison | Séance
           h('section',{style:{display:'flex',alignItems:'stretch',borderBottom:'2px solid #201e1d'}},
-
-            // Période actuelle
-            h('div',{style:{padding:'16px 24px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#ec3013'}},'Actuelle'),
+            // Période actuelle — label = bouton toggle
+            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
+              h('button',{type:'button',onClick:()=>setShowCurveA(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveA?'#ec3013':'#bab6b6',textDecoration:showCurveA?'none':'line-through'}},'Actuelle'),
+                h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveA?'#ec3013':'#bab6b6'}}),
+              ),
               h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>setPowRangeA(o.d),
-                  style:{padding:'5px 10px',border:'2px solid '+(powRangeA===o.d?'#ec3013':'#d7d3d3'),background:powRangeA===o.d?'#ec3013':'transparent',color:powRangeA===o.d?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(powRangeA!==o.d)e.currentTarget.style.background='#ffe0d9';},
-                  onMouseLeave:e=>{if(powRangeA!==o.d)e.currentTarget.style.background='transparent';}
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setPowRangeA(o.d);setShowCurveA(true);},
+                  style:{padding:'5px 10px',border:'2px solid '+(powRangeA===o.d&&showCurveA?'#ec3013':'#d7d3d3'),background:powRangeA===o.d&&showCurveA?'#ec3013':'transparent',color:powRangeA===o.d&&showCurveA?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
+                  onMouseEnter:e=>{if(!(powRangeA===o.d&&showCurveA))e.currentTarget.style.background='#ffe0d9';},
+                  onMouseLeave:e=>{if(!(powRangeA===o.d&&showCurveA))e.currentTarget.style.background='transparent';}
                 },o.l))
               )
             ),
-            // Période de comparaison
-            h('div',{style:{padding:'16px 24px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison'),
+            // Comparaison — label = bouton toggle
+            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
+              h('button',{type:'button',onClick:()=>setShowCurveB(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveB?'#605d5d':'#bab6b6',textDecoration:showCurveB?'none':'line-through'}},'Comparaison'),
+                h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:showCurveB?'#bab6b6':'#d7d3d3',borderTop:'2px dashed '+(showCurveB?'#bab6b6':'#d7d3d3')}}),
+              ),
               h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>setPowRangeB(o.d),
-                  style:{padding:'5px 10px',border:'2px solid '+(powRangeB===o.d?'#201e1d':'#d7d3d3'),background:powRangeB===o.d?'#201e1d':'transparent',color:powRangeB===o.d?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(powRangeB!==o.d)e.currentTarget.style.background='#eae9e9';},
-                  onMouseLeave:e=>{if(powRangeB!==o.d)e.currentTarget.style.background='transparent';}
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setPowRangeB(o.d);setShowCurveB(true);},
+                  style:{padding:'5px 10px',border:'2px solid '+(powRangeB===o.d&&showCurveB?'#201e1d':'#d7d3d3'),background:powRangeB===o.d&&showCurveB?'#201e1d':'transparent',color:powRangeB===o.d&&showCurveB?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
+                  onMouseEnter:e=>{if(!(powRangeB===o.d&&showCurveB))e.currentTarget.style.background='#eae9e9';},
+                  onMouseLeave:e=>{if(!(powRangeB===o.d&&showCurveB))e.currentTarget.style.background='transparent';}
                 },o.l))
               )
             ),
-            // Sélecteur de séance
-            h('div',{style:{padding:'16px 24px',display:'flex',flexDirection:'column',gap:'8px',flex:'1'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Séance'),
-              h('select',{
-                value: selActId||'',
-                onChange: e=>setSelActId(e.target.value||null),
-                style:{padding:'5px 10px',border:'2px solid #d7d3d3',background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',cursor:'pointer',maxWidth:'320px'}
+            // Séance
+            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px',flex:'1',minWidth:0}},
+              h('button',{type:'button',onClick:()=>setShowCurveSel(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&selActId?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
+                selActId&&h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveSel?'#7c4dbc':'#d7d3d3'}})
+              ),
+              h('select',{value:selActId||'',onChange:e=>{setSelActId(e.target.value||null);setShowCurveSel(true);},
+                style:{padding:'5px 10px',border:'2px solid #d7d3d3',background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',cursor:'pointer',maxWidth:'100%'}
               },
-                h('option',{value:''},'Agrégé (toutes les sorties)'),
-                data.filter(a=>a.sport==='Vélo'&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,30).map(a=>
-                  h('option',{key:a.id,value:String(a.id)},
-                    a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+(a.name||a.sport)+' · '+fmtNum(a.dist,1)+' km'
-                  )
-                )
+                h('option',{value:''},'Agrégé'),
+                data.filter(a=>a.sport==='Vélo'&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+(a.name||a.sport)+' · '+fmtNum(a.dist,1)+' km'))
               )
+            ),
+            // Sport
+            h('div',{style:{padding:'16px 20px',display:'flex',flexDirection:'column',gap:'8px'}},
+              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
+              h('span',{style:{fontSize:'13px',fontWeight:'800',color:'#201e1d'}},'Vélo')
             )
           ),
+
           (()=>{
             const ftpVal = Number(profile.ftp)||ftpEstimated||null;
             const isEstimatedFtp = !Number(profile.ftp) && !!ftpEstimated;
@@ -1670,54 +1679,52 @@ function App() {
               }
               return best;
             };
-            const wmax30 = powStat(5, 30); const wmax365 = powStat(5, 365);
-            const ftp30  = ftpVal;
-            // CP : best 30-60min × 0.92
+            // Fenêtres liées aux boutons actifs
+            const nowMs2 = Date.now();
+            const endA2 = nowMs2, startA2 = endA2 - powRangeA*86400000;
+            const endB2 = startA2, startB2 = endB2 - powRangeB*86400000;
+            const d2s = t => new Date(t).toISOString().slice(0,10);
+            const curA2 = powerCurveByDate(d2s(startA2), d2s(endA2));
+            const curB2 = powerCurveByDate(d2s(startB2), d2s(endB2));
             const best30minIdx = POWER_DURATIONS.findIndex(d=>d.s===1800);
             const best60minIdx = POWER_DURATIONS.findIndex(d=>d.s===3600);
-            const curAll = powerCurveByDate(new Date(Date.now()-365*86400000).toISOString().slice(0,10), new Date().toISOString().slice(0,10));
-            const cur30d = powerCurveByDate(new Date(Date.now()-30*86400000).toISOString().slice(0,10), new Date().toISOString().slice(0,10));
-            const cur60d = powerCurveByDate(new Date(Date.now()-60*86400000).toISOString().slice(0,10), new Date(Date.now()-30*86400000).toISOString().slice(0,10));
-            const wmax30d = cur30d.filter(v=>v).length ? Math.max(...cur30d.filter(v=>v).map(v=>v.w)) : null;
-            const wmax60d = cur60d.filter(v=>v).length ? Math.max(...cur60d.filter(v=>v).map(v=>v.w)) : null;
-            const wmaxDelta = (wmax30d&&wmax60d&&wmax60d>0) ? Math.round(((wmax30d-wmax60d)/wmax60d)*100) : null;
-            const best20min30 = cur30d[POWER_DURATIONS.findIndex(d=>d.s===1200)];
-            const best20min60 = cur60d[POWER_DURATIONS.findIndex(d=>d.s===1200)];
-            const kj30 = best20min30 ? Math.round(best20min30.j/1000*10)/10 : null;
-            const kj60 = best20min60 ? Math.round(best20min60.j/1000*10)/10 : null;
-            const kjDelta = (kj30&&kj60&&kj60>0) ? Math.round(((kj30-kj60)/kj60)*100) : null;
-            const cp30val = (() => { const v30=cur30d[best30minIdx]; const v60c=cur30d[best60minIdx]; const best=Math.max(v30?v30.w:0,v60c?v60c.w:0); return best>0?Math.round(best*0.92):null; })();
-            const cp60val = (() => { const v30=cur60d[best30minIdx]; const v60c=cur60d[best60minIdx]; const best=Math.max(v30?v30.w:0,v60c?v60c.w:0); return best>0?Math.round(best*0.92):null; })();
-            const cpDelta = (cp30val&&cp60val&&cp60val>0) ? Math.round(((cp30val-cp60val)/cp60val)*100) : null;
+            const wmaxA2 = curA2.filter(v=>v).length ? Math.max(...curA2.filter(v=>v).map(v=>v.w)) : null;
+            const wmaxB2 = curB2.filter(v=>v).length ? Math.max(...curB2.filter(v=>v).map(v=>v.w)) : null;
+            const wmaxDelta = (wmaxA2&&wmaxB2&&wmaxB2>0) ? Math.round(((wmaxA2-wmaxB2)/wmaxB2)*100) : null;
+            const kjA = curA2[POWER_DURATIONS.findIndex(d=>d.s===1200)];
+            const kjB = curB2[POWER_DURATIONS.findIndex(d=>d.s===1200)];
+            const kjAval = kjA ? Math.round(kjA.j/1000*10)/10 : null;
+            const kjBval = kjB ? Math.round(kjB.j/1000*10)/10 : null;
+            const kjDelta = (kjAval&&kjBval&&kjBval>0) ? Math.round(((kjAval-kjBval)/kjBval)*100) : null;
+            const cpAval = (() => { const v30=curA2[best30minIdx]; const v60c=curA2[best60minIdx]; const b=Math.max(v30?v30.w:0,v60c?v60c.w:0); return b>0?Math.round(b*0.92):null; })();
+            const cpBval = (() => { const v30=curB2[best30minIdx]; const v60c=curB2[best60minIdx]; const b=Math.max(v30?v30.w:0,v60c?v60c.w:0); return b>0?Math.round(b*0.92):null; })();
+            const cpDelta = (cpAval&&cpBval&&cpBval>0) ? Math.round(((cpAval-cpBval)/cpBval)*100) : null;
             const wkg = ftpVal && profile.weight ? Math.round(ftpVal/Number(profile.weight)*100)/100 : null;
-            // FTP période précédente : utiliser best effort 20min × 0.95 sur J-60→J-30
-            const ftp30prev = (() => {
-              const best = cur60d[POWER_DURATIONS.findIndex(d=>d.s===1200)];
-              return best ? Math.round(best.w*0.95) : null;
-            })();
-            const ftpDelta = (ftp30&&ftp30prev&&ftp30prev>0) ? Math.round(((ftp30-ftp30prev)/ftp30prev)*100) : null;
-            const wkgPrev = ftp30prev && profile.weight ? Math.round(ftp30prev/Number(profile.weight)*100)/100 : null;
-            const wkgDelta = (wkg&&wkgPrev&&wkgPrev>0) ? Math.round(((wkg-wkgPrev)/wkgPrev)*100) : null;
-            const mkChip = (delta, betterHigh) => deltaChip(delta, betterHigh);
+            const ftpBval = (() => { const best=curB2[POWER_DURATIONS.findIndex(d=>d.s===1200)]; return best?Math.round(best.w*0.95):null; })();
+            const ftpDelta = (ftpVal&&ftpBval&&ftpBval>0) ? Math.round(((ftpVal-ftpBval)/ftpBval)*100) : null;
+            const wkgB = ftpBval && profile.weight ? Math.round(ftpBval/Number(profile.weight)*100)/100 : null;
+            const wkgDelta = (wkg&&wkgB&&wkgB>0) ? Math.round(((wkg-wkgB)/wkgB)*100) : null;
+            const rangeLabel = d => d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an';
+            const compLabel = 'vs '+rangeLabel(powRangeB)+' préc.';
             const statCells = [
               { label:'FTP'+estTag, val: ftpVal?ftpVal+' W':null, delta: ftpDelta, sub: isEstimatedFtp?'estimée':'manuelle', betterHigh:true },
               { label:'W/kg'+estTag, val: wkg?wkg+' W/kg':null, delta: wkgDelta, sub: profile.weight?'masse '+profile.weight+' kg':'renseigne le poids', betterHigh:true },
-              { label:'kJ · 20 min', val: kj30?kj30+' kJ':null, delta: kjDelta, sub: kj30?'= '+Math.round(kj30*1000)+' J':'calcule la courbe', betterHigh:true },
-              { label:'Wmax'+estTag, val: wmax30d?wmax30d+' W':null, delta: wmaxDelta, sub: wmax30d&&profile.weight?Math.round(wmax30d/Number(profile.weight)*100)/100+' W/kg':'', betterHigh:true },
-              { label:'PC'+estTag, val: cp30val?cp30val+' W':null, delta: cpDelta, sub: 'puissance critique (30-60 min)', betterHigh:true },
+              { label:'kJ · 20 min', val: kjAval?kjAval+' kJ':null, delta: kjDelta, sub: kjAval?'= '+Math.round(kjAval*1000)+' J':'calcule la courbe', betterHigh:true },
+              { label:'Wmax'+estTag, val: wmaxA2?wmaxA2+' W':null, delta: wmaxDelta, sub: wmaxA2&&profile.weight?Math.round(wmaxA2/Number(profile.weight)*100)/100+' W/kg':'', betterHigh:true },
+              { label:'PC'+estTag, val: cpAval?cpAval+' W':null, delta: cpDelta, sub: 'puissance critique (30-60 min)', betterHigh:true },
             ];
             return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
               statCells.map((c,i) => {
-                const chip = mkChip(c.delta, c.betterHigh);
+                const chip = deltaChip(c.delta, c.betterHigh);
                 return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
                   h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
-                  h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'10px'}},
-                    h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:c.val?'#201e1d':'#bab6b6'}},c.val||'—'),
+                  h('div',{style:{marginTop:'10px'}},
+                    h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:c.val?'#201e1d':'#bab6b6'}},c.val||'—')
                   ),
                   h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
                     chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
                     chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},'vs 30 j préc.')
+                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},compLabel)
                   ),
                   h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},c.sub)
                 );
@@ -1763,46 +1770,54 @@ function App() {
         athleteSection==='Allure'&&h('div',null,
           // Bande de contrôle : Actuelle | Comparaison | Séance
           h('section',{style:{display:'flex',alignItems:'stretch',borderBottom:'2px solid #201e1d'}},
-
-            // Période actuelle
-            h('div',{style:{padding:'16px 24px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#ec3013'}},'Actuelle'),
+            // Période actuelle — label = bouton toggle
+            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
+              h('button',{type:'button',onClick:()=>setShowCurveA(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveA?'#ec3013':'#bab6b6',textDecoration:showCurveA?'none':'line-through'}},'Actuelle'),
+                h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveA?'#ec3013':'#bab6b6'}}),
+              ),
               h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>setPaceRangeA(o.d),
-                  style:{padding:'5px 10px',border:'2px solid '+(paceRangeA===o.d?'#ec3013':'#d7d3d3'),background:paceRangeA===o.d?'#ec3013':'transparent',color:paceRangeA===o.d?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(paceRangeA!==o.d)e.currentTarget.style.background='#ffe0d9';},
-                  onMouseLeave:e=>{if(paceRangeA!==o.d)e.currentTarget.style.background='transparent';}
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setPaceRangeA(o.d);setShowCurveA(true);},
+                  style:{padding:'5px 10px',border:'2px solid '+(paceRangeA===o.d&&showCurveA?'#ec3013':'#d7d3d3'),background:paceRangeA===o.d&&showCurveA?'#ec3013':'transparent',color:paceRangeA===o.d&&showCurveA?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
+                  onMouseEnter:e=>{if(!(paceRangeA===o.d&&showCurveA))e.currentTarget.style.background='#ffe0d9';},
+                  onMouseLeave:e=>{if(!(paceRangeA===o.d&&showCurveA))e.currentTarget.style.background='transparent';}
                 },o.l))
               )
             ),
-            // Période de comparaison
-            h('div',{style:{padding:'16px 24px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison'),
+            // Comparaison — label = bouton toggle
+            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
+              h('button',{type:'button',onClick:()=>setShowCurveB(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveB?'#605d5d':'#bab6b6',textDecoration:showCurveB?'none':'line-through'}},'Comparaison'),
+                h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:showCurveB?'#bab6b6':'#d7d3d3',borderTop:'2px dashed '+(showCurveB?'#bab6b6':'#d7d3d3')}}),
+              ),
               h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>setPaceRangeB(o.d),
-                  style:{padding:'5px 10px',border:'2px solid '+(paceRangeB===o.d?'#201e1d':'#d7d3d3'),background:paceRangeB===o.d?'#201e1d':'transparent',color:paceRangeB===o.d?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(paceRangeB!==o.d)e.currentTarget.style.background='#eae9e9';},
-                  onMouseLeave:e=>{if(paceRangeB!==o.d)e.currentTarget.style.background='transparent';}
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setPaceRangeB(o.d);setShowCurveB(true);},
+                  style:{padding:'5px 10px',border:'2px solid '+(paceRangeB===o.d&&showCurveB?'#201e1d':'#d7d3d3'),background:paceRangeB===o.d&&showCurveB?'#201e1d':'transparent',color:paceRangeB===o.d&&showCurveB?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
+                  onMouseEnter:e=>{if(!(paceRangeB===o.d&&showCurveB))e.currentTarget.style.background='#eae9e9';},
+                  onMouseLeave:e=>{if(!(paceRangeB===o.d&&showCurveB))e.currentTarget.style.background='transparent';}
                 },o.l))
               )
             ),
-            // Sélecteur de séance
-            h('div',{style:{padding:'16px 24px',display:'flex',flexDirection:'column',gap:'8px',flex:'1'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Séance'),
-              h('select',{
-                value: selActId||'',
-                onChange: e=>setSelActId(e.target.value||null),
-                style:{padding:'5px 10px',border:'2px solid #d7d3d3',background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',cursor:'pointer',maxWidth:'320px'}
+            // Séance
+            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px',flex:'1',minWidth:0}},
+              h('button',{type:'button',onClick:()=>setShowCurveSel(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&selActId?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
+                selActId&&h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveSel?'#7c4dbc':'#d7d3d3'}})
+              ),
+              h('select',{value:selActId||'',onChange:e=>{setSelActId(e.target.value||null);setShowCurveSel(true);},
+                style:{padding:'5px 10px',border:'2px solid #d7d3d3',background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',cursor:'pointer',maxWidth:'100%'}
               },
-                h('option',{value:''},'Agrégé (toutes les sorties)'),
-                data.filter(a=>a.sport===a.sport==='Course'||a.sport==='Trail'&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,30).map(a=>
-                  h('option',{key:a.id,value:String(a.id)},
-                    a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+(a.name||a.sport)+' · '+fmtNum(a.dist,1)+' km'
-                  )
-                )
+                h('option',{value:''},'Agrégé'),
+                data.filter(a=>(a.sport==='Course'||a.sport==='Trail')&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+(a.name||a.sport)+' · '+fmtNum(a.dist,1)+' km'))
               )
+            ),
+            // Sport
+            h('div',{style:{padding:'16px 20px',display:'flex',flexDirection:'column',gap:'8px'}},
+              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
+              h('span',{style:{fontSize:'13px',fontWeight:'800',color:'#201e1d'}},'Course · Trail')
             )
           ),
+
           (()=>{
             const fmtPL = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
             const runActs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
@@ -1820,7 +1835,9 @@ function App() {
               }
               return best;
             };
-            const now = Date.now();
+            const nowP = Date.now();
+            const endAp = nowP, startAp = endAp - paceRangeA*86400000;
+            const endBp = startAp, startBp = endBp - paceRangeB*86400000;
             const statDefs = [
               {label:'1 km',    m:1000},
               {label:'5 km',    m:5000},
@@ -1828,14 +1845,15 @@ function App() {
               {label:'Semi',    m:21097},
               {label:'Marathon',m:42195},
             ];
-            const cur  = statDefs.map(s => paceStat(s.m, now-30*86400000, now));
-            const prev = statDefs.map(s => paceStat(s.m, now-60*86400000, now-30*86400000));
+            const cur  = statDefs.map(s => paceStat(s.m, startAp, endAp));
+            const prev = statDefs.map(s => paceStat(s.m, startBp, endBp));
+            const rangeLabel = d => d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an';
+            const compLabelP = 'vs '+rangeLabel(paceRangeB)+' préc.';
             return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
               statDefs.map((s,i) => {
                 const vCur = cur[i], vPrev = prev[i];
-                // Pour allure : amélioration = valeur qui BAISSE (pace plus basse = plus vite)
                 const pct = (vCur&&vPrev&&vPrev>0) ? Math.round(((vPrev-vCur)/vPrev)*100) : null;
-                const chip = deltaChip(pct, true); // baisse = amélioration, donc betterHigh=true sur delta inversé
+                const chip = deltaChip(pct, true);
                 return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
                   h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},s.label),
                   h('div',{style:{marginTop:'10px'}},
@@ -1846,10 +1864,10 @@ function App() {
                   h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
                     chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
                     chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},'vs 30 j préc.')
+                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},compLabelP)
                   ),
                   h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    vPrev ? fmtPL(vPrev)+' /km précédemment' : 'pas de données préc.'
+                    vPrev ? fmtPL(vPrev)+' /km préc.' : 'pas de données préc.'
                   )
                 );
               })
@@ -1889,11 +1907,51 @@ function App() {
         athleteSection==='Fréquence cardiaque'&&h('div',null,
           // Bande de contrôle : Actuelle | Comparaison | Séance
           h('section',{style:{display:'flex',alignItems:'stretch',borderBottom:'2px solid #201e1d'}},
-
-            // Sélecteur sport FC intégré à gauche
-            h('div',{style:{padding:'16px 24px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
-              h('div',{style:{display:'flex',gap:'6px'}},
+            // Période actuelle — label = bouton toggle
+            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
+              h('button',{type:'button',onClick:()=>setShowCurveA(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveA?'#ec3013':'#bab6b6',textDecoration:showCurveA?'none':'line-through'}},'Actuelle'),
+                h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveA?'#ec3013':'#bab6b6'}}),
+              ),
+              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setHrRangeA(o.d);setShowCurveA(true);},
+                  style:{padding:'5px 10px',border:'2px solid '+(hrRangeA===o.d&&showCurveA?'#ec3013':'#d7d3d3'),background:hrRangeA===o.d&&showCurveA?'#ec3013':'transparent',color:hrRangeA===o.d&&showCurveA?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
+                  onMouseEnter:e=>{if(!(hrRangeA===o.d&&showCurveA))e.currentTarget.style.background='#ffe0d9';},
+                  onMouseLeave:e=>{if(!(hrRangeA===o.d&&showCurveA))e.currentTarget.style.background='transparent';}
+                },o.l))
+              )
+            ),
+            // Comparaison — label = bouton toggle
+            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
+              h('button',{type:'button',onClick:()=>setShowCurveB(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveB?'#605d5d':'#bab6b6',textDecoration:showCurveB?'none':'line-through'}},'Comparaison'),
+                h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:showCurveB?'#bab6b6':'#d7d3d3',borderTop:'2px dashed '+(showCurveB?'#bab6b6':'#d7d3d3')}}),
+              ),
+              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
+                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{setHrRangeB(o.d);setShowCurveB(true);},
+                  style:{padding:'5px 10px',border:'2px solid '+(hrRangeB===o.d&&showCurveB?'#201e1d':'#d7d3d3'),background:hrRangeB===o.d&&showCurveB?'#201e1d':'transparent',color:hrRangeB===o.d&&showCurveB?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
+                  onMouseEnter:e=>{if(!(hrRangeB===o.d&&showCurveB))e.currentTarget.style.background='#eae9e9';},
+                  onMouseLeave:e=>{if(!(hrRangeB===o.d&&showCurveB))e.currentTarget.style.background='transparent';}
+                },o.l))
+              )
+            ),
+            // Séance
+            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px',flex:'1',minWidth:0}},
+              h('button',{type:'button',onClick:()=>setShowCurveSel(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&selActId?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
+                selActId&&h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveSel?'#7c4dbc':'#d7d3d3'}})
+              ),
+              h('select',{value:selActId||'',onChange:e=>{setSelActId(e.target.value||null);setShowCurveSel(true);},
+                style:{padding:'5px 10px',border:'2px solid #d7d3d3',background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',cursor:'pointer',maxWidth:'100%'}
+              },
+                h('option',{value:''},'Agrégé'),
+                data.filter(a=>a.sport===hrSport&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+(a.name||a.sport)+' · '+fmtNum(a.dist,1)+' km'))
+              )
+            ),
+            // Sport
+            h('div',{style:{padding:'16px 20px',display:'flex',flexDirection:'column',gap:'8px'}},
+              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
+              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
                 (top3Sports.length?top3Sports:['Course','Trail','Vélo']).map(sp=>
                   h('button',{key:sp,type:'button',onClick:()=>{setHrSport(sp);setSelActId(null);},
                     style:{padding:'5px 10px',border:'2px solid '+(hrSport===sp?'#ec3013':'#d7d3d3'),background:hrSport===sp?'#ec3013':'transparent',color:hrSport===sp?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
@@ -1902,46 +1960,9 @@ function App() {
                   },sp==='Trail'?'Trail · VAP':sp)
                 )
               )
-            ),
-            // Période actuelle
-            h('div',{style:{padding:'16px 24px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#ec3013'}},'Actuelle'),
-              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>setHrRangeA(o.d),
-                  style:{padding:'5px 10px',border:'2px solid '+(hrRangeA===o.d?'#ec3013':'#d7d3d3'),background:hrRangeA===o.d?'#ec3013':'transparent',color:hrRangeA===o.d?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(hrRangeA!==o.d)e.currentTarget.style.background='#ffe0d9';},
-                  onMouseLeave:e=>{if(hrRangeA!==o.d)e.currentTarget.style.background='transparent';}
-                },o.l))
-              )
-            ),
-            // Période de comparaison
-            h('div',{style:{padding:'16px 24px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Comparaison'),
-              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>setHrRangeB(o.d),
-                  style:{padding:'5px 10px',border:'2px solid '+(hrRangeB===o.d?'#201e1d':'#d7d3d3'),background:hrRangeB===o.d?'#201e1d':'transparent',color:hrRangeB===o.d?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(hrRangeB!==o.d)e.currentTarget.style.background='#eae9e9';},
-                  onMouseLeave:e=>{if(hrRangeB!==o.d)e.currentTarget.style.background='transparent';}
-                },o.l))
-              )
-            ),
-            // Sélecteur de séance
-            h('div',{style:{padding:'16px 24px',display:'flex',flexDirection:'column',gap:'8px',flex:'1'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Séance'),
-              h('select',{
-                value: selActId||'',
-                onChange: e=>setSelActId(e.target.value||null),
-                style:{padding:'5px 10px',border:'2px solid #d7d3d3',background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',cursor:'pointer',maxWidth:'320px'}
-              },
-                h('option',{value:''},'Agrégé (toutes les sorties)'),
-                data.filter(a=>actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,30).map(a=>
-                  h('option',{key:a.id,value:String(a.id)},
-                    a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+(a.name||a.sport)+' · '+fmtNum(a.dist,1)+' km'
-                  )
-                )
-              )
             )
           ),
+
           (()=>{
             const fcMax = Number(profile.fcMax)||190;
             const fcRest = Number(profile.fcRest)||50;
@@ -1957,11 +1978,11 @@ function App() {
             ];
             const isBikeFC = hrSport === 'Vélo';
             const fmtPZ = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
-            const now = Date.now();
-            // Accumuler s/s par zone, sur 30 j et 30–60 j (pour delta)
+            const nowHr = Date.now();
+            // Accumuler s/s par zone sur les fenêtres liées aux boutons
             const accumZone = (daysStart, daysEnd) => zoneDefs.map(z => {
               let sumV = 0, cnt = 0;
-              const d0 = now - daysEnd*86400000, d1 = now - daysStart*86400000;
+              const d0 = nowHr - daysEnd*86400000, d1 = nowHr - daysStart*86400000;
               data.filter(a => a.sport===hrSport && a.date.getTime()>=d0 && a.date.getTime()<d1).forEach(a => {
                 const s = actStreams[a.id];
                 if (!s || s==='error' || !s.hr) return;
@@ -1979,8 +2000,8 @@ function App() {
               const avg = sumV/cnt;
               return isBikeFC ? Math.round(avg) : Math.round((1000/60/avg)*100)/100;
             });
-            const zoneCur  = accumZone(0, 30);
-            const zonePrev = accumZone(30, 60);
+            const zoneCur  = accumZone(0, hrRangeA);
+            const zonePrev = accumZone(hrRangeA, hrRangeA + hrRangeB);
             return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
               zoneDefs.map((z,i) => {
                 const vCur = zoneCur[i], vPrev = zonePrev[i];
@@ -1999,7 +2020,7 @@ function App() {
                   h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
                     chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
                     chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},'vs 30 j préc.')
+                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},(() => { const rl=d=>d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an'; return 'vs '+rl(hrRangeB)+' préc.'; })())
                   ),
                   h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
                     vPrev ? (isBikeFC ? vPrev+' W précédemment' : fmtPZ(vPrev)+' /km précédemment') : 'pas de données préc.'
