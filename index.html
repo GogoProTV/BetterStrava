@@ -844,7 +844,7 @@ function App() {
     const jB = curveB.map(v => v ? v.j : null);
     const datasets = [];
     if (showCurveB) datasets.push({ label:'Comparaison'+estSuffix, data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' });
-    if (showCurveA) datasets.push({ label:'Actuelle'+estSuffix, data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.2, pointRadius:3, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, spanGaps:true, yAxisID:'yW' });
+    if (showCurveA) datasets.push({ label:'Actuelle'+estSuffix, data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, spanGaps:true, yAxisID:'yW' });
     if (ftpVal) datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
     if (selActId && showCurveSel) {
       const s = actStreams[selActId];
@@ -949,8 +949,8 @@ function App() {
     const paceDatasetsNew = allCurves.map(c => ({
       label: c.label, data: c.vals.slice(paceIdxMin, paceIdxMax+1),
       borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
-      backgroundColor: c.color==='#ec3013' ? 'rgba(236,48,19,0.08)' : 'transparent',
-      fill: c.color==='#ec3013', tension: 0.3,
+      backgroundColor: 'transparent',
+      fill: false, tension: 0.3,
       pointRadius: 0, pointHoverRadius: 4, spanGaps: true,
     }));
     upsert('pace', paceRef, {
@@ -2159,19 +2159,92 @@ function App() {
             ),
             h('div',{style:{height:'252px'}},h('canvas',{ref:lineRef}))
           ),
-          h('div',{style:{gridColumn:'2',gridRow:'1 / span 2',minWidth:0,padding:'28px 32px 32px'}},
-            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'4px 16px',marginBottom:'8px'}},
-              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Temps par zone cardiaque'),
-              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Répartition')
+          h('div',{style:{gridColumn:'2',gridRow:'1',minWidth:0,padding:'20px 24px 24px',borderBottom:'2px solid #201e1d'}},
+            h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px',marginBottom:'14px'}},
+              h('h2',{style:{margin:0,fontSize:'14px',fontWeight:'800',letterSpacing:'-0.01em'}},'Meilleurs efforts'),
+              h('span',{style:{fontSize:'10px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},sport==='Tous'?'Tous sports':sport)
             ),
-            h('p',{style:{margin:'0 0 14px',fontSize:'12px',color:'#605d5d',maxWidth:'42ch'}},acts.some(a=>a.hr)?'Minutes dans chaque zone de FC sur la période.':'Donnée manquante — aucune fréquence cardiaque.'),
-            h('div',{style:{height:'190px'}},h('canvas',{ref:zoneRef})),
-            h('div',{style:{display:'flex',flexDirection:'column',marginTop:'16px'}},
-              zm.map((z,i)=>h('div',{key:i,style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'4px 10px',padding:'6px 0',borderBottom:'1px solid #d7d3d3'}},
-                h('span',{style:{flexShrink:0,width:'12px',height:'12px',background:z.color,border:'1px solid #d7d3d3'}}),
-                h('span',{style:{flex:'1 0 auto',fontSize:'12px',fontWeight:'600'}},z.label),
-                h('span',{style:{fontSize:'12px',fontVariantNumeric:'tabular-nums'}},fmtH(z.min)),
-                h('span',{style:{fontSize:'12px',color:'#605d5d',fontVariantNumeric:'tabular-nums'}},Math.round((z.min/zmTotal)*100)+' %')
+            (()=>{
+              const fmtPR = v => { if (!v) return null; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
+              const fmtSpeed = v => v ? fmtNum(v,1)+' km/h' : null;
+              // Définir les distances selon le sport
+              const prDefs = sport==='Vélo'
+                ? [{d:1000,l:'1 km'},{d:5000,l:'5 km'},{d:10000,l:'10 km'},{d:20000,l:'20 km'},{d:40000,l:'40 km'},{d:100000,l:'100 km'}]
+                : sport==='Natation'
+                  ? [{d:100,l:'100 m'},{d:200,l:'200 m'},{d:400,l:'400 m'},{d:1000,l:'1 km'},{d:1500,l:'1500 m'}]
+                  : [{d:400,l:'400 m'},{d:1000,l:'1 km'},{d:2000,l:'2 km'},{d:5000,l:'5 km'},{d:10000,l:'10 km'},{d:20000,l:'20 km'},{d:40000,l:'40 km'}];
+              // Calculer depuis actStreams (réutiliser le cache déjà fetchés)
+              const prVals = prDefs.map(({d:targetM}) => {
+                let best = null;
+                for (const a of acts) {
+                  const s = actStreams[a.id];
+                  if (sport==='Vélo') {
+                    if (s && s.pow && s.pow.length >= Math.round(targetM/25)) {
+                      // Vitesse max sur la distance : utiliser dist+vel
+                      if (s.dist && s.vel) {
+                        let bestV = null;
+                        let j2=0;
+                        for (let i2=0;i2<s.dist.length;i2++) {
+                          while(j2<s.dist.length-1&&s.dist[j2]-s.dist[i2]<targetM)j2++;
+                          if(s.dist[j2]-s.dist[i2]>=targetM){
+                            const secs=j2-i2;
+                            if(secs>0){const v=(targetM/secs)*3.6;if(bestV===null||v>bestV)bestV=v;}
+                          }
+                        }
+                        if(bestV!==null)best=best===null?bestV:Math.max(best,bestV);
+                      }
+                    } else if (a.dist*1000>=targetM && a.dist && a.time) {
+                      const v=a.dist/(a.time/60);if(best===null||v>best)best=v;
+                    }
+                  } else if (sport==='Natation') {
+                    // Natation : allure /100m
+                    if (s && s.dist && s.vel && s.dist[s.dist.length-1]>=targetM) {
+                      const v=bestPaceWindow(s.dist,s.vel,targetM);
+                      if(v&&v<=MAX_PACE)best=best===null?v:Math.min(best,v);
+                    } else if (a.dist*1000>=targetM && a.pace) {
+                      best=best===null?a.pace:Math.min(best,a.pace);
+                    }
+                  } else {
+                    // Course/Trail : allure /km
+                    if (s && s.dist && s.vel && s.dist[s.dist.length-1]>=targetM) {
+                      const v=bestPaceWindow(s.dist,s.vel,targetM);
+                      if(v&&v<=MAX_PACE)best=best===null?v:Math.min(best,v);
+                    } else if (a.dist*1000>=targetM && a.pace && a.pace<=MAX_PACE) {
+                      best=best===null?a.pace:Math.min(best,a.pace);
+                    }
+                  }
+                }
+                return best;
+              });
+              return h('div',{style:{display:'flex',flexDirection:'column',gap:'0'}},
+                prDefs.map((def,i)=>{
+                  const val = prVals[i];
+                  let display;
+                  if (!val) display = '—';
+                  else if (sport==='Vélo') display = fmtSpeed(val)||'—';
+                  else if (sport==='Natation') display = fmtPR(val*10)||'—';
+                  else display = (fmtPR(val)||'—')+' /km';
+                  return h('div',{key:def.l,style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid #d7d3d3'}},
+                    h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.06em',textTransform:'uppercase',color:'#605d5d'}},def.l),
+                    h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.01em',color:val?'#201e1d':'#bab6b6'}},display)
+                  );
+                })
+              );
+            })()
+          ),
+          h('div',{style:{gridColumn:'2',gridRow:'2',minWidth:0,padding:'20px 24px 24px'}},
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'4px',marginBottom:'10px'}},
+              h('h2',{style:{margin:0,fontSize:'14px',fontWeight:'800',letterSpacing:'-0.01em'}},'Zones cardiaques'),
+              h('span',{style:{fontSize:'10px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Répartition')
+            ),
+            h('p',{style:{margin:'0 0 10px',fontSize:'11px',color:'#605d5d'}},acts.some(a=>a.hr)?'Min. dans chaque zone de FC.':'Donnée manquante — aucune FC.'),
+            h('div',{style:{height:'160px'}},h('canvas',{ref:zoneRef})),
+            h('div',{style:{display:'flex',flexDirection:'column',marginTop:'10px'}},
+              zm.map((z,i)=>h('div',{key:i,style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'4px 8px',padding:'4px 0',borderBottom:'1px solid #d7d3d3'}},
+                h('span',{style:{flexShrink:0,width:'10px',height:'10px',background:z.color,border:'1px solid #d7d3d3'}}),
+                h('span',{style:{flex:'1 0 auto',fontSize:'11px',fontWeight:'600'}},z.label),
+                h('span',{style:{fontSize:'11px',fontVariantNumeric:'tabular-nums'}},fmtH(z.min)),
+                h('span',{style:{fontSize:'11px',color:'#605d5d',fontVariantNumeric:'tabular-nums'}},Math.round((z.min/zmTotal)*100)+' %')
               ))
             )
           ),
