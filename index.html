@@ -580,7 +580,11 @@ function App() {
     if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(hrData), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
     if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(altData), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
     if (velData.length && vis.vel) {
-      const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => v > 0 ? Math.round((1000 / 60 / v) * 100) / 100 : null;
+      const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => {
+        if (v <= 0) return null;
+        const pace = 1000 / 60 / v; // min/km
+        return (pace >= 2 && pace <= 10) ? Math.round(pace * 100) / 100 : null;
+      };
       datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(velData).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
     if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(estPowData), borderColor: '#7c4dbc', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
@@ -588,7 +592,7 @@ function App() {
     if (hrData.length && vis.fc) scales.yHr = { position: 'left', grid: { color: 'rgba(236,48,19,0.12)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
     if (altData.length && vis.alt) scales.yAlt = { position: 'right', min: altMin, max: altMax, grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
     if (velData.length && vis.vel) {
-      scales.yPace = { position: 'left', reverse: !isBike, grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#3d3a3a' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
+      scales.yPace = { position: 'left', reverse: !isBike, min: isBike ? undefined : 2, max: isBike ? undefined : 10, grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false }, title: { display: true, text: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', color: '#3d3a3a' }, ticks: !isBike ? { callback: v => { const m = Math.floor(v); const s = Math.round((v - m) * 60); return m + "'" + String(s).padStart(2,'0') + '"'; } } : {} };
     }
     if (estPowData.length && vis.pow) scales.yPow = { position: 'right', grid: { display: false }, border: { display: false }, title: { display: true, text: 'W estimés', color: '#7c4dbc' }, beginAtZero: true };
     rowChartInsts.current[id] = new Chart(canvasEl, {
@@ -736,7 +740,7 @@ function App() {
           const v = metric[i];
           // Garde-fou : pour course/trail, ignorer les secondes < 0.3 m/s (< 1 km/h = arrêt)
           // et > 7 m/s (> 25 km/h = données GPS aberrantes)
-          if (!isBike && (v < 0.3 || v > 7)) continue;
+          if (!isBike && (v < 0.3 || v > 8.33)) continue;
           if (v > 0) { bins[bi].sum += v; bins[bi].count += 1; }
         }
       } else {
@@ -755,7 +759,7 @@ function App() {
         } else {
           const v_ms = (a.dist * 1000) / secs;
           // Garde-fou : entre 0.3 m/s (1 km/h) et 7 m/s (25 km/h)
-          if (v_ms >= 0.3 && v_ms <= 7) { bins[bi].sum += v_ms * secs; bins[bi].count += secs; }
+          if (v_ms >= 0.3 && v_ms <= 8.33) { bins[bi].sum += v_ms * secs; bins[bi].count += secs; }
         }
       }
     }
