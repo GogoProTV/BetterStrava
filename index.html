@@ -835,7 +835,7 @@ function App() {
       label: c.label + estSuffix, data: c.vals,
       borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
       backgroundColor: c.color === '#ec3013' ? 'rgba(236,48,19,0.08)' : 'transparent',
-      fill: c.color === '#ec3013', tension: 0.2,
+      fill: false, tension: 0.2,
       pointRadius: 3, pointBackgroundColor: c.color, pointBorderColor: '#f3f2f2', pointBorderWidth: 1.5,
       pointHoverRadius: 5, spanGaps: true, yAxisID: 'yW',
     }));
@@ -850,7 +850,7 @@ function App() {
       options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
         interaction:{mode:'index',intersect:false,axis:'x'}, hover:{animationDuration:0},
         plugins:{
-          legend:{display:true,position:'top',align:'end',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:true}},
+          legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
           tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:12,displayColors:true,
             callbacks:{
               title: items => 'Effort : ' + POWER_DURATIONS[items[0].dataIndex].l,
@@ -947,7 +947,7 @@ function App() {
       label: c.label, data: c.vals.slice(paceIdxMin, paceIdxMax + 1),
       borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
       backgroundColor: c.color === '#ec3013' ? 'rgba(236,48,19,0.08)' : 'transparent',
-      fill: c.color === '#ec3013', tension: 0.3,
+      fill: false, tension: 0.3,
       pointRadius: 0, pointHoverRadius: 4, spanGaps: true,
     }));
     upsert('pace', paceRef, {
@@ -955,7 +955,7 @@ function App() {
       data:{ labels: paceLabelsSlice, datasets: paceDatasetsNew },
       options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
         plugins:{
-          legend:{display:true,position:'top',align:'end',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:true}},
+          legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
           tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
             callbacks:{
               title: items => {
@@ -1030,7 +1030,7 @@ function App() {
         responsive:true, maintainAspectRatio:false, animation:{duration:240},
         interaction:{mode:'index',intersect:false},
         plugins:{
-          legend:{display:true,position:'top',align:'end',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:true}},
+          legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
           tooltip:{
             backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
             callbacks:{
@@ -1636,6 +1636,46 @@ function App() {
           )
         ),
         athleteSection==='Allure'&&h('div',null,
+          (()=>{
+            // Stats allure : distances clés depuis les streams ou moyennes
+            const fmtPLocal = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
+            const runActs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
+            const paceStat = (targetM, daysLimit) => {
+              const cutoff = Date.now() - daysLimit*86400000;
+              const pool = runActs.filter(a => a.date.getTime() >= cutoff);
+              let best = null;
+              for (const a of pool) {
+                const ps = actStreams[a.id];
+                if (ps && ps.dist && ps.vel) {
+                  const v = bestPaceWindow(ps.dist, ps.vel, targetM);
+                  if (v && v <= MAX_PACE) best = best===null ? v : Math.min(best, v);
+                } else if (a.dist*1000 >= targetM && a.pace && a.pace <= MAX_PACE) {
+                  best = best===null ? a.pace : Math.min(best, a.pace);
+                }
+              }
+              return best;
+            };
+            const statDefs = [
+              {label:'1 km',   m:1000},
+              {label:'5 km',   m:5000},
+              {label:'10 km',  m:10000},
+              {label:'Semi',   m:21097},
+              {label:'Marathon',m:42195},
+            ];
+            const cells30  = statDefs.map(s => paceStat(s.m, 30));
+            const cells365 = statDefs.map(s => paceStat(s.m, 365));
+            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat('+statDefs.length+',1fr)',borderBottom:'2px solid #201e1d'}},
+              statDefs.map((s,i) => h('div',{key:i,style:{padding:'16px 24px 18px',borderRight:i<statDefs.length-1?'2px solid #201e1d':undefined}},
+                h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},s.label),
+                h('span',{style:{display:'block',marginTop:'6px',fontSize:'20px',fontWeight:'800',letterSpacing:'-0.02em',color:cells30[i]?'#ec3013':'#bab6b6'}},
+                  cells30[i] ? fmtPLocal(cells30[i])+' /km' : '—'
+                ),
+                h('span',{style:{display:'block',marginTop:'3px',fontSize:'12px',color:'#605d5d'}},
+                  cells365[i] ? 'Mieux : '+fmtPLocal(cells365[i])+' /km (1 an)' : 'Pas de données'
+                )
+              ))
+            );
+          })(),
           h('section',{style:{padding:'28px 32px 32px'}},
             (()=>{
               const runs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
@@ -1699,6 +1739,60 @@ function App() {
               )
             )
           ),
+          (()=>{
+            // Zones FC selon fcMax + fcRest (Karvonen si dispo, sinon % fcMax)
+            const fcMax = Number(profile.fcMax)||190;
+            const fcRest = Number(profile.fcRest)||50;
+            const reserve = fcMax - fcRest;
+            const karvonen = pct => Math.round(fcRest + reserve * pct);
+            const useKarv = !!Number(profile.fcRest);
+            const zoneDefs = [
+              {label:'Z1 · récup',     lo: useKarv?karvonen(0.5):Math.round(fcMax*0.5),  hi: useKarv?karvonen(0.6):Math.round(fcMax*0.6)},
+              {label:'Z2 · endurance', lo: useKarv?karvonen(0.6):Math.round(fcMax*0.6),  hi: useKarv?karvonen(0.7):Math.round(fcMax*0.7)},
+              {label:'Z3 · tempo',     lo: useKarv?karvonen(0.7):Math.round(fcMax*0.7),  hi: useKarv?karvonen(0.8):Math.round(fcMax*0.8)},
+              {label:'Z4 · seuil',     lo: useKarv?karvonen(0.8):Math.round(fcMax*0.8),  hi: useKarv?karvonen(0.9):Math.round(fcMax*0.9)},
+              {label:'Z5 · VMA',       lo: useKarv?karvonen(0.9):Math.round(fcMax*0.9),  hi: fcMax},
+            ];
+            const isBikeFC = hrSport === 'Vélo';
+            const fmtPZ = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
+            // Pour chaque zone : accumuler vitesse/puissance s/s depuis streams
+            const zoneStats = zoneDefs.map(z => {
+              let sumV = 0, cnt = 0;
+              const cutoff = Date.now() - 365*86400000;
+              data.filter(a => a.sport===hrSport && a.date.getTime()>=cutoff).forEach(a => {
+                const s = actStreams[a.id];
+                if (!s || s==='error' || !s.hr) return;
+                const metric = isBikeFC ? s.pow : s.vel;
+                if (!metric) return;
+                for (let i=0; i<s.hr.length; i++) {
+                  if (s.hr[i]>=z.lo && s.hr[i]<z.hi) {
+                    const v = metric[i];
+                    if (isBikeFC && v>0) { sumV+=v; cnt++; }
+                    else if (!isBikeFC && v>=0.3 && v<=8.33) { sumV+=v; cnt++; }
+                  }
+                }
+              });
+              if (!cnt) return null;
+              const avg = sumV / cnt;
+              return isBikeFC ? Math.round(avg) : Math.round((1000/60/avg)*100)/100;
+            });
+            const nCols = zoneDefs.length;
+            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat('+nCols+',1fr)',borderBottom:'2px solid #201e1d'}},
+              zoneDefs.map((z,i) => {
+                const val = zoneStats[i];
+                return h('div',{key:i,style:{padding:'16px 20px 18px',borderRight:i<nCols-1?'2px solid #201e1d':undefined}},
+                  h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},z.label),
+                  h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#bab6b6'}},z.lo+'–'+z.hi+' bpm'),
+                  h('span',{style:{display:'block',marginTop:'6px',fontSize:'18px',fontWeight:'800',letterSpacing:'-0.02em',color:val?'#201e1d':'#bab6b6'}},
+                    val ? (isBikeFC ? val+' W' : fmtPZ(val)+' /km') : '—'
+                  ),
+                  h('span',{style:{display:'block',marginTop:'2px',fontSize:'11px',color:'#605d5d'}},
+                    val ? (isBikeFC ? 'puissance moy.' : 'allure moy.') : 'pas de données'
+                  )
+                );
+              })
+            );
+          })(),
           h('section',{style:{padding:'28px 32px 32px'}},
             (()=>{
               const eligible = data.filter(a => a.sport===hrSport);
