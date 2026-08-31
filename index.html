@@ -699,8 +699,12 @@ function App() {
       return out;
     }
     const MAX_PACE = 30;
-    const N = Math.max(1, Math.floor(timeData.length / 800));
+    // Thinning adaptatif : viser ~1200 points max pour les performances Chart.js
+    // On thin APRÈS le lissage pour garder la précision des pics (FC 199 bpm visible)
+    const TARGET_PTS = 1200;
+    const N = Math.max(1, Math.floor(timeData.length / TARGET_PTS));
     const thin = arr => arr.filter((_, i) => i % N === 0);
+    // Axe X : distance si dispo (plus intuitif), sinon temps
     const thinDist = thin(distData); const thinTime = thin(timeData);
     const usesDist = thinDist.length === thinTime.length && thinDist.length > 0;
     const xLabels = usesDist ? thinDist.map(d => (d / 1000).toFixed(2)) : thinTime.map(t => (t / 60).toFixed(1));
@@ -708,21 +712,27 @@ function App() {
     const altMax = altMin + 1000;
     const datasets = [];
     let paceMin = 2, paceMax = 10;
-    if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(smooth(hrData, 10)), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
-    if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(smooth(altData, 10)), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
+    if (hrData.length && vis.fc) {
+      // Lissage FC réduit à 3s (médiane mobile légère) pour préserver les vrais pics
+      const hrSmoothed = smooth(hrData, 3);
+      datasets.push({ label: 'FC (bpm)', data: thin(hrSmoothed), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.1, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
+    }
+    if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(smooth(altData, 5)), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
     if (velData.length && vis.vel) {
-      const smoothedVel = smooth(velData, 30);
+      // Lissage allure : 15s (assez pour filtrer le bruit GPS sans cacher les vraies variations)
+      const smoothedVel = smooth(velData, 15);
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => {
         if (!v || v <= 0) return null;
         const pace = 1000 / 60 / v;
         return (pace >= 2 && pace <= MAX_PACE) ? Math.round(pace * 100) / 100 : null;
       };
-      const paceVals = thin(smoothedVel).map(conv).filter(v => v !== null);
-      paceMin = paceVals.length ? Math.max(2, Math.floor(Math.min(...paceVals) * 2) / 2 - 0.5) : 2;
-      paceMax = paceVals.length ? Math.min(MAX_PACE, Math.ceil(Math.max(...paceVals) * 2) / 2 + 0.5) : 10;
-      datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(smoothedVel).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
+      const converted = thin(smoothedVel).map(conv);
+      const paceVals = converted.filter(v => v !== null);
+      paceMin = paceVals.length ? Math.max(2, Math.floor(Math.min(...paceVals) * 2) / 2 - 0.3) : 2;
+      paceMax = paceVals.length ? Math.min(MAX_PACE, Math.ceil(Math.max(...paceVals) * 2) / 2 + 0.3) : 10;
+      datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: converted, borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
-    if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(smooth(Array.from(estPowData), 30)), borderColor: '#7c4dbc', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
+    if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(smooth(Array.from(estPowData), 15)), borderColor: '#7c4dbc', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
     const scales = { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } } };
     if (hrData.length && vis.fc) scales.yHr = { position: 'left', grid: { color: 'rgba(236,48,19,0.12)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
     if (altData.length && vis.alt) scales.yAlt = { position: 'right', min: altMin, max: altMax, grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
