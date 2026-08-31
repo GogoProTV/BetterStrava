@@ -1454,7 +1454,29 @@ function App() {
           ),
           h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'16px', marginBottom:'12px', paddingRight:'32px' } },
             h('span', { style:{ fontSize:'12px', fontWeight:'700', letterSpacing:'0.06em', textTransform:'uppercase' } }, 'Données seconde par seconde'),
-            serieBtns.length > 0 && h('div', { style:{ display:'flex', gap:'8px' } }, serieBtns.map(serBtn))
+            h('div', { style:{ display:'flex', alignItems:'center', gap:'10px' } },
+              serieBtns.length > 0 && h('div', { style:{ display:'flex', gap:'8px' } }, serieBtns.map(serBtn)),
+              h('button', {
+                type:'button',
+                onClick: () => {
+                  setSelActId1(String(id));
+                  setShowCurveSel(true);
+                  setAthleteSection('Puissance');
+                  setAthleteOpen(true);
+                  setTab('athlete');
+                },
+                style:{
+                  padding:'8px 16px', border:'none', background:'#ec3013', color:'#ffffff',
+                  fontFamily:'inherit', fontSize:'11px', fontWeight:'800', letterSpacing:'0.1em',
+                  textTransform:'uppercase', cursor:'pointer', display:'flex', alignItems:'center', gap:'6px'
+                },
+                onMouseEnter: e => { e.currentTarget.style.background='#ae1800'; },
+                onMouseLeave: e => { e.currentTarget.style.background='#ec3013'; }
+              },
+                h('span', { style:{fontSize:'14px',lineHeight:'1'} }, '⚡'),
+                'Analyser'
+              )
+            )
           ),
           isLoading && h('div', { style:{ height:'400px', display:'flex', alignItems:'center', fontSize:'12px', color:'#605d5d' } }, 'Chargement des streams Strava…'),
           isError && h('div', { style:{ padding:'12px 0', fontSize:'12px', color:'#605d5d' } }, st.error),
@@ -1668,7 +1690,7 @@ function App() {
                     style:{padding:'4px 6px',border:'2px solid '+(selActId1?'#7c4dbc':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
                     h('option',{value:''},"Pas d'affichage"),
                     data.filter(a=>(powSport==='Vélo'?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
-                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(a.dist,1)+'km'
+                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+fmtNum(a.dist,1)+'km'+(a.elev?' +'+fmtNum(a.elev,0)+'m':'')+' · '+(a.name||a.sport)
                     ))
                   )
                 ),
@@ -1678,7 +1700,7 @@ function App() {
                     style:{padding:'4px 6px',border:'2px solid '+(selActId2?'#2196f3':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
                     h('option',{value:''},"Pas d'affichage"),
                     data.filter(a=>(powSport==='Vélo'?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
-                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(a.dist,1)+'km'
+                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+fmtNum(a.dist,1)+'km'+(a.elev?' +'+fmtNum(a.elev,0)+'m':'')+' · '+(a.name||a.sport)
                     ))
                   )
                 )
@@ -1864,7 +1886,7 @@ function App() {
                     style:{padding:'4px 6px',border:'2px solid '+(selActId1?'#7c4dbc':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
                     h('option',{value:''},"Pas d'affichage"),
                     data.filter(a=>a.sport===hrSport&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
-                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(a.dist,1)+'km'
+                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+fmtNum(a.dist,1)+'km'+(a.elev?' +'+fmtNum(a.elev,0)+'m':'')+' · '+(a.name||a.sport)
                     ))
                   )
                 ),
@@ -1874,7 +1896,7 @@ function App() {
                     style:{padding:'4px 6px',border:'2px solid '+(selActId2?'#2196f3':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
                     h('option',{value:''},"Pas d'affichage"),
                     data.filter(a=>a.sport===hrSport&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
-                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(a.dist,1)+'km'
+                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+fmtNum(a.dist,1)+'km'+(a.elev?' +'+fmtNum(a.elev,0)+'m':'')+' · '+(a.name||a.sport)
                     ))
                   )
                 )
