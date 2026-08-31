@@ -787,9 +787,9 @@ function App() {
   const [hrRangeA, setHrRangeA] = useState(30);
   const [hrRangeB, setHrRangeB] = useState(90);
   // Séance sélectionnée (null = agrégé)
-  const [selActIds, setSelActIds] = useState(new Set());
-  const toggleSelAct = (id) => setSelActIds(prev => { const n=new Set(prev); if(n.has(id)) n.delete(id); else n.add(id); return n; });
-  const clearSelActs = () => setSelActIds(new Set());
+  const [selActId1, setSelActId1] = useState(null);
+  const [selActId2, setSelActId2] = useState(null);
+  const clearSelActs = () => { setSelActId1(null); setSelActId2(null); };
 
   // ── FTP estimée ────────────────────────────────────────────────────────────
   const ftpEstimated = (() => {
@@ -856,20 +856,17 @@ function App() {
       if (showCurveB) datasets.push({ label:'Comparaison'+estSuffix, data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' });
       if (showCurveA) datasets.push({ label:'Actuelle'+estSuffix, data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, spanGaps:true, yAxisID:'yW' });
       if (ftpVal) datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
-      if (showCurveSel && selActIds.size > 0) {
-        const palette = ['#7c4dbc','#2196f3','#4caf50','#ff9800','#e91e63','#00bcd4','#ff5722','#9c27b0'];
-        let ci = 0;
-        for (const sid of selActIds) {
+      if (showCurveSel) {
+        [[selActId1,'#7c4dbc','Séance 1'],[selActId2,'#2196f3','Séance 2']].forEach(([sid,col,defLbl]) => {
+          if (!sid) return;
           const s = actStreams[sid];
           if (s && s.pow && s.pow.length) {
-            const col = palette[ci % palette.length];
             const act = data.find(a => String(a.id) === String(sid));
-            const lbl = act ? act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(act.dist,1)+'km' : 'Séance';
+            const lbl = act ? act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(act.dist,1)+'km' : defLbl;
             const actPowCurve = POWER_DURATIONS.map(({s:dur}) => bestAvgWindow(s.pow, dur));
             datasets.push({ label:lbl, data:actPowCurve, borderColor:col, borderWidth:1.5, borderDash:[], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:2, pointBackgroundColor:col, pointBorderColor:'#f3f2f2', pointBorderWidth:1, spanGaps:true, yAxisID:'yW' });
-            ci++;
           }
-        }
+        });
       }
       upsert('power', powerRef, {
         type:'line', plugins:[crosshairPlugin],
@@ -939,23 +936,20 @@ function App() {
       const cB = buildPaceCurve(startB, endB, '#bab6b6', [5,4], 2, 'Comparaison');
       let cSel = null;
       const selCurves = [];
-      if (showCurveSel && selActIds.size > 0) {
-        const palette = ['#7c4dbc','#2196f3','#4caf50','#ff9800','#e91e63','#00bcd4','#ff5722','#9c27b0'];
-        let ci = 0;
-        for (const sid of selActIds) {
+      if (showCurveSel) {
+        [[selActId1,'#7c4dbc','Séance 1'],[selActId2,'#2196f3','Séance 2']].forEach(([sid,col,defLbl]) => {
+          if (!sid) return;
           const s = actStreams[sid];
           if (s && s.dist && s.vel) {
-            const col = palette[ci % palette.length];
             const act = data.find(a => String(a.id) === String(sid));
-            const lbl = act ? act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(act.dist,1)+'km' : 'Séance';
+            const lbl = act ? act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(act.dist,1)+'km' : defLbl;
             const vals = PACE_DISTS_FINE.map(targetM => {
               const v = bestPaceWindow(s.dist, s.vel, targetM);
               return v !== null && v <= MAX_PACE ? Math.round(v*100)/100 : null;
             });
             selCurves.push({ label:lbl, vals, color:col, dash:[], width:1.5 });
-            ci++;
           }
-        }
+        });
       }
       const allCurves = [...(showCurveB&&cB?[cB]:[]), ...(showCurveA&&cA?[cA]:[]), ...selCurves];
       let paceIdxMin = PACE_DISTS_FINE.length - 1, paceIdxMax = 0;
@@ -990,7 +984,7 @@ function App() {
       });
     }
     return () => destroyChart('power');
-  }, [tab, athleteSection, data, actStreams, powSport, profile.ftp, profile.weight, ftpEstimated, powRangeA, powRangeB, selActIds, showCurveA, showCurveB, showCurveSel]);
+  }, [tab, athleteSection, data, actStreams, powSport, profile.ftp, profile.weight, ftpEstimated, powRangeA, powRangeB, selActId1, selActId2, showCurveA, showCurveB, showCurveSel]);
 
 
 
@@ -1055,36 +1049,32 @@ function App() {
     // Séance sélectionnée — courbe FC→performance s/s
     let resSel = null;
     const resSelArr = [];
-    if (selActIds.size > 0) {
-      const palette = ['#7c4dbc','#2196f3','#4caf50','#ff9800','#e91e63','#00bcd4','#ff5722','#9c27b0'];
-      let ci = 0;
-      for (const sid of selActIds) {
-        const s = actStreams[sid];
-        if (s && s.hr && s.hr.length >= 300) {
-          const metric = isBike ? s.pow : s.vel;
-          if (metric) {
-            const N=196, sumV=new Float64Array(N), cnt=new Int32Array(N);
-            for (let i=0;i<s.hr.length;i++) {
-              const bpm=Math.round(s.hr[i]);
-              if(bpm<40||bpm>=N)continue;
-              const v=metric[i];
-              if(isBike&&v>0){sumV[bpm]+=v;cnt[bpm]++;}
-              else if(!isBike&&v>=0.3&&v<=8.33){sumV[bpm]+=v;cnt[bpm]++;}
-            }
-            const raw=new Array(N).fill(null);
-            for(let b=40;b<N;b++){if(cnt[b]>=5){const avg=sumV[b]/cnt[b];raw[b]=isBike?Math.round(avg):Math.round((1000/60/avg)*100)/100;}}
-            const sm=new Array(N).fill(null);
-            for(let b=40;b<N;b++){let s2=0,c2=0;for(let k=b-3;k<=b+3;k++)if(k>=40&&k<N&&raw[k]!==null){s2+=raw[k];c2++;}if(c2>0)sm[b]=isBike?Math.round(s2/c2):Math.round(s2/c2*100)/100;}
-            let lo=40,hi=N-1;while(lo<N&&sm[lo]===null)lo++;while(hi>40&&sm[hi]===null)hi--;
-            const vals=[];for(let b=lo;b<=hi;b++)vals.push(sm[b]);
-            const act=data.find(a=>String(a.id)===String(sid));
-            const lbl=act?act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(act.dist,1)+'km':'Séance';
-            resSelArr.push({res:{vals,lo,hi},color:palette[ci%palette.length],label:lbl});
-            ci++;
+    [[selActId1,'#7c4dbc','Séance 1'],[selActId2,'#2196f3','Séance 2']].forEach(([sid,col,defLbl]) => {
+      if (!sid) return;
+      const s = actStreams[sid];
+      if (s && s.hr && s.hr.length >= 300) {
+        const metric = isBike ? s.pow : s.vel;
+        if (metric) {
+          const N=196, sumV=new Float64Array(N), cnt=new Int32Array(N);
+          for (let i=0;i<s.hr.length;i++) {
+            const bpm=Math.round(s.hr[i]);
+            if(bpm<40||bpm>=N)continue;
+            const v=metric[i];
+            if(isBike&&v>0){sumV[bpm]+=v;cnt[bpm]++;}
+            else if(!isBike&&v>=0.3&&v<=8.33){sumV[bpm]+=v;cnt[bpm]++;}
           }
+          const raw=new Array(N).fill(null);
+          for(let b=40;b<N;b++){if(cnt[b]>=5){const avg=sumV[b]/cnt[b];raw[b]=isBike?Math.round(avg):Math.round((1000/60/avg)*100)/100;}}
+          const sm=new Array(N).fill(null);
+          for(let b=40;b<N;b++){let s2=0,c2=0;for(let k=b-3;k<=b+3;k++)if(k>=40&&k<N&&raw[k]!==null){s2+=raw[k];c2++;}if(c2>0)sm[b]=isBike?Math.round(s2/c2):Math.round(s2/c2*100)/100;}
+          let lo=40,hi=N-1;while(lo<N&&sm[lo]===null)lo++;while(hi>40&&sm[hi]===null)hi--;
+          const vals=[];for(let b=lo;b<=hi;b++)vals.push(sm[b]);
+          const act=data.find(a=>String(a.id)===String(sid));
+          const lbl=act?act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(act.dist,1)+'km':defLbl;
+          resSelArr.push({res:{vals,lo,hi},color:col,label:lbl});
         }
       }
-    }
+    });
     const allRes = [resA, resB, ...resSelArr.map(r=>r.res)].filter(Boolean);
     if (!allRes.length) { destroyChart('hr'); return; }
     let loAll=195,hiAll=40;
@@ -1119,7 +1109,7 @@ function App() {
       },
     });
     return () => destroyChart('hr');
-  }, [tab, athleteSection, data, actStreams, hrSport, hrRangeA, hrRangeB, selActIds, showCurveA, showCurveB, showCurveSel]);
+  }, [tab, athleteSection, data, actStreams, hrSport, hrRangeA, hrRangeB, selActId1, selActId2, showCurveA, showCurveB, showCurveSel]);
 
 
   useEffect(() => {
@@ -1667,31 +1657,33 @@ function App() {
             ),
             h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px',flex:'1',minWidth:0}},
               h('button',{type:'button',onClick:()=>setShowCurveSel(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
-                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&selActIds.size>0?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
-                selActIds.size>0&&h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveSel?'#7c4dbc':'#d7d3d3'}})
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&(selActId1||selActId2)?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
+                (selActId1||selActId2)&&h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveSel?'#7c4dbc':'#d7d3d3'}})
               ),
-              h('div',{style:{display:'flex',flexDirection:'column',gap:'4px',maxHeight:'160px',overflowY:'auto',marginTop:'2px'}},
-              h('button',{type:'button',onClick:clearSelActs,
-                style:{padding:'3px 8px',border:'2px solid #d7d3d3',background:selActIds.size===0?'#eae9e9':'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',textAlign:'left',cursor:'pointer'},
-                onMouseEnter:e=>{e.currentTarget.style.background='#eae9e9';},
-                onMouseLeave:e=>{e.currentTarget.style.background=selActIds.size===0?'#eae9e9':'transparent';}
-              },"Pas d'affichage"),
-              data.filter(a=>(powSport==='Vélo'?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>{
-                const sid=String(a.id), checked=selActIds.has(sid);
-                return h('div',{key:sid,onClick:()=>{toggleSelAct(sid);setShowCurveSel(true);},
-                  style:{display:'flex',alignItems:'center',gap:'6px',padding:'3px 6px',cursor:'pointer',background:checked?'#f3f0ff':'transparent'},
-                  onMouseEnter:e=>{e.currentTarget.style.background=checked?'#f3f0ff':'#fdf1ee';},
-                  onMouseLeave:e=>{e.currentTarget.style.background=checked?'#f3f0ff':'transparent';}
-                },
-                  h('span',{style:{width:'12px',height:'12px',border:'2px solid '+(checked?'#7c4dbc':'#d7d3d3'),background:checked?'#7c4dbc':'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}},
-                    checked&&h('span',{style:{color:'#ffffff',fontSize:'9px',lineHeight:'1',fontWeight:'900'}},'✓')
-                  ),
-                  h('span',{style:{fontSize:'11px',fontWeight:checked?'700':'400',color:checked?'#7c4dbc':'#201e1d',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
-                    a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+fmtNum(a.dist,1)+'km'
+              h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
+              h('div',{style:{display:'flex',gap:'6px'}},
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',flex:'1',minWidth:0}},
+                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#7c4dbc'}},'1'),
+                  h('select',{value:selActId1||'',onChange:e=>{setSelActId1(e.target.value||null);setShowCurveSel(true);},
+                    style:{padding:'4px 6px',border:'2px solid '+(selActId1?'#7c4dbc':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
+                    h('option',{value:''},"Pas d'affichage"),
+                    data.filter(a=>(powSport==='Vélo'?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
+                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(a.dist,1)+'km'
+                    ))
                   )
-                );
-              })
-            )
+                ),
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',flex:'1',minWidth:0}},
+                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#2196f3'}},'2'),
+                  h('select',{value:selActId2||'',onChange:e=>{setSelActId2(e.target.value||null);setShowCurveSel(true);},
+                    style:{padding:'4px 6px',border:'2px solid '+(selActId2?'#2196f3':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
+                    h('option',{value:''},"Pas d'affichage"),
+                    data.filter(a=>(powSport==='Vélo'?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
+                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(a.dist,1)+'km'
+                    ))
+                  )
+                )
+              )
+              )
             ),
             h('div',{style:{padding:'16px 20px',display:'flex',flexDirection:'column',gap:'8px'}},
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
@@ -1861,31 +1853,33 @@ function App() {
             // Séance
             h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px',flex:'1',minWidth:0}},
               h('button',{type:'button',onClick:()=>setShowCurveSel(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
-                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&selActIds.size>0?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
-                selActIds.size>0&&h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveSel?'#7c4dbc':'#d7d3d3'}})
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&(selActId1||selActId2)?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
+                (selActId1||selActId2)&&h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveSel?'#7c4dbc':'#d7d3d3'}})
               ),
-              h('div',{style:{display:'flex',flexDirection:'column',gap:'4px',maxHeight:'160px',overflowY:'auto',marginTop:'2px'}},
-              h('button',{type:'button',onClick:clearSelActs,
-                style:{padding:'3px 8px',border:'2px solid #d7d3d3',background:selActIds.size===0?'#eae9e9':'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',textAlign:'left',cursor:'pointer'},
-                onMouseEnter:e=>{e.currentTarget.style.background='#eae9e9';},
-                onMouseLeave:e=>{e.currentTarget.style.background=selActIds.size===0?'#eae9e9':'transparent';}
-              },"Pas d'affichage"),
-              data.filter(a=>a.sport===hrSport&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>{
-                const sid=String(a.id), checked=selActIds.has(sid);
-                return h('div',{key:sid,onClick:()=>{toggleSelAct(sid);setShowCurveSel(true);},
-                  style:{display:'flex',alignItems:'center',gap:'6px',padding:'3px 6px',cursor:'pointer',background:checked?'#f3f0ff':'transparent'},
-                  onMouseEnter:e=>{e.currentTarget.style.background=checked?'#f3f0ff':'#fdf1ee';},
-                  onMouseLeave:e=>{e.currentTarget.style.background=checked?'#f3f0ff':'transparent';}
-                },
-                  h('span',{style:{width:'12px',height:'12px',border:'2px solid '+(checked?'#7c4dbc':'#d7d3d3'),background:checked?'#7c4dbc':'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}},
-                    checked&&h('span',{style:{color:'#ffffff',fontSize:'9px',lineHeight:'1',fontWeight:'900'}},'✓')
-                  ),
-                  h('span',{style:{fontSize:'11px',fontWeight:checked?'700':'400',color:checked?'#7c4dbc':'#201e1d',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
-                    a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+fmtNum(a.dist,1)+'km'
+              h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
+              h('div',{style:{display:'flex',gap:'6px'}},
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',flex:'1',minWidth:0}},
+                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#7c4dbc'}},'1'),
+                  h('select',{value:selActId1||'',onChange:e=>{setSelActId1(e.target.value||null);setShowCurveSel(true);},
+                    style:{padding:'4px 6px',border:'2px solid '+(selActId1?'#7c4dbc':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
+                    h('option',{value:''},"Pas d'affichage"),
+                    data.filter(a=>a.sport===hrSport&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
+                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(a.dist,1)+'km'
+                    ))
                   )
-                );
-              })
-            )
+                ),
+                h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',flex:'1',minWidth:0}},
+                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#2196f3'}},'2'),
+                  h('select',{value:selActId2||'',onChange:e=>{setSelActId2(e.target.value||null);setShowCurveSel(true);},
+                    style:{padding:'4px 6px',border:'2px solid '+(selActId2?'#2196f3':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
+                    h('option',{value:''},"Pas d'affichage"),
+                    data.filter(a=>a.sport===hrSport&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
+                      a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(a.dist,1)+'km'
+                    ))
+                  )
+                )
+              )
+              )
             ),
             // Sport
             h('div',{style:{padding:'16px 20px',display:'flex',flexDirection:'column',gap:'8px'}},
