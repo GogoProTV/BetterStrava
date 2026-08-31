@@ -717,11 +717,12 @@ function App() {
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => {
         if (!v || v <= 0) return null;
         const pace = 1000 / 60 / v;
-        return pace > 0 ? Math.round(pace * 100) / 100 : null;
+        // Filtrer les arrêts (>15 min/km) et les valeurs GPS impossibles (<1 min/km)
+        return (pace >= 1 && pace <= 15) ? Math.round(pace * 100) / 100 : null;
       };
       const paceVals = thin(smoothedVel).map(conv).filter(v => v !== null);
-      paceMin = paceVals.length ? Math.floor(Math.min(...paceVals) * 2) / 2 - 0.5 : 0;
-      paceMax = paceVals.length ? Math.ceil(Math.max(...paceVals) * 2) / 2 + 0.5 : 15;
+      paceMin = paceVals.length ? Math.max(1, Math.floor(Math.min(...paceVals) * 2) / 2 - 0.5) : 1;
+      paceMax = paceVals.length ? Math.min(15, Math.ceil(Math.max(...paceVals) * 2) / 2 + 0.5) : 12;
       datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(smoothedVel).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
     if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(smooth(Array.from(estPowData), 30)), borderColor: '#7c4dbc', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
@@ -1764,6 +1765,40 @@ function App() {
               onMouseEnter: e => { e.currentTarget.style.background='#ae1800'; e.currentTarget.style.borderColor='#ae1800'; },
               onMouseLeave: e => { e.currentTarget.style.background='#ec3013'; e.currentTarget.style.borderColor='#ec3013'; }
             }, 'Comparer'),
+            hasData && h('button', {
+              type: 'button',
+              onClick: () => {
+                const vd = st.velocity_smooth?.data || [];
+                const hd = st.heartrate?.data || [];
+                const dd = st.distance?.data || [];
+                const ad = st.altitude?.data || [];
+                const td = st.time?.data || [];
+                const isBikeExp = act.sport === 'Vélo';
+                // Header
+                const cols = ['time_s', 'distance_m', isBikeExp ? 'speed_kmh' : 'pace_min_km', 'heartrate_bpm', 'altitude_m'];
+                const rows = [cols.join(',')];
+                const n = Math.max(vd.length, hd.length, dd.length);
+                for (let i = 0; i < n; i++) {
+                  const t = td[i] ?? i;
+                  const d = dd[i] != null ? Math.round(dd[i]) : '';
+                  const v = vd[i] != null ? (isBikeExp ? Math.round(vd[i]*3.6*10)/10 : (vd[i]>0 ? Math.round(1000/60/vd[i]*100)/100 : '')) : '';
+                  const hr = hd[i] != null ? Math.round(hd[i]) : '';
+                  const alt = ad[i] != null ? Math.round(ad[i]*10)/10 : '';
+                  rows.push([t, d, v, hr, alt].join(','));
+                }
+                const csv = rows.join(String.fromCharCode(10))
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = (act.name || act.sport).replace(/[^a-z0-9]/gi,'_') + '_' + act.date.toISOString().slice(0,10) + '_streams.csv';
+                a.click();
+                URL.revokeObjectURL(url);
+              },
+              style:{ padding:'7px 14px', border:'2px solid #605d5d', background:'transparent', color:'#605d5d', fontFamily:'inherit', fontSize:'11px', fontWeight:'700', letterSpacing:'0.1em', textTransform:'uppercase', cursor:'pointer' },
+              onMouseEnter: e => { e.currentTarget.style.borderColor='#201e1d'; e.currentTarget.style.color='#201e1d'; },
+              onMouseLeave: e => { e.currentTarget.style.borderColor='#605d5d'; e.currentTarget.style.color='#605d5d'; }
+            }, 'Export CSV'),
             serieBtns.length > 0 && h('div', { style:{ display:'flex', gap:'8px' } }, serieBtns.map(serBtn))
           ),
           isLoading && h('div', { style:{ height:'400px', display:'flex', alignItems:'center', fontSize:'12px', color:'#605d5d' } }, 'Chargement des streams Strava…'),
