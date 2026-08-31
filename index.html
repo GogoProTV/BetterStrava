@@ -1563,13 +1563,38 @@ function App() {
         const vd = st.velocity_smooth?.data || [];
         const hd = st.heartrate?.data || [];
         const dd = st.distance?.data || [];
+        const N2 = Math.max(1, Math.floor(vd.length / 800));
+        // Trouver le pic FC et son contexte
+        const hrMax = hd.length ? Math.max(...hd) : 0;
+        const hrMaxIdx = hd.indexOf(hrMax);
+        const hrWindow = hd.slice(Math.max(0,hrMaxIdx-5), hrMaxIdx+6);
+        const hrSmoothed10 = (() => {
+          if (!hd.length) return [];
+          const win = 10, half = 5, out = [];
+          let sum = 0, cnt = 0;
+          for (let i=0;i<Math.min(win,hd.length);i++){sum+=hd[i];cnt++;}
+          for (let i=0;i<hd.length;i++){
+            out.push(cnt?Math.round(sum/cnt):null);
+            if(i-half>=0)sum-=hd[i-half],cnt--;
+            if(i+half+1<hd.length)sum+=hd[i+half+1],cnt++;
+          }
+          return out;
+        })();
+        const hrAtPeakAfterSmooth = hrSmoothed10[hrMaxIdx];
+        // Distance au pic FC
+        const distAtPeak = dd[hrMaxIdx] ? (dd[hrMaxIdx]/1000).toFixed(2)+' km' : 'N/A';
+        // Vitesse filtrée (sans aberrations > 8.33 m/s)
+        const velFiltered = vd.filter(v=>v<=8.33&&v>0.3);
         console.log('[BetterStrava] Streams activité', id, {
           points: vd.length,
-          vel_max_ms: vd.length ? Math.max(...vd).toFixed(2) + ' m/s' : 'N/A',
-          vel_max_pace: vd.length ? (1000/60/Math.max(...vd)).toFixed(2) + ' min/km' : 'N/A',
-          hr_max: hd.length ? Math.max(...hd) + ' bpm' : 'N/A',
+          thin_N: N2 + ' (1 point sur '+N2+')',
+          hr_max_brut: hrMax + ' bpm @ index '+hrMaxIdx+' ('+distAtPeak+')',
+          hr_au_pic_apres_lissage_10s: hrAtPeakAfterSmooth + ' bpm',
           hr_avg: hd.length ? Math.round(hd.reduce((a,b)=>a+b,0)/hd.length) + ' bpm' : 'N/A',
-          dist_total: dd.length ? (dd[dd.length-1]/1000).toFixed(2) + ' km' : 'N/A',
+          hr_window_brute_au_pic: hrWindow.join(', '),
+          vel_max_brut: vd.length ? Math.max(...vd).toFixed(2)+' m/s (aberration GPS probable si >8.33)' : 'N/A',
+          vel_max_filtre: velFiltered.length ? Math.max(...velFiltered).toFixed(2)+' m/s → '+(1000/60/Math.max(...velFiltered)).toFixed(2)+' min/km' : 'N/A',
+          dist_total: dd.length ? (dd[dd.length-1]/1000).toFixed(2)+' km' : 'N/A',
         });
       }
       drawRowChart(id, act, enriched, canvasRef.current, serieVis);
