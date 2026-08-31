@@ -775,6 +775,7 @@ function App() {
   }
 
   const [hrSport, setHrSport] = useState('Course');
+  const [powSport, setPowSport] = useState('Vélo');
   // Intervalles A/B pour chaque onglet (jours)
   const [showCurveA, setShowCurveA] = useState(true);
   const [showCurveB, setShowCurveB] = useState(true);
@@ -827,153 +828,152 @@ function App() {
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Puissance') return;
     chartDefaults();
-    const ftpVal = Number(profile.ftp) || ftpEstimated || null;
-    const hasRealPower = data.some(a => a.sport==='Vélo' && a.power);
-    const hasEstPower = data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow);
-    const estSuffix = !hasRealPower && hasEstPower ? ' (est.)' : '';
-    const labels = POWER_DURATIONS.map(d => d.l);
+    const isVeloPow = powSport === 'Vélo';
+    const isTrail   = powSport === 'Trail';
     const nowMs = Date.now();
-    // Période A (actuelle) et B (comparaison) — fenêtres adjacentes non chevauchantes
     const endA = nowMs, startA = endA - powRangeA * 86400000;
-    const endB = startA,  startB = endB - powRangeB * 86400000;
-    const curveA = powerCurveByDate(new Date(startA).toISOString().slice(0,10), new Date(endA).toISOString().slice(0,10));
-    const curveB = powerCurveByDate(new Date(startB).toISOString().slice(0,10), new Date(endB).toISOString().slice(0,10));
-    const wA = curveA.map(v => v ? v.w : null);
-    const wB = curveB.map(v => v ? v.w : null);
-    const jA = curveA.map(v => v ? v.j : null);
-    const jB = curveB.map(v => v ? v.j : null);
-    const datasets = [];
-    if (showCurveB) datasets.push({ label:'Comparaison'+estSuffix, data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' });
-    if (showCurveA) datasets.push({ label:'Actuelle'+estSuffix, data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, spanGaps:true, yAxisID:'yW' });
-    if (ftpVal) datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
-    if (selActId && showCurveSel) {
-      const s = actStreams[selActId];
-      if (s && s.pow && s.pow.length) {
-        const actPowCurve = POWER_DURATIONS.map(({s:dur}) => bestAvgWindow(s.pow, dur));
-        datasets.push({ label:'Séance', data:actPowCurve, borderColor:'#7c4dbc', borderWidth:2, borderDash:[], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#7c4dbc', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' });
+    const endB = startA, startB = endB - powRangeB * 86400000;
+    const d2s = t => new Date(t).toISOString().slice(0,10);
+
+    if (isVeloPow) {
+      // ── Courbe de Puissance (Vélo) ─────────────────────────────────────
+      const ftpVal = Number(profile.ftp) || ftpEstimated || null;
+      const hasRealPower = data.some(a => a.sport==='Vélo' && a.power);
+      const hasEstPower  = data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow);
+      const estSuffix = !hasRealPower && hasEstPower ? ' (est.)' : '';
+      const labels = POWER_DURATIONS.map(d => d.l);
+      const curveA = powerCurveByDate(d2s(startA), d2s(endA));
+      const curveB = powerCurveByDate(d2s(startB), d2s(endB));
+      const wA = curveA.map(v => v ? v.w : null);
+      const wB = curveB.map(v => v ? v.w : null);
+      const jA = curveA.map(v => v ? v.j : null);
+      const jB = curveB.map(v => v ? v.j : null);
+      const wmaxA = wA.filter(Boolean).length ? Math.max(...wA.filter(Boolean)) : null;
+      const wmaxB = wB.filter(Boolean).length ? Math.max(...wB.filter(Boolean)) : null;
+      const datasets = [];
+      if (showCurveB) datasets.push({ label:'Comparaison'+estSuffix, data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' });
+      if (showCurveA) datasets.push({ label:'Actuelle'+estSuffix, data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, spanGaps:true, yAxisID:'yW' });
+      if (ftpVal) datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
+      if (selActId && showCurveSel) {
+        const s = actStreams[selActId];
+        if (s && s.pow && s.pow.length) {
+          const actPowCurve = POWER_DURATIONS.map(({s:dur}) => bestAvgWindow(s.pow, dur));
+          datasets.push({ label:'Séance', data:actPowCurve, borderColor:'#7c4dbc', borderWidth:2, borderDash:[], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#7c4dbc', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' });
+        }
       }
-    }
-    const wmaxA = wA.filter(Boolean).length ? Math.max(...wA.filter(Boolean)) : null;
-    const wmaxB = wB.filter(Boolean).length ? Math.max(...wB.filter(Boolean)) : null;
-    upsert('power', powerRef, {
-      type:'line', plugins:[crosshairPlugin],
-      data:{ labels, datasets },
-      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
-        interaction:{mode:'index',intersect:false,axis:'x'}, hover:{animationDuration:0},
-        plugins:{
-          legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
-          tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:12,displayColors:true,
-            callbacks:{
-              title: items => 'Effort : ' + POWER_DURATIONS[items[0].dataIndex].l,
-              label: c => {
-                const v = c.parsed.y; if (v===null) return null;
-                if (c.dataset.label.startsWith('FTP')) return '─── ' + c.dataset.label;
-                const jVal = c.datasetIndex===1 ? jA[c.dataIndex] : c.datasetIndex===0 ? jB[c.dataIndex] : null;
-                const jStr = jVal ? '  ·  ' + (jVal>=1000 ? Math.round(jVal/100)/10+' kJ' : jVal+' J') : '';
-                const wpkg = profile.weight ? '  ·  ' + Math.round(v/Number(profile.weight)*100)/100+' W/kg' : '';
-                return c.dataset.label + ' : ' + v + ' W' + jStr + wpkg;
-              },
-              afterBody: () => {
-                const ls = [];
-                if (wmaxA) ls.push('Wmax actuelle : ' + wmaxA + ' W');
-                if (wmaxB) ls.push('Wmax compar. : ' + wmaxB + ' W');
-                if (ftpVal) ls.push('FTP : ' + ftpVal + ' W' + (profile.weight ? '  ·  ' + Math.round(ftpVal/Number(profile.weight)*100)/100 + ' W/kg' : ''));
-                if (!hasRealPower && hasEstPower) ls.push('⚠ Puissance estimée (modèle physique)');
-                return ls;
+      upsert('power', powerRef, {
+        type:'line', plugins:[crosshairPlugin],
+        data:{ labels, datasets },
+        options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
+          interaction:{mode:'index',intersect:false,axis:'x'}, hover:{animationDuration:0},
+          plugins:{
+            legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
+            tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:12,displayColors:true,
+              callbacks:{
+                title: items => 'Effort : ' + POWER_DURATIONS[items[0].dataIndex].l,
+                label: c => {
+                  const v = c.parsed.y; if (v===null) return null;
+                  if (c.dataset.label.startsWith('FTP')) return '─── ' + c.dataset.label;
+                  const jVal = c.datasetIndex===1 ? jA[c.dataIndex] : c.datasetIndex===0 ? jB[c.dataIndex] : null;
+                  const jStr = jVal ? '  ·  ' + (jVal>=1000 ? Math.round(jVal/100)/10+' kJ' : jVal+' J') : '';
+                  const wpkg = profile.weight ? '  ·  ' + Math.round(v/Number(profile.weight)*100)/100+' W/kg' : '';
+                  return c.dataset.label + ' : ' + v + ' W' + jStr + wpkg;
+                },
+                afterBody: () => {
+                  const ls = [];
+                  if (wmaxA) ls.push('Wmax actuelle : ' + wmaxA + ' W');
+                  if (wmaxB) ls.push('Wmax compar. : ' + wmaxB + ' W');
+                  if (!hasRealPower && hasEstPower) ls.push('⚠ Puissance estimée (modèle physique)');
+                  return ls;
+                }
               }
             }
-          }
+          },
+          scales:{
+            x:{grid:{display:false},title:{display:true,text:"Durée d'effort",color:'#605d5d'}},
+            yW:{position:'left',grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},beginAtZero:false,title:{display:true,text:'Puissance (W)',color:'#605d5d'}},
+          },
         },
-        scales:{
-          x:{grid:{display:false},title:{display:true,text:"Durée d'effort",color:'#605d5d'}},
-          yW:{position:'left',grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},beginAtZero:false,title:{display:true,text:'Puissance (W)',color:'#605d5d'}},
-        },
-      },
-    });
-    return () => destroyChart('power');
-  }, [tab, athleteSection, data, actStreams, profile.ftp, profile.weight, ftpEstimated, powRangeA, powRangeB, selActId, showCurveA, showCurveB, showCurveSel]);
-
-  useEffect(() => {
-    if (tab!=='athlete'||athleteSection!=='Allure') return;
-    chartDefaults();
-    const fmtP = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
-    const PACE_DISTS_FINE = [];
-    for (let m = 200; m <= 42200; m += 100) PACE_DISTS_FINE.push(m);
-    const paceLabels = PACE_DISTS_FINE.map(m => {
-      if (m < 1000) return m % 500 === 0 ? m + ' m' : '';
-      if (m === 1000) return '1 km'; if (m === 2000) return '2 km'; if (m === 3000) return '3 km';
-      if (m === 5000) return '5 km'; if (m === 10000) return '10 km'; if (m === 15000) return '15 km';
-      if (m === 21100) return 'Semi'; if (m === 30000) return '30 km'; if (m === 42200) return 'Marathon';
-      if (m > 5000 && m <= 30000 && m % 5000 === 0) return (m/1000) + ' km';
-      return '';
-    });
-    const nowMs = Date.now();
-    const endA = nowMs, startA = endA - paceRangeA * 86400000;
-    const endB = startA,  startB = endB - paceRangeB * 86400000;
-    const buildPaceCurve = (t0, t1, color, dash, width, label) => {
-      const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.date.getTime()>=t0 && a.date.getTime()<t1);
-      const vals = PACE_DISTS_FINE.map(targetM => {
-        let best = null;
-        for (const a of runs) {
-          const ps = actStreams[a.id];
-          if (ps && ps.dist && ps.vel) {
-            const v = bestPaceWindow(ps.dist, ps.vel, targetM);
-            if (v !== null && v <= MAX_PACE) best = best === null ? v : Math.min(best, v);
-          } else if (a.dist*1000 >= targetM && a.pace && a.pace <= MAX_PACE) {
-            best = best === null ? a.pace : Math.min(best, a.pace);
-          }
-        }
-        return best !== null ? Math.round(best * 100) / 100 : null;
       });
-      return { label, vals, color, dash, width };
-    };
-    const cA = buildPaceCurve(startA, endA, '#ec3013', [], 2.5, 'Actuelle');
-    const cB = buildPaceCurve(startB, endB, '#bab6b6', [5,4], 2, 'Comparaison');
-    // Séance sélectionnée — courbe s/s d'allure en violet
-    let cSel = null;
-    if (selActId) {
-      const s = actStreams[selActId];
-      if (s && s.dist && s.vel) {
+    } else {
+      // ── Courbe d'Allure (Course / Trail) ──────────────────────────────
+      const fmtP = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
+      const PACE_DISTS_FINE = [];
+      for (let m = 200; m <= 42200; m += 100) PACE_DISTS_FINE.push(m);
+      const paceLabels = PACE_DISTS_FINE.map(m => {
+        if (m < 1000) return m % 500 === 0 ? m + ' m' : '';
+        if (m === 1000) return '1 km'; if (m === 2000) return '2 km'; if (m === 3000) return '3 km';
+        if (m === 5000) return '5 km'; if (m === 10000) return '10 km'; if (m === 15000) return '15 km';
+        if (m === 21100) return 'Semi'; if (m === 30000) return '30 km'; if (m === 42200) return 'Marathon';
+        if (m > 5000 && m <= 30000 && m % 5000 === 0) return (m/1000) + ' km';
+        return '';
+      });
+      const buildPaceCurve = (t0, t1, color, dash, width, label) => {
+        const runs = data.filter(a => a.sport===powSport && a.date.getTime()>=t0 && a.date.getTime()<t1);
         const vals = PACE_DISTS_FINE.map(targetM => {
-          const v = bestPaceWindow(s.dist, s.vel, targetM);
-          return v !== null && v <= MAX_PACE ? Math.round(v*100)/100 : null;
-        });
-        cSel = { label:'Séance', vals, color:'#7c4dbc', dash:[], width:2 };
-      }
-    }
-    const allCurves = [...(showCurveB&&cB?[cB]:[]), ...(showCurveA&&cA?[cA]:[]), ...(cSel&&showCurveSel?[cSel]:[])];
-    let paceIdxMin = PACE_DISTS_FINE.length - 1, paceIdxMax = 0;
-    allCurves.forEach(c => c.vals.forEach((v,i) => { if (v!==null) { paceIdxMin=Math.min(paceIdxMin,i); paceIdxMax=Math.max(paceIdxMax,i); }}));
-    if (paceIdxMin > paceIdxMax) { paceIdxMin=0; paceIdxMax=PACE_DISTS_FINE.length-1; }
-    const paceLabelsSlice = paceLabels.slice(paceIdxMin, paceIdxMax+1);
-    const paceDatasetsNew = allCurves.map(c => ({
-      label: c.label, data: c.vals.slice(paceIdxMin, paceIdxMax+1),
-      borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
-      backgroundColor: 'transparent',
-      fill: false, tension: 0.3,
-      pointRadius: 0, pointHoverRadius: 4, spanGaps: true,
-    }));
-    upsert('pace', paceRef, {
-      type:'line',
-      data:{ labels: paceLabelsSlice, datasets: paceDatasetsNew },
-      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
-        plugins:{
-          legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
-          tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
-            callbacks:{
-              title: items => { const m=PACE_DISTS_FINE[paceIdxMin+items[0].dataIndex]; return m>=1000?(m/1000%1===0?m/1000+' km':(m/1000).toFixed(1)+' km'):m+' m'; },
-              label: c => c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':fmtP(c.parsed.y)+' /km'),
+          let best = null;
+          for (const a of runs) {
+            const ps = actStreams[a.id];
+            if (ps && ps.dist && ps.vel) {
+              const v = bestPaceWindow(ps.dist, ps.vel, targetM);
+              if (v !== null && v <= MAX_PACE) best = best === null ? v : Math.min(best, v);
+            } else if (a.dist*1000 >= targetM && a.pace && a.pace <= MAX_PACE) {
+              best = best === null ? a.pace : Math.min(best, a.pace);
             }
           }
+          return best !== null ? Math.round(best * 100) / 100 : null;
+        });
+        return { label, vals, color, dash, width };
+      };
+      const cA = buildPaceCurve(startA, endA, '#ec3013', [], 2.5, 'Actuelle');
+      const cB = buildPaceCurve(startB, endB, '#bab6b6', [5,4], 2, 'Comparaison');
+      let cSel = null;
+      if (selActId && showCurveSel) {
+        const s = actStreams[selActId];
+        if (s && s.dist && s.vel) {
+          const vals = PACE_DISTS_FINE.map(targetM => {
+            const v = bestPaceWindow(s.dist, s.vel, targetM);
+            return v !== null && v <= MAX_PACE ? Math.round(v*100)/100 : null;
+          });
+          cSel = { label:'Séance', vals, color:'#7c4dbc', dash:[], width:2 };
+        }
+      }
+      const allCurves = [...(showCurveB&&cB?[cB]:[]), ...(showCurveA&&cA?[cA]:[]), ...(cSel?[cSel]:[])];
+      let paceIdxMin = PACE_DISTS_FINE.length - 1, paceIdxMax = 0;
+      allCurves.forEach(c => c.vals.forEach((v,i) => { if (v!==null) { paceIdxMin=Math.min(paceIdxMin,i); paceIdxMax=Math.max(paceIdxMax,i); }}));
+      if (paceIdxMin > paceIdxMax) { paceIdxMin=0; paceIdxMax=PACE_DISTS_FINE.length-1; }
+      const paceLabelsSlice = paceLabels.slice(paceIdxMin, paceIdxMax+1);
+      const paceDatasetsNew = allCurves.map(c => ({
+        label: c.label, data: c.vals.slice(paceIdxMin, paceIdxMax+1),
+        borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
+        backgroundColor: 'transparent', fill: false, tension: 0.3,
+        pointRadius: 0, pointHoverRadius: 4, spanGaps: true,
+      }));
+      const yLabel = isTrail ? 'Allure VAP (min/km)' : 'Allure (min/km)';
+      upsert('power', powerRef, {
+        type:'line',
+        data:{ labels: paceLabelsSlice, datasets: paceDatasetsNew },
+        options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
+          plugins:{
+            legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
+            tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
+              callbacks:{
+                title: items => { const m=PACE_DISTS_FINE[paceIdxMin+items[0].dataIndex]; return m>=1000?(m/1000%1===0?m/1000+' km':(m/1000).toFixed(1)+' km'):m+' m'; },
+                label: c => c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':fmtP(c.parsed.y)+' /km'),
+              }
+            }
+          },
+          scales:{
+            x:{grid:{display:false},title:{display:false},ticks:{maxRotation:0,autoSkip:false,maxTicksLimit:9999,callback:(val,i)=>paceLabelsSlice[i]||null}},
+            y:{reverse:true,grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},ticks:{callback:v=>fmtP(v)},title:{display:true,text:yLabel,color:'#605d5d'}}
+          },
         },
-        scales:{
-          x:{grid:{display:false},title:{display:false},ticks:{maxRotation:0,autoSkip:false,maxTicksLimit:9999,callback:(val,i)=>paceLabelsSlice[i]||null}},
-          y:{reverse:true,grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},ticks:{callback:v=>fmtP(v)},title:{display:true,text:'Allure (min/km)',color:'#605d5d'}}
-        },
-      },
-    });
-    return () => destroyChart('pace');
-  }, [tab, athleteSection, data, actStreams, paceRangeA, paceRangeB, selActId, showCurveA, showCurveB, showCurveSel]);
+      });
+    }
+    return () => destroyChart('power');
+  }, [tab, athleteSection, data, actStreams, powSport, profile.ftp, profile.weight, ftpEstimated, powRangeA, powRangeB, selActId, showCurveA, showCurveB, showCurveSel]);
+
+
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Fréquence cardiaque') return;
@@ -1337,7 +1337,7 @@ function App() {
   const stravaBtnLabel=status==='ready'?'Déconnecter':status==='loading'?'Chargement…':'Connecter Strava';
   const noData=!data.length;
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
-  const athleteSections=['Condition physique','Puissance','Allure','Fréquence cardiaque'];
+  const athleteSections=['Condition physique','Puissance','Fréquence cardiaque'];
 
   function RowDetail({ act, id }) {
     const canvasRef = useRef(null);
@@ -1610,9 +1610,8 @@ function App() {
           )
         ),
         athleteSection==='Puissance'&&h('div',null,
-          // Bande de contrôle : Actuelle | Comparaison | Séance
+          // Bande ctrl unifiée
           h('section',{style:{display:'flex',alignItems:'stretch',borderBottom:'2px solid #201e1d'}},
-            // Période actuelle — label = bouton toggle
             h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
               h('button',{type:'button',onClick:()=>setShowCurveA(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
                 h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveA?'#ec3013':'#bab6b6',textDecoration:showCurveA?'none':'line-through'}},'Actuelle'),
@@ -1626,7 +1625,6 @@ function App() {
                 },o.l))
               )
             ),
-            // Comparaison — label = bouton toggle
             h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
               h('button',{type:'button',onClick:()=>setShowCurveB(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
                 h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveB?'#605d5d':'#bab6b6',textDecoration:showCurveB?'none':'line-through'}},'Comparaison'),
@@ -1640,7 +1638,6 @@ function App() {
                 },o.l))
               )
             ),
-            // Séance
             h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px',flex:'1',minWidth:0}},
               h('button',{type:'button',onClick:()=>setShowCurveSel(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
                 h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&selActId?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
@@ -1649,261 +1646,146 @@ function App() {
               h('select',{value:selActId||'',onChange:e=>{setSelActId(e.target.value||null);setShowCurveSel(true);},
                 style:{padding:'5px 10px',border:'2px solid #d7d3d3',background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',cursor:'pointer',maxWidth:'100%'}
               },
-                h('option',{value:''},'Agrégé'),
-                data.filter(a=>a.sport==='Vélo'&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+(a.name||a.sport)+' · '+fmtNum(a.dist,1)+' km'))
+                h('option',{value:''},"Pas d'affichage"),
+                data.filter(a=>(powSport==='Vélo'?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>
+                  h('option',{key:a.id,value:String(a.id)},a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+(a.name||a.sport)+' · '+fmtNum(a.dist,1)+' km')
+                )
               )
             ),
-            // Sport
             h('div',{style:{padding:'16px 20px',display:'flex',flexDirection:'column',gap:'8px'}},
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
-              h('span',{style:{fontSize:'13px',fontWeight:'800',color:'#201e1d'}},'Vélo')
+              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
+                (()=>{
+                  const totals={};
+                  data.forEach(a=>{if(['Vélo','Course','Trail'].includes(a.sport))totals[a.sport]=(totals[a.sport]||0)+a.time;});
+                  return Object.entries(totals).sort((a,b)=>b[1]-a[1]).map(([sp])=>sp);
+                })().map(sp=>
+                  h('button',{key:sp,type:'button',onClick:()=>{setPowSport(sp);setSelActId(null);},
+                    style:{padding:'5px 10px',border:'2px solid '+(powSport===sp?'#ec3013':'#d7d3d3'),background:powSport===sp?'#ec3013':'transparent',color:powSport===sp?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
+                    onMouseEnter:e=>{if(powSport!==sp){e.currentTarget.style.borderColor='#ec3013';e.currentTarget.style.color='#ec3013';}},
+                    onMouseLeave:e=>{if(powSport!==sp){e.currentTarget.style.borderColor='#d7d3d3';e.currentTarget.style.color='#605d5d';}}
+                  },sp==='Trail'?'Trail·VAP':sp)
+                )
+              )
             )
           ),
-
           (()=>{
-            const ftpVal = Number(profile.ftp)||ftpEstimated||null;
-            const isEstimatedFtp = !Number(profile.ftp) && !!ftpEstimated;
-            const hasStreams = data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow);
-            const estTag = hasStreams && !data.some(a=>a.sport==='Vélo'&&a.power) ? ' (est.)' : '';
-            // Puissance critique (CP) : meilleur effort 20-60 min × 0.92 (plus conservateur que FTP 0.95)
-            const powStat = (durS, daysLimit) => {
-              const cutoff = Date.now() - daysLimit*86400000;
-              const rides = data.filter(a => a.sport==='Vélo' && a.date.getTime()>=cutoff);
-              let best = null;
-              for (const a of rides) {
-                const s = actStreams[a.id];
-                if (s && s.pow && s.pow.length >= durS) {
-                  const v = bestAvgWindow(s.pow, durS);
-                  if (v!==null) best = best===null ? v : Math.max(best,v);
+            const isVeloPow=powSport==='Vélo', isTrailPow=powSport==='Trail';
+            const nowMs2=Date.now();
+            const endA2=nowMs2, startA2=endA2-powRangeA*86400000;
+            const endB2=startA2, startB2=endB2-powRangeB*86400000;
+            const d2s=t=>new Date(t).toISOString().slice(0,10);
+            const rl=d=>d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an';
+            const compLabel='vs '+rl(powRangeB)+' préc.';
+            if (isVeloPow) {
+              const ftpVal=Number(profile.ftp)||ftpEstimated||null;
+              const isEstimatedFtp=!Number(profile.ftp)&&!!ftpEstimated;
+              const hasStreams=data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id]&&actStreams[a.id]!=='error'&&actStreams[a.id].pow);
+              const estTag=hasStreams&&!data.some(a=>a.sport==='Vélo'&&a.power)?' (est.)':'';
+              const curA2=powerCurveByDate(d2s(startA2),d2s(endA2));
+              const curB2=powerCurveByDate(d2s(startB2),d2s(endB2));
+              const b30=POWER_DURATIONS.findIndex(d=>d.s===1800), b60=POWER_DURATIONS.findIndex(d=>d.s===3600);
+              const wmaxA2=curA2.filter(v=>v).length?Math.max(...curA2.filter(v=>v).map(v=>v.w)):null;
+              const wmaxB2=curB2.filter(v=>v).length?Math.max(...curB2.filter(v=>v).map(v=>v.w)):null;
+              const wmaxDelta=(wmaxA2&&wmaxB2&&wmaxB2>0)?Math.round(((wmaxA2-wmaxB2)/wmaxB2)*100):null;
+              const kjA=curA2[POWER_DURATIONS.findIndex(d=>d.s===1200)], kjB=curB2[POWER_DURATIONS.findIndex(d=>d.s===1200)];
+              const kjAval=kjA?Math.round(kjA.j/1000*10)/10:null, kjBval=kjB?Math.round(kjB.j/1000*10)/10:null;
+              const kjDelta=(kjAval&&kjBval&&kjBval>0)?Math.round(((kjAval-kjBval)/kjBval)*100):null;
+              const cpAval=(()=>{const v30=curA2[b30],v60=curA2[b60];const b=Math.max(v30?v30.w:0,v60?v60.w:0);return b>0?Math.round(b*0.92):null;})();
+              const cpBval=(()=>{const v30=curB2[b30],v60=curB2[b60];const b=Math.max(v30?v30.w:0,v60?v60.w:0);return b>0?Math.round(b*0.92):null;})();
+              const cpDelta=(cpAval&&cpBval&&cpBval>0)?Math.round(((cpAval-cpBval)/cpBval)*100):null;
+              const wkg=ftpVal&&profile.weight?Math.round(ftpVal/Number(profile.weight)*100)/100:null;
+              const ftpBval=(()=>{const best=curB2[POWER_DURATIONS.findIndex(d=>d.s===1200)];return best?Math.round(best.w*0.95):null;})();
+              const ftpDelta=(ftpVal&&ftpBval&&ftpBval>0)?Math.round(((ftpVal-ftpBval)/ftpBval)*100):null;
+              const wkgB=ftpBval&&profile.weight?Math.round(ftpBval/Number(profile.weight)*100)/100:null;
+              const wkgDelta=(wkg&&wkgB&&wkgB>0)?Math.round(((wkg-wkgB)/wkgB)*100):null;
+              const cells=[
+                {label:'FTP'+estTag,val:ftpVal?ftpVal+' W':null,delta:ftpDelta,sub:isEstimatedFtp?'estimée':'manuelle',betterHigh:true},
+                {label:'W/kg'+estTag,val:wkg?wkg+' W/kg':null,delta:wkgDelta,sub:profile.weight?'masse '+profile.weight+' kg':'renseigne le poids',betterHigh:true},
+                {label:'kJ·20 min',val:kjAval?kjAval+' kJ':null,delta:kjDelta,sub:kjAval?'= '+Math.round(kjAval*1000)+' J':'calcule la courbe',betterHigh:true},
+                {label:'Wmax'+estTag,val:wmaxA2?wmaxA2+' W':null,delta:wmaxDelta,sub:wmaxA2&&profile.weight?Math.round(wmaxA2/Number(profile.weight)*100)/100+' W/kg':'',betterHigh:true},
+                {label:'PC'+estTag,val:cpAval?cpAval+' W':null,delta:cpDelta,sub:'puissance critique',betterHigh:true},
+              ];
+              return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
+                cells.map((c,i)=>{
+                  const chip=deltaChip(c.delta,c.betterHigh);
+                  return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
+                    h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
+                    h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:c.val?'#201e1d':'#bab6b6'}},c.val||'—')),
+                    h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
+                      chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
+                      chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
+                      h('span',{style:{fontSize:'11px',color:'#bab6b6'}},compLabel)
+                    ),
+                    h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},c.sub)
+                  );
+                })
+              );
+            } else {
+              const fmtPL=v=>{if(!v)return'—';const m=Math.floor(v);const s=Math.round((v-m)*60);return m+"'"+String(s).padStart(2,'0')+'"';};
+              const runActs=data.filter(a=>a.sport===powSport);
+              const paceStat=(targetM,d0,d1)=>{
+                const pool=runActs.filter(a=>a.date.getTime()>=d0&&a.date.getTime()<d1);
+                let best=null;
+                for(const a of pool){
+                  const ps=actStreams[a.id];
+                  if(ps&&ps.dist&&ps.vel){const v=bestPaceWindow(ps.dist,ps.vel,targetM);if(v&&v<=MAX_PACE)best=best===null?v:Math.min(best,v);}
+                  else if(a.dist*1000>=targetM&&a.pace&&a.pace<=MAX_PACE)best=best===null?a.pace:Math.min(best,a.pace);
                 }
-              }
-              return best;
-            };
-            // Fenêtres liées aux boutons actifs
-            const nowMs2 = Date.now();
-            const endA2 = nowMs2, startA2 = endA2 - powRangeA*86400000;
-            const endB2 = startA2, startB2 = endB2 - powRangeB*86400000;
-            const d2s = t => new Date(t).toISOString().slice(0,10);
-            const curA2 = powerCurveByDate(d2s(startA2), d2s(endA2));
-            const curB2 = powerCurveByDate(d2s(startB2), d2s(endB2));
-            const best30minIdx = POWER_DURATIONS.findIndex(d=>d.s===1800);
-            const best60minIdx = POWER_DURATIONS.findIndex(d=>d.s===3600);
-            const wmaxA2 = curA2.filter(v=>v).length ? Math.max(...curA2.filter(v=>v).map(v=>v.w)) : null;
-            const wmaxB2 = curB2.filter(v=>v).length ? Math.max(...curB2.filter(v=>v).map(v=>v.w)) : null;
-            const wmaxDelta = (wmaxA2&&wmaxB2&&wmaxB2>0) ? Math.round(((wmaxA2-wmaxB2)/wmaxB2)*100) : null;
-            const kjA = curA2[POWER_DURATIONS.findIndex(d=>d.s===1200)];
-            const kjB = curB2[POWER_DURATIONS.findIndex(d=>d.s===1200)];
-            const kjAval = kjA ? Math.round(kjA.j/1000*10)/10 : null;
-            const kjBval = kjB ? Math.round(kjB.j/1000*10)/10 : null;
-            const kjDelta = (kjAval&&kjBval&&kjBval>0) ? Math.round(((kjAval-kjBval)/kjBval)*100) : null;
-            const cpAval = (() => { const v30=curA2[best30minIdx]; const v60c=curA2[best60minIdx]; const b=Math.max(v30?v30.w:0,v60c?v60c.w:0); return b>0?Math.round(b*0.92):null; })();
-            const cpBval = (() => { const v30=curB2[best30minIdx]; const v60c=curB2[best60minIdx]; const b=Math.max(v30?v30.w:0,v60c?v60c.w:0); return b>0?Math.round(b*0.92):null; })();
-            const cpDelta = (cpAval&&cpBval&&cpBval>0) ? Math.round(((cpAval-cpBval)/cpBval)*100) : null;
-            const wkg = ftpVal && profile.weight ? Math.round(ftpVal/Number(profile.weight)*100)/100 : null;
-            const ftpBval = (() => { const best=curB2[POWER_DURATIONS.findIndex(d=>d.s===1200)]; return best?Math.round(best.w*0.95):null; })();
-            const ftpDelta = (ftpVal&&ftpBval&&ftpBval>0) ? Math.round(((ftpVal-ftpBval)/ftpBval)*100) : null;
-            const wkgB = ftpBval && profile.weight ? Math.round(ftpBval/Number(profile.weight)*100)/100 : null;
-            const wkgDelta = (wkg&&wkgB&&wkgB>0) ? Math.round(((wkg-wkgB)/wkgB)*100) : null;
-            const rangeLabel = d => d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an';
-            const compLabel = 'vs '+rangeLabel(powRangeB)+' préc.';
-            const statCells = [
-              { label:'FTP'+estTag, val: ftpVal?ftpVal+' W':null, delta: ftpDelta, sub: isEstimatedFtp?'estimée':'manuelle', betterHigh:true },
-              { label:'W/kg'+estTag, val: wkg?wkg+' W/kg':null, delta: wkgDelta, sub: profile.weight?'masse '+profile.weight+' kg':'renseigne le poids', betterHigh:true },
-              { label:'kJ · 20 min', val: kjAval?kjAval+' kJ':null, delta: kjDelta, sub: kjAval?'= '+Math.round(kjAval*1000)+' J':'calcule la courbe', betterHigh:true },
-              { label:'Wmax'+estTag, val: wmaxA2?wmaxA2+' W':null, delta: wmaxDelta, sub: wmaxA2&&profile.weight?Math.round(wmaxA2/Number(profile.weight)*100)/100+' W/kg':'', betterHigh:true },
-              { label:'PC'+estTag, val: cpAval?cpAval+' W':null, delta: cpDelta, sub: 'puissance critique (30-60 min)', betterHigh:true },
-            ];
-            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
-              statCells.map((c,i) => {
-                const chip = deltaChip(c.delta, c.betterHigh);
-                return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
-                  h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
-                  h('div',{style:{marginTop:'10px'}},
-                    h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:c.val?'#201e1d':'#bab6b6'}},c.val||'—')
-                  ),
-                  h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
-                    chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
-                    chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},compLabel)
-                  ),
-                  h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},c.sub)
-                );
-              })
-            );
+                return best;
+              };
+              const statDefs=[{label:'1 km',m:1000},{label:'5 km',m:5000},{label:'10 km',m:10000},{label:'Semi',m:21097},{label:'Marathon',m:42195}];
+              const cur=statDefs.map(s=>paceStat(s.m,startA2,endA2));
+              const prev=statDefs.map(s=>paceStat(s.m,startB2,endB2));
+              const unit=isTrailPow?' VAP /km':' /km';
+              return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
+                statDefs.map((s,i)=>{
+                  const vCur=cur[i],vPrev=prev[i];
+                  const pct=(vCur&&vPrev&&vPrev>0)?Math.round(((vPrev-vCur)/vPrev)*100):null;
+                  const chip=deltaChip(pct,true);
+                  return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
+                    h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},s.label),
+                    h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?'#201e1d':'#bab6b6'}},vCur?fmtPL(vCur)+unit:'—')),
+                    h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
+                      chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
+                      chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
+                      h('span',{style:{fontSize:'11px',color:'#bab6b6'}},compLabel)
+                    ),
+                    h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},vPrev?fmtPL(vPrev)+unit+' préc.':'pas de données préc.')
+                  );
+                })
+              );
+            }
           })(),
           h('section',{style:{padding:'28px 32px 32px'}},
             (()=>{
-              const eligible = data.filter(a => a.sport==='Vélo'||a.sport==='Course'||a.sport==='Trail');
-              const processed = eligible.filter(a => actStreams[a.id]);
-              const isLoading = streamFetchStatus === 'loading';
-              const totalMass = (Number(profile.weight)||0)+(Number(profile.bikeMass)||0);
-              if (processed.length === eligible.length && eligible.length > 0 && !isLoading) return null;
+              const eligible=data.filter(a=>a.sport==='Vélo'||a.sport==='Course'||a.sport==='Trail');
+              const processed=eligible.filter(a=>actStreams[a.id]);
+              const isLoading=streamFetchStatus==='loading';
+              const totalMass=(Number(profile.weight)||0)+(Number(profile.bikeMass)||0);
+              if(processed.length===eligible.length&&eligible.length>0&&!isLoading)return null;
               return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
-                    isLoading ? 'Calcul en cours… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités'
-                    : !totalMass ? 'Renseigne le poids cycliste + vélo dans le Profil pour la puissance estimée'
-                    : 'Streams non chargés — clique sur Calculer'
+                    isLoading?'Calcul en cours… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités':!totalMass?'Renseigne le poids cycliste + vélo dans le Profil':'Streams non chargés'
                   ),
-                  isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
-                    h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((streamFetchProgress.done/Math.max(1,streamFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
-                  )
+                  isLoading&&h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((streamFetchProgress.done/Math.max(1,streamFetchProgress.total))*100)+'%',transition:'width 0.2s'}}))
                 ),
                 h('div',{style:{display:'flex',gap:'8px'}},
-                  !isLoading && h('button',{type:'button',onClick:fetchAllStreams,disabled:!localStorage.getItem('strava_token'),style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Calculer la courbe'),
-                  isLoading && h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Annuler')
+                  !isLoading&&h('button',{type:'button',onClick:fetchAllStreams,disabled:!localStorage.getItem('strava_token'),style:{padding:'10px 16px',border:'2px solid #ec3013',background:'#ec3013',color:'#ffffff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Calculer'),
+                  isLoading&&h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Annuler')
                 )
               );
             })(),
             h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
-              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Courbe de puissance'),
-              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Axe droit pointillé : énergie (kJ)')
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},powSport==='Vélo'?'Courbe de puissance':powSport==='Trail'?'Allure VAP — Trail':'Meilleure allure — Course'),
+              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'fenêtre glissante s/s')
             ),
             h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
-              data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow)
-                ? "Puissance estimée par fenêtre glissante seconde par seconde (modèle physique Crr/CdA). Survole pour voir W, kJ et W/kg."
-                : "Clique sur « Calculer la courbe » pour fetcher les streams vitesse/altitude de chaque sortie et calculer la puissance estimée seconde par seconde."
+              powSport==='Vélo'?'Puissance estimée par fenêtre glissante (modèle physique Crr/CdA).':'Meilleure allure par fenêtre glissante seconde par seconde, de 200 m à 42,2 km tous les 100 m.'
             ),
             h('div',{style:{height:'calc(100vh - 480px)',minHeight:'320px'}},h('canvas',{ref:powerRef}))
-          )
-        ),
-        athleteSection==='Allure'&&h('div',null,
-          // Bande de contrôle : Actuelle | Comparaison | Séance
-          h('section',{style:{display:'flex',alignItems:'stretch',borderBottom:'2px solid #201e1d'}},
-            // Période actuelle — label = bouton toggle
-            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('button',{type:'button',onClick:()=>setShowCurveA(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
-                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveA?'#ec3013':'#bab6b6',textDecoration:showCurveA?'none':'line-through'}},'Actuelle'),
-                h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveA?'#ec3013':'#bab6b6'}}),
-              ),
-              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===paceRangeA&&showCurveA){setShowCurveA(false);}else{setPaceRangeA(o.d);setShowCurveA(true);}},
-                  style:{padding:'5px 10px',border:'2px solid '+(paceRangeA===o.d&&showCurveA?'#ec3013':'#d7d3d3'),background:paceRangeA===o.d&&showCurveA?'#ec3013':'transparent',color:paceRangeA===o.d&&showCurveA?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(!(paceRangeA===o.d&&showCurveA))e.currentTarget.style.background='#ffe0d9';},
-                  onMouseLeave:e=>{if(!(paceRangeA===o.d&&showCurveA))e.currentTarget.style.background='transparent';}
-                },o.l))
-              )
-            ),
-            // Comparaison — label = bouton toggle
-            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('button',{type:'button',onClick:()=>setShowCurveB(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
-                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveB?'#605d5d':'#bab6b6',textDecoration:showCurveB?'none':'line-through'}},'Comparaison'),
-                h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:showCurveB?'#bab6b6':'#d7d3d3',borderTop:'2px dashed '+(showCurveB?'#bab6b6':'#d7d3d3')}}),
-              ),
-              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===paceRangeB&&showCurveB){setShowCurveB(false);}else{setPaceRangeB(o.d);setShowCurveB(true);}},
-                  style:{padding:'5px 10px',border:'2px solid '+(paceRangeB===o.d&&showCurveB?'#201e1d':'#d7d3d3'),background:paceRangeB===o.d&&showCurveB?'#201e1d':'transparent',color:paceRangeB===o.d&&showCurveB?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(!(paceRangeB===o.d&&showCurveB))e.currentTarget.style.background='#eae9e9';},
-                  onMouseLeave:e=>{if(!(paceRangeB===o.d&&showCurveB))e.currentTarget.style.background='transparent';}
-                },o.l))
-              )
-            ),
-            // Séance
-            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px',flex:'1',minWidth:0}},
-              h('button',{type:'button',onClick:()=>setShowCurveSel(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
-                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&selActId?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
-                selActId&&h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveSel?'#7c4dbc':'#d7d3d3'}})
-              ),
-              h('select',{value:selActId||'',onChange:e=>{setSelActId(e.target.value||null);setShowCurveSel(true);},
-                style:{padding:'5px 10px',border:'2px solid #d7d3d3',background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',cursor:'pointer',maxWidth:'100%'}
-              },
-                h('option',{value:''},'Agrégé'),
-                data.filter(a=>(a.sport==='Course'||a.sport==='Trail')&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+(a.name||a.sport)+' · '+fmtNum(a.dist,1)+' km'))
-              )
-            ),
-            // Sport
-            h('div',{style:{padding:'16px 20px',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
-              h('span',{style:{fontSize:'13px',fontWeight:'800',color:'#201e1d'}},'Course · Trail')
-            )
-          ),
-
-          (()=>{
-            const fmtPL = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
-            const runActs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
-            const paceStat = (targetM, d0, d1) => {
-              const pool = runActs.filter(a => a.date.getTime()>=d0 && a.date.getTime()<d1);
-              let best = null;
-              for (const a of pool) {
-                const ps = actStreams[a.id];
-                if (ps && ps.dist && ps.vel) {
-                  const v = bestPaceWindow(ps.dist, ps.vel, targetM);
-                  if (v && v<=MAX_PACE) best = best===null ? v : Math.min(best,v);
-                } else if (a.dist*1000>=targetM && a.pace && a.pace<=MAX_PACE) {
-                  best = best===null ? a.pace : Math.min(best,a.pace);
-                }
-              }
-              return best;
-            };
-            const nowP = Date.now();
-            const endAp = nowP, startAp = endAp - paceRangeA*86400000;
-            const endBp = startAp, startBp = endBp - paceRangeB*86400000;
-            const statDefs = [
-              {label:'1 km',    m:1000},
-              {label:'5 km',    m:5000},
-              {label:'10 km',   m:10000},
-              {label:'Semi',    m:21097},
-              {label:'Marathon',m:42195},
-            ];
-            const cur  = statDefs.map(s => paceStat(s.m, startAp, endAp));
-            const prev = statDefs.map(s => paceStat(s.m, startBp, endBp));
-            const rangeLabel = d => d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an';
-            const compLabelP = 'vs '+rangeLabel(paceRangeB)+' préc.';
-            return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
-              statDefs.map((s,i) => {
-                const vCur = cur[i], vPrev = prev[i];
-                const pct = (vCur&&vPrev&&vPrev>0) ? Math.round(((vPrev-vCur)/vPrev)*100) : null;
-                const chip = deltaChip(pct, true);
-                return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
-                  h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},s.label),
-                  h('div',{style:{marginTop:'10px'}},
-                    h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?'#201e1d':'#bab6b6'}},
-                      vCur ? fmtPL(vCur)+' /km' : '—'
-                    )
-                  ),
-                  h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
-                    chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
-                    chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},compLabelP)
-                  ),
-                  h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    vPrev ? fmtPL(vPrev)+' /km préc.' : 'pas de données préc.'
-                  )
-                );
-              })
-            );
-          })(),
-          h('section',{style:{padding:'28px 32px 32px'}},
-            (()=>{
-              const runs = data.filter(a => a.sport==='Course'||a.sport==='Trail');
-              const processed = runs.filter(a => actStreams[a.id]);
-              const isLoading = streamFetchStatus === 'loading';
-              if (processed.length === runs.length && runs.length > 0 && !isLoading) return null;
-              if (!isLoading && processed.length === 0) return null;
-              return h('div',{style:{marginBottom:'20px',padding:'16px 20px',border:'2px solid #201e1d',background:'#fdf1ee',display:'flex',flexWrap:'wrap',alignItems:'center',gap:'16px',justifyContent:'space-between'}},
-                h('div',null,
-                  h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},
-                    isLoading ? 'Calcul en cours… '+streamFetchProgress.done+' / '+streamFetchProgress.total+' activités' : ''
-                  ),
-                  isLoading && h('div',{style:{marginTop:'8px',height:'4px',background:'#d7d3d3',width:'320px',maxWidth:'100%'}},
-                    h('div',{style:{height:'100%',background:'#ec3013',width:Math.round((streamFetchProgress.done/Math.max(1,streamFetchProgress.total))*100)+'%',transition:'width 0.2s'}})
-                  )
-                ),
-                isLoading && h('button',{type:'button',onClick:()=>{streamFetchAbort.current=true;setStreamFetchStatus('idle');},style:{padding:'10px 16px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Annuler')
-              );
-            })(),
-            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
-              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Meilleure allure par distance'),
-              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'100 m par 100 m · fenêtre glissante s/s')
-            ),
-            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
-              data.some(a=>(a.sport==='Course'||a.sport==='Trail')&&a.pace)
-                ? 'Meilleure allure par fenêtre glissante seconde par seconde, de 200 m à 42,2 km tous les 100 m. Charge les streams Strava pour la précision maximale.'
-                : 'Donnée manquante — aucune sortie course ou trail.'
-            ),
-            h('div',{style:{height:'calc(100vh - 400px)',minHeight:'320px'}},h('canvas',{ref:paceRef}))
-          )
-        ),
+          )      ),
         athleteSection==='Fréquence cardiaque'&&h('div',null,
           // Bande de contrôle : Actuelle | Comparaison | Séance
           h('section',{style:{display:'flex',alignItems:'stretch',borderBottom:'2px solid #201e1d'}},
@@ -1944,7 +1826,7 @@ function App() {
               h('select',{value:selActId||'',onChange:e=>{setSelActId(e.target.value||null);setShowCurveSel(true);},
                 style:{padding:'5px 10px',border:'2px solid #d7d3d3',background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'600',cursor:'pointer',maxWidth:'100%'}
               },
-                h('option',{value:''},'Agrégé'),
+                h('option',{value:''},'Pas d\'affichage'),
                 data.filter(a=>a.sport===hrSport&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+(a.name||a.sport)+' · '+fmtNum(a.dist,1)+' km'))
               )
             ),
