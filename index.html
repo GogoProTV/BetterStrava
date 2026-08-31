@@ -297,6 +297,61 @@ function tssColor(tss) {
   return '#ae1800';                   // très dur
 }
 
+// ── EF / VI / Découplage aérobie ─────────────────────────────────────────────
+
+// EF = NP (ou vitesse norm.) / FC moyenne
+// Vélo : EF = NP / avgHr  → W/bpm
+// Course : EF = vitesse_moy(m/min) / avgHr  → (m/min)/bpm
+function calcEF(sport, np, avgVelMs, avgHr) {
+  if (!avgHr || avgHr < 50) return null;
+  if (sport === 'Vélo') {
+    if (!np) return null;
+    return Math.round((np / avgHr) * 100) / 100; // W/bpm
+  } else {
+    if (!avgVelMs || avgVelMs <= 0) return null;
+    const mPerMin = avgVelMs * 60;
+    return Math.round((mPerMin / avgHr) * 100) / 100; // (m/min)/bpm
+  }
+}
+
+// VI = NP / puissance_moyenne (vélo uniquement, doit être proche de 1.0)
+function calcVI(np, avgPow) {
+  if (!np || !avgPow || avgPow <= 0) return null;
+  return Math.round((np / avgPow) * 100) / 100;
+}
+
+// Pw:Hr (vélo) et Pa:Hr (course) — découplage aérobie sur les streams
+// Calcul sur 1ère vs 2ème moitié (méthode TrainingPeaks)
+// Pw:Hr = (EF_2nde / EF_1ère - 1) × 100  en %
+function calcDecoupling(sport, powOrVelArr, hrArr) {
+  if (!hrArr || hrArr.length < 60) return null;
+  const metric = powOrVelArr;
+  if (!metric || metric.length < 60) return null;
+  const n = metric.length;
+  const mid = Math.floor(n / 2);
+
+  // Calculer EF sur chaque moitié
+  const efHalf = (from, to) => {
+    let sumM = 0, sumHr = 0, cnt = 0;
+    for (let i = from; i < to; i++) {
+      const v = metric[i], hr = hrArr[i];
+      if (!v || !hr || hr < 50) continue;
+      if (sport !== 'Vélo' && (v < 0.3 || v > 8.33)) continue;
+      sumM += sport === 'Vélo' ? v : v * 60; // W ou m/min
+      sumHr += hr;
+      cnt++;
+    }
+    if (!cnt || sumHr / cnt < 50) return null;
+    return (sumM / cnt) / (sumHr / cnt);
+  };
+
+  const ef1 = efHalf(0, mid);
+  const ef2 = efHalf(mid, n);
+  if (!ef1 || !ef2 || ef1 === 0) return null;
+  return Math.round((ef2 / ef1 - 1) * 10000) / 100; // en %
+}
+
+
 function bikeActsEstimatedPower(acts, totalMassKg) {
   const rides = acts.filter(a => a.sport === 'Vélo' && a.dist && a.time);
   if (!rides.length || !totalMassKg) return null;
@@ -1486,14 +1541,29 @@ function App() {
         ...(() => {
           const ftpV = Number(profile.ftp)||ftpEstimated||null;
           const s = actStreams[act.id];
-          const tssData = calcTSS(act, s&&s!=='error'?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
-          const np = tssData?.np ?? (s&&s!=='error'&&s.pow ? calcNP(s.pow) : null);
+          const sOk = s && s !== 'error';
+          const tssData = calcTSS(act, sOk?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+          const np = tssData?.np ?? (sOk&&s.pow ? calcNP(s.pow) : null);
           const ifVal = tssData?.ifVal ?? null;
           const tss = tssData?.tss ?? null;
+          const avgPowArr = sOk&&s.pow ? s.pow : null;
+          const avgPowMean = avgPowArr ? Math.round(avgPowArr.reduce((a,b)=>a+b,0)/avgPowArr.length) : (act.power||null);
+          const vi = calcVI(np, avgPowMean);
+          const ef = calcEF('Vélo', np, null, avgHr||(act.hr||null));
+          const decoupl = sOk&&s.pow&&s.hr ? calcDecoupling('Vélo', s.pow, s.hr) : null;
           return [
-            { label:'NP', value: np?np+' W':'—', unit:'', color: np?'#201e1d':'#bab6b6' },
-            { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6' },
-            { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true },
+            { label:'NP', value: np?np+' W':'—', unit:'', color: np?'#201e1d':'#bab6b6',
+              tooltip:'Normalized Power : puissance ajustée tenant compte des variations d’intensité. Calculée par fenêtre glissante 30 s élevée à la puissance 4, puis racine 4ᵉ. Représente le coût physiologique réel de l’effort.' },
+            { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
+              tooltip:'Intensity Factor : rapport NP / FTP. < 0.75 = récup, 0.75–0.85 = endurance, 0.85–0.95 = tempo, 0.95–1.05 = seuil, > 1.05 = très intense.' },
+            { label:'VI', value: vi?String(vi):'—', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
+              tooltip:'Variability Index : régularité de l’effort (NP / puissance moyenne). Proche de 1.0 = effort très régulier. >1.1 = effort très variable (intervalles, côtes).' },
+            { label:'EF', value: ef?String(ef):'—', unit: ef?'W/bpm':'', color: '#201e1d',
+              tooltip:'Efficiency Factor : efficacité aérobie (NP / FC moyenne). Plus il est élevé, plus tu produis de watts pour un effort cardiaque donné. En progression si EF augmente sur des sorties similaires.' },
+            { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
+              tooltip:'Découplage aérobie Pw:Hr : dérive entre puissance et FC sur la sortie (2ᵉ² moitié vs 1ᵉʳᵉ). < 5 % = bonne maîtrise aérobie, > 5 % = possible dérive cardiaque (fatigue, chaleur, déshydratation).' },
+            { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
+              tooltip:'Training Stress Score : charge totale de la séance. Formule : (durée§ × NP × IF) / (FTP × 3600) × 100. < 50 = léger, 50–100 = modéré, 100–150 = dur, > 150 = très dur.' },
           ];
         })(),
       ];
@@ -1506,7 +1576,8 @@ function App() {
           const s = actStreams[act.id];
           const tssData = calcTSS(act, s&&s!=='error'?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
           const tss = tssData?.tss ?? null;
-          return [{ label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true }];
+          return [{ label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
+            tooltip:'Training Stress Score : charge totale estimée par méthode TRIMP. Basé sur la durée et la fraction de FC réserve (Karvonen). < 50 = léger, 50–100 = modéré, 100–150 = dur.' }];
         })(),
       ];
     } else {
@@ -1517,12 +1588,22 @@ function App() {
         { label:'Allure moy.', value: act.pace?fmtPace(act.pace):'Donnée manquante', unit: act.pace?'/km':'' },
         ...(() => {
           const s = actStreams[act.id];
-          const tssData = calcTSS(act, s&&s!=='error'?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+          const sOk = s && s !== 'error';
+          const tssData = calcTSS(act, sOk?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
           const tss = tssData?.tss ?? null;
           const ifVal = tssData?.ifVal ?? null;
+          const avgVelMs = sOk&&s.vel ? s.vel.reduce((a,b)=>a+b,0)/s.vel.length : (act.dist&&act.time?(act.dist*1000)/(act.time*60):null);
+          const ef = calcEF('Course', null, avgVelMs, avgHr||(act.hr||null));
+          const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
-            { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6' },
-            { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true },
+            { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
+              tooltip:'Intensity Factor basé sur la réserve cardiaque (méthode Karvonen). Fraction de l’effort cardiaque maximal soutenu sur la sortie.' },
+            { label:'EF', value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
+              tooltip:'Efficiency Factor : vitesse moyenne (m/min) divisée par FC moyenne. Mesure l’économie de course à un effort cardiaque donné. En progression si EF augmente sur des sorties similaires.' },
+            { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
+              tooltip:'Découplage aérobie Pa:Hr : dérive entre allure et FC sur la sortie (2ᵉ² moitié vs 1ᵉʳᵉ). < 5 % = bonne maîtrise aérobie, > 5 % = possible dérive (fatigue, chaleur, déshydratation).' },
+            { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
+              tooltip:'Training Stress Score : charge totale estimée par méthode TRIMP (Banister). Basé sur la durée et la fraction de FC réserve. < 50 = léger, 50–100 = modéré, 100–150 = dur.' },
           ];
         })(),
       ];
@@ -1555,13 +1636,30 @@ function App() {
           isBike && totalMass === 0 && h('p', { style:{ margin:'0 32px 10px 0', fontSize:'11px', color:'#605d5d', fontStyle:'italic' } }, 'Renseigne le poids cycliste et le poids vélo dans le profil pour activer la puissance estimée.'),
           isBike && totalMass > 0 && h('p', { style:{ margin:'0 32px 10px 0', fontSize:'11px', color:'#605d5d' } }, 'Puissance estimée · Crr '+CRR+' · CdA '+CDA+' m² · masse système '+totalMass.toFixed(1)+' kg'),
           h('div', { style:{ display:'grid', gridTemplateColumns:'repeat('+nCols+',1fr)', gap:'0', borderBottom:'1px solid #d7d3d3', marginBottom:'20px' } },
-            detailKpis.map((kpi,i) => h('div', { key:i, style:{ padding:'10px 14px 12px', borderRight: i<nCols-1 ? '1px solid #d7d3d3' : undefined } },
-              h('span', { style:{ display:'block', fontSize:'10px', fontWeight:'600', letterSpacing:'0.1em', textTransform:'uppercase', color:'#605d5d' } }, kpi.label),
-              h('div', { style:{ display:'flex', alignItems:'baseline', gap:'5px', marginTop:'6px' } },
-                h('span', { style:{ fontSize: nCols>6?'15px':'18px', fontWeight:'800', letterSpacing:'-0.02em', lineHeight:'1', color: kpi.color||'#201e1d' } }, kpi.value),
-                kpi.unit && h('span', { style:{ fontSize:'12px', fontWeight:'600', color:'#605d5d' } }, kpi.unit)
-              )
-            ))
+            detailKpis.map((kpi,i) => {
+              const [showTip, setShowTip] = React.useState(false);
+              return h('div', { key:i,
+                style:{ padding:'10px 14px 12px', borderRight: i<nCols-1 ? '1px solid #d7d3d3' : undefined, position:'relative', cursor: kpi.tooltip?'help':'default' },
+                onMouseEnter: () => { if(kpi.tooltip) setShowTip(true); },
+                onMouseLeave: () => setShowTip(false),
+              },
+                h('span', { style:{ display:'block', fontSize:'10px', fontWeight:'600', letterSpacing:'0.1em', textTransform:'uppercase', color: kpi.tooltip?'#201e1d':'#605d5d' } },
+                  kpi.label, kpi.tooltip && h('span',{style:{marginLeft:'3px',fontSize:'9px',color:'#bab6b6'}},'?')
+                ),
+                h('div', { style:{ display:'flex', alignItems:'baseline', gap:'5px', marginTop:'6px' } },
+                  h('span', { style:{ fontSize: nCols>6?'14px':'17px', fontWeight:'800', letterSpacing:'-0.02em', lineHeight:'1', color: kpi.color||'#201e1d' } }, kpi.value),
+                  kpi.unit && h('span', { style:{ fontSize:'11px', fontWeight:'600', color:'#605d5d' } }, kpi.unit)
+                ),
+                showTip && kpi.tooltip && h('div', {
+                  style:{
+                    position:'absolute', bottom:'calc(100% + 6px)', left:'0', zIndex:200,
+                    background:'#201e1d', color:'#ffffff', fontSize:'11px', lineHeight:'1.5',
+                    padding:'10px 12px', width:'220px', pointerEvents:'none',
+                    boxShadow:'0 4px 12px rgba(0,0,0,0.25)',
+                  }
+                }, kpi.tooltip)
+              );
+            })
           ),
           h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'16px', marginBottom:'12px', paddingRight:'32px' } },
             h('span', { style:{ fontSize:'12px', fontWeight:'700', letterSpacing:'0.06em', textTransform:'uppercase' } }, 'Données seconde par seconde'),
