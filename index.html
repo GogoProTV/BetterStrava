@@ -96,6 +96,7 @@ function mapActivity(a) {
     maxPower: a.max_watts ? Math.round(a.max_watts) : null,
     secs: a.moving_time || a.elapsed_time || 0,
     hr: a.average_heartrate ? Math.round(a.average_heartrate) : null,
+    maxHr: a.max_heartrate ? Math.round(a.max_heartrate) : null,
     trainingLoad: a.suffer_score || Math.round(time * 0.85),
     planned: false,
   };
@@ -1562,7 +1563,7 @@ function App() {
     if (isBike) {
       detailKpis = [
         { label:'FC moyenne',    value: avgHr!==null?String(avgHr):(act.hr?String(act.hr):'Donnée manquante'), unit: avgHr!==null||act.hr?'bpm':'' },
-        { label:'FC max',        value: maxHr!==null?String(maxHr):'Donnée manquante', unit: maxHr!==null?'bpm':'' },
+        { label:'FC max',        value: maxHr!==null?String(maxHr):act.maxHr?String(act.maxHr):'Donnée manquante', unit: maxHr!==null||act.maxHr?'bpm':'' },
         { label:'D+ streams',    value: elevGain!==null?'+'+fmtNum(elevGain,0):'Donnée manquante', unit: elevGain!==null?'m':'' },
         { label:'Vitesse moy.',  value: act.dist&&act.time?fmtNum(act.dist/(act.time/60),1):'Donnée manquante', unit: act.dist&&act.time?'km/h':'' },
         { label:'W estimés moy.',value: avgEstPow!==null?String(avgEstPow):(act.power?String(act.power):'Donnée manquante'), unit: avgEstPow!==null?'W':'' },
@@ -1599,7 +1600,7 @@ function App() {
     } else if (isSwim) {
       detailKpis = [
         { label:'FC moyenne',  value: avgHr!==null?String(avgHr):(act.hr?String(act.hr):'Donnée manquante'), unit: avgHr!==null||act.hr?'bpm':'' },
-        { label:'FC max',      value: maxHr!==null?String(maxHr):'Donnée manquante', unit: maxHr!==null?'bpm':'' },
+        { label:'FC max',      value: maxHr!==null?String(maxHr):act.maxHr?String(act.maxHr):'Donnée manquante', unit: maxHr!==null||act.maxHr?'bpm':'' },
         { label:'Allure moy.', value: act.pace?fmtPace(act.pace/10):'Donnée manquante', unit: act.pace?'/100m':'' },
         ...(() => {
           const s = actStreams[act.id];
@@ -1612,7 +1613,7 @@ function App() {
     } else {
       detailKpis = [
         { label:'FC moyenne',  value: avgHr!==null?String(avgHr):(act.hr?String(act.hr):'Donnée manquante'), unit: avgHr!==null||act.hr?'bpm':'' },
-        { label:'FC max',      value: maxHr!==null?String(maxHr):'Donnée manquante', unit: maxHr!==null?'bpm':'' },
+        { label:'FC max',      value: maxHr!==null?String(maxHr):act.maxHr?String(act.maxHr):'Donnée manquante', unit: maxHr!==null||act.maxHr?'bpm':'' },
         { label:'D+ streams',  value: elevGain!==null?'+'+fmtNum(elevGain,0):'Donnée manquante', unit: elevGain!==null?'m':'' },
         { label:'Allure moy.', value: act.pace?fmtPace(act.pace):'Donnée manquante', unit: act.pace?'/km':'' },
         ...(() => {
