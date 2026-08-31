@@ -68,9 +68,9 @@ function deltaChip(pct, betterHigh) {
   const sign = pct > 0 ? '+' : '';
   return {
     text: flat ? '—' : sign + pct + '%',
-    style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ffe0d9' : '#eae9e9', color: flat ? '#605d5d' : good ? '#ae1800' : '#605d5d' },
+    style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ede9f8' : '#eae9e9', color: flat ? '#605d5d' : good ? '#5b21b6' : '#605d5d' },
     arrow: good ? '▲' : bad ? '▼' : '',
-    arrowStyle: { fontSize: '13px', lineHeight: '1', color: good ? '#22c55e' : bad ? '#605d5d' : 'transparent' },
+    arrowStyle: { fontSize: '13px', lineHeight: '1', color: good ? '#7c4dbc' : bad ? '#605d5d' : 'transparent' },
   };
 }
 
@@ -1839,7 +1839,22 @@ function App() {
             h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
               powSport==='Vélo'?'Puissance estimée par fenêtre glissante (modèle physique Crr/CdA).':'Meilleure allure par fenêtre glissante seconde par seconde, de 200 m à 42,2 km tous les 100 m.'
             ),
-            h('div',{style:{height:'calc(100vh - 480px)',minHeight:'320px'}},h('canvas',{ref:powerRef}))
+            h('div',{style:{height:'calc(100vh - 480px)',minHeight:'320px'}},h('canvas',{ref:powerRef})),
+            h('div',{style:{marginTop:'14px',padding:'12px 16px',borderTop:'1px solid #d7d3d3'}},
+              h('p',{style:{margin:0,fontSize:'11px',color:'#bab6b6',lineHeight:'1.6',maxWidth:'90ch'}},
+                powSport==='Vélo'
+                  ? '⚠ Puissance estimée par modèle physique — Crr = 0.008, CdA = 0.35 m², ρ = 1.225 kg/m³, η = 0.97 (rendement transmission). '
+                    +'FTP estimée : meilleur effort moyen 20–60 min × 0.95. Puissance critique (CP) : meilleur effort 30–60 min × 0.92. '
+                    +'W/kg calculé avec le poids renseigné dans le Profil. Wmax : pic de la courbe sur la période sélectionnée.'
+                  : powSport==='Trail'
+                    ? 'Allure calculée par fenêtre glissante seconde par seconde sur les streams Strava (distance + vitesse). '
+                      +'Pour le Trail, la vitesse affichée correspond à la vitesse brute GPS — aucune correction VAP (Vitesse Ascensionnelle en Pourcent) n’est appliquée à ce stade. '
+                      +'Les statistiques comparent la meilleure allure sur la période A vs la période B (fenêtres sélectionnées). Fallback sur allure moyenne de sortie si les streams ne sont pas chargés.'
+                    : 'Allure calculée par fenêtre glissante seconde par seconde sur les streams Strava (distance + vitesse). '
+                      +'Chaque point représente le meilleur temps sur exactement cette distance parmi toutes les sorties de la période sélectionnée. '
+                      +'Gardes-fous : vitesse < 0.3 m/s et > 8.33 m/s ignorées (arrêts et anomalies GPS). Fallback sur allure moyenne de sortie si les streams ne sont pas chargés.'
+              )
+            )
           )      ),
         athleteSection==='Fréquence cardiaque'&&h('div',null,
           // Bande de contrôle : Actuelle | Comparaison | Séance
@@ -2026,7 +2041,25 @@ function App() {
                   ? 'Allure (min/km, VAP) par bpm, seconde par seconde. Une courbe qui descend (allure plus rapide) à même FC indique un gain de forme.'
                   : 'Allure (min/km) par bpm, calculée seconde par seconde sur toutes les sorties course. Une courbe qui descend à même FC = progression.'
             ),
-            h('div',{style:{height:'calc(100vh - 340px)',minHeight:'320px'}},h('canvas',{ref:hrRef}))
+            h('div',{style:{height:'calc(100vh - 340px)',minHeight:'320px'}},h('canvas',{ref:hrRef})),
+            h('div',{style:{marginTop:'14px',padding:'12px 16px',borderTop:'1px solid #d7d3d3'}},
+              h('p',{style:{margin:0,fontSize:'11px',color:'#bab6b6',lineHeight:'1.6',maxWidth:'90ch'}},
+                hrSport==='Vélo'
+                  ? 'Puissance estimée (W) par bpm, accumulée seconde par seconde depuis les streams chargés. '
+                    +'Même modèle physique que la page Puissance (Crr/CdA). Lissage ±3 bpm sur la courbe finale. '
+                    +'Seules les secondes avec au moins 10 mesures par bpm sont représentées. '
+                    +'Les zones FC sont calculées par méthode Karvonen si la FC repos est renseignée, sinon en % de FC max.'
+                  : hrSport==='Trail'
+                    ? 'Allure (min/km) par bpm, accumulée seconde par seconde sur les sorties Trail avec streams chargés. '
+                      +'Gardes-fous : vitesse entre 0.3 et 8.33 m/s. Lissage ±3 bpm. '
+                      +'Zones FC par Karvonen si FC repos renseignée, sinon % FC max. '
+                      +'La méthode VAP n’est pas appliquée ici — l’allure brute GPS est utilisée.'
+                    : 'Allure (min/km) par bpm, accumulée seconde par seconde sur toutes les sorties Course avec streams chargés. '
+                      +'Gardes-fous : vitesse entre 0.3 et 8.33 m/s (arrêts et anomalies GPS ignorés). Lissage ±3 bpm. '
+                      +'Zones FC par Karvonen si FC repos renseignée, sinon % FC max. '
+                      +'Une courbe qui descend (allure plus rapide) à même FC indique un gain de forme aérobie.'
+              )
+            )
           )
         )
       ),
