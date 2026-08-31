@@ -212,6 +212,91 @@ function estimatePower(v_kmh, slope_pct, totalMassKg) {
   return Math.max(0, Math.round((P_roll + P_aero + P_grav) / ETA));
 }
 
+// ── TSS / NP / IF (méthode TrainingPeaks) ────────────────────────────────────
+function calcNP(powArr) {
+  // Étape 1 : moyenne glissante 30s
+  if (!powArr || powArr.length < 30) return null;
+  const n = powArr.length;
+  const roll30 = new Float32Array(n);
+  let win = 0;
+  for (let i = 0; i < 30; i++) win += powArr[i];
+  for (let i = 30; i < n; i++) {
+    roll30[i] = win / 30;
+    win += powArr[i] - powArr[i - 30];
+  }
+  // Étape 2 : puissance 4 → moyenne → racine 4e
+  let sum4 = 0, count4 = 0;
+  for (let i = 30; i < n; i++) {
+    sum4 += Math.pow(roll30[i], 4);
+    count4++;
+  }
+  if (!count4) return null;
+  return Math.round(Math.pow(sum4 / count4, 0.25));
+}
+
+function calcTSS(act, streams, ftpW, hrMaxBpm, hrRestBpm) {
+  const durSec = act.secs || act.time * 60;
+  if (!durSec || durSec < 120) return null; // moins de 2 min = pas fiable
+
+  if (act.sport === 'Vélo') {
+    // Vélo : NP → IF → TSS
+    const powArr = streams && streams.pow;
+    let np = null;
+    if (powArr && powArr.length >= 30) {
+      np = calcNP(powArr);
+    } else if (act.power) {
+      np = act.power; // fallback sur puissance moyenne
+    }
+    if (!np || !ftpW) return { tss: null, np, ifVal: null, method: 'pow' };
+    const ifVal = Math.round((np / ftpW) * 100) / 100;
+    const tss = Math.round((durSec * np * ifVal) / (ftpW * 3600) * 100);
+    return { tss, np, ifVal, method: 'pow' };
+
+  } else if (act.sport === 'Course' || act.sport === 'Trail') {
+    // Course : rTSS basé sur allure et allure seuil (FTP pace)
+    // Allure seuil = best 20-60min. On utilise l'allure moyenne de la sortie comme approximation.
+    // IF = (allure_seuil / allure_sortie) — plus c'est rapide, plus IF est élevé
+    // rTSS = (durSec × IF²) / 3600 × 100
+    if (!act.pace || act.pace <= 0) return null;
+    // Allure seuil estimée : pas dispo directement, on utilise hr-based TRIMP comme fallback
+    // Si pas de FTP pace disponible, on utilise hrTSS (TRIMP × facteur de genre)
+    if (act.hr && hrMaxBpm) {
+      // hrTSS (basé sur Banister TRIMP)
+      const hrReserve = hrMaxBpm - (hrRestBpm || 50);
+      const hrFrac = Math.min(1, (act.hr - (hrRestBpm || 50)) / Math.max(1, hrReserve));
+      const y = 1.92; // facteur genre neutre (entre homme 1.92 et femme 1.67)
+      const trimp = (durSec / 60) * hrFrac * 0.64 * Math.exp(y * hrFrac);
+      const tss = Math.round(trimp);
+      const ifVal = Math.round(hrFrac * 100) / 100;
+      return { tss, np: null, ifVal, method: 'hr' };
+    }
+    // Fallback: estimation basée sur durée + allure
+    const tss = Math.round((durSec / 3600) * 100 * 0.75);
+    return { tss, np: null, ifVal: null, method: 'est' };
+
+  } else if (act.sport === 'Natation') {
+    // sTSS simplifié : basé sur durée et FC si disponible
+    if (act.hr && hrMaxBpm) {
+      const hrReserve = hrMaxBpm - (hrRestBpm || 50);
+      const hrFrac = Math.min(1, (act.hr - (hrRestBpm || 50)) / Math.max(1, hrReserve));
+      const y = 1.92;
+      const trimp = (durSec / 60) * hrFrac * 0.64 * Math.exp(y * hrFrac);
+      const tss = Math.round(trimp);
+      return { tss, np: null, ifVal: Math.round(hrFrac * 100) / 100, method: 'hr' };
+    }
+    return { tss: Math.round((durSec / 3600) * 60), np: null, ifVal: null, method: 'est' };
+  }
+  return null;
+}
+
+function tssColor(tss) {
+  if (!tss) return '#bab6b6';
+  if (tss < 50)  return '#605d5d';   // léger
+  if (tss < 100) return '#f97a60';   // modéré
+  if (tss < 150) return '#ec3013';   // dur
+  return '#ae1800';                   // très dur
+}
+
 function bikeActsEstimatedPower(acts, totalMassKg) {
   const rides = acts.filter(a => a.sport === 'Vélo' && a.dist && a.time);
   if (!rides.length || !totalMassKg) return null;
@@ -1398,14 +1483,31 @@ function App() {
         { label:'Vitesse moy.',  value: act.dist&&act.time?fmtNum(act.dist/(act.time/60),1):'Donnée manquante', unit: act.dist&&act.time?'km/h':'' },
         { label:'W estimés moy.',value: avgEstPow!==null?String(avgEstPow):(act.power?String(act.power):'Donnée manquante'), unit: avgEstPow!==null?'W':'' },
         { label:'W/kg estimés',  value: wPerKg!==null?String(wPerKg):(wkg?String(wkg):'Donnée manquante'), unit: wPerKg!==null||wkg?'W/kg':'' },
-        { label:'Charge',        value: act.trainingLoad?String(act.trainingLoad):'Donnée manquante', unit:'' },
+        ...(() => {
+          const ftpV = Number(profile.ftp)||ftpEstimated||null;
+          const s = actStreams[act.id];
+          const tssData = calcTSS(act, s&&s!=='error'?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+          const np = tssData?.np ?? (s&&s!=='error'&&s.pow ? calcNP(s.pow) : null);
+          const ifVal = tssData?.ifVal ?? null;
+          const tss = tssData?.tss ?? null;
+          return [
+            { label:'NP', value: np?np+' W':'—', unit:'', color: np?'#201e1d':'#bab6b6' },
+            { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6' },
+            { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true },
+          ];
+        })(),
       ];
     } else if (isSwim) {
       detailKpis = [
         { label:'FC moyenne',  value: avgHr!==null?String(avgHr):(act.hr?String(act.hr):'Donnée manquante'), unit: avgHr!==null||act.hr?'bpm':'' },
         { label:'FC max',      value: maxHr!==null?String(maxHr):'Donnée manquante', unit: maxHr!==null?'bpm':'' },
         { label:'Allure moy.', value: act.pace?fmtPace(act.pace/10):'Donnée manquante', unit: act.pace?'/100m':'' },
-        { label:'Charge',      value: act.trainingLoad?String(act.trainingLoad):'Donnée manquante', unit:'' },
+        ...(() => {
+          const s = actStreams[act.id];
+          const tssData = calcTSS(act, s&&s!=='error'?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+          const tss = tssData?.tss ?? null;
+          return [{ label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true }];
+        })(),
       ];
     } else {
       detailKpis = [
@@ -1413,7 +1515,16 @@ function App() {
         { label:'FC max',      value: maxHr!==null?String(maxHr):'Donnée manquante', unit: maxHr!==null?'bpm':'' },
         { label:'D+ streams',  value: elevGain!==null?'+'+fmtNum(elevGain,0):'Donnée manquante', unit: elevGain!==null?'m':'' },
         { label:'Allure moy.', value: act.pace?fmtPace(act.pace):'Donnée manquante', unit: act.pace?'/km':'' },
-        { label:'Charge',      value: act.trainingLoad?String(act.trainingLoad):'Donnée manquante', unit:'' },
+        ...(() => {
+          const s = actStreams[act.id];
+          const tssData = calcTSS(act, s&&s!=='error'?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+          const tss = tssData?.tss ?? null;
+          const ifVal = tssData?.ifVal ?? null;
+          return [
+            { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6' },
+            { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true },
+          ];
+        })(),
       ];
     }
     const nCols = detailKpis.length;
@@ -1447,7 +1558,7 @@ function App() {
             detailKpis.map((kpi,i) => h('div', { key:i, style:{ padding:'10px 14px 12px', borderRight: i<nCols-1 ? '1px solid #d7d3d3' : undefined } },
               h('span', { style:{ display:'block', fontSize:'10px', fontWeight:'600', letterSpacing:'0.1em', textTransform:'uppercase', color:'#605d5d' } }, kpi.label),
               h('div', { style:{ display:'flex', alignItems:'baseline', gap:'5px', marginTop:'6px' } },
-                h('span', { style:{ fontSize: nCols>6?'15px':'18px', fontWeight:'800', letterSpacing:'-0.02em', lineHeight:'1' } }, kpi.value),
+                h('span', { style:{ fontSize: nCols>6?'15px':'18px', fontWeight:'800', letterSpacing:'-0.02em', lineHeight:'1', color: kpi.color||'#201e1d' } }, kpi.value),
                 kpi.unit && h('span', { style:{ fontSize:'12px', fontWeight:'600', color:'#605d5d' } }, kpi.unit)
               )
             ))
