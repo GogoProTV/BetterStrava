@@ -1561,17 +1561,17 @@ function App() {
           const decoupl = sOk&&s.pow&&s.hr ? calcDecoupling('Vélo', s.pow, s.hr) : null;
           return [
             { label:'NP', value: np?np+' W':'—', unit:'', color: np?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Puissance normalisée — représente le coût physiologique réel de la sortie, tenant compte des variations d’intensité. Plus représentatif de l’effort que la puissance moyenne.', calc:'Calcul : fenêtre glissante 30 s élevée à la puissance 4, moyenne, puis racine 4ᵉ.' }},
+              tooltip:{ main:'Ta puissance réelle de la sortie. Comme l’effort varie constamment — côtes, accélérations, vent — la puissance moyenne sous-estime ce que ton corps a dû fournir. La NP corrige ça et te donne un chiffre plus représentatif de l’effort physiologique.', calc:'Fenêtre glissante 30 s élevée à la puissance 4, moyenne globale, puis racine quatrième.' }},
             { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensity Factor — fraction du seuil (FTP) soutenue sur la sortie. < 0.75 = récup, 0.75–0.85 = endurance, 0.85–0.95 = tempo, 0.95–1.05 = seuil, > 1.05 = très intense.', calc:'Calcul : NP ÷ FTP.' }},
+              tooltip:{ main:'L’IF te dit à quel pourcentage de ton seuil tu as roulé. Un IF de 0.80 signifie que tu étais à 80 % de ta FTP. L’endurance générale se situe entre 0.60 et 0.75, un tempo entre 0.80 et 0.90, et une course courte peut monter jusqu’à 1.05 ou plus.', calc:'NP divisée par ta FTP. Renseigne ta FTP dans le Profil pour un résultat précis.' }},
             { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
-              tooltip:{ main:'Training Stress Score — charge totale de la séance. < 50 = léger, 50–100 = modéré, 100–150 = dur, > 150 = très dur (plusieurs jours de récupération nécessaires).', calc:'Calcul : (durée × NP × IF) ÷ (FTP × 3600) × 100.' }},
+              tooltip:{ main:'Le TSS dit combien cette sortie a stressé ton corps, en prenant en compte à la fois l’intensité et la durée. 90 minutes à tempo vaut bien plus qu’une heure au même IF. En dessous de 50 : sortie facile, une nuit suffit. Entre 50 et 100 : modérée, récup en 1–2 jours. Au-delà de 150 : plusieurs jours nécessaires.', calc:'(Durée en secondes × NP × IF) divisé par (FTP × 3600), multiplié par 100.' }},
             { label:'VI', value: vi?String(vi):'—', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
-              tooltip:{ main:'Variability Index — régularité de l’effort. Proche de 1.0 = effort régulier (TT, tempo). > 1.1 = effort très variable (crénaux, côtes, critérium).', calc:'Calcul : NP ÷ puissance moyenne.' }},
+              tooltip:{ main:'Le VI te dit si tu as roulé de manière régulière ou en dents de scie. Proche de 1.0 : effort lisse, parfait pour un contre-la-montre. Au-dessus de 1.1 : l’effort était très variable, typique d’une course avec des côtes ou des accélérations répétées. Un VI élevé est plus coûteux énergétiquement qu’il n’y paraît.', calc:'NP divisée par la puissance moyenne de la sortie.' }},
             { label:'EF', value: ef?String(ef):'—', unit: ef?'W/bpm':'', color: '#201e1d',
-              tooltip:{ main:'Efficiency Factor — économie aérobie : watts produits par battement cardiaque. Augmente avec la forme aérobie sur des sorties similaires.', calc:'Calcul : NP ÷ FC moyenne.' }},
+              tooltip:{ main:'L’EF mesure combien de watts tu produis pour chaque battement de cœur. Plus il est élevé, plus ton système aérobie est efficace. Si l’EF augmente progressivement sur des sorties similaires en intensité, c’est un signe clair de progression de ta forme aérobie.', calc:'NP divisée par ta fréquence cardiaque moyenne.' }},
             { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'Découplage aérobie Pw : Hr — dérive entre puissance et FC. < 5 % = bonne maîtrise aérobie. > 5 % = possible dérive (fatigue, chaleur, déshydratation).', calc:'Calcul : (EF 2ᵉᵉ moitié ÷ EF 1ᵉʳᵉ moitié − 1) × 100 %.' }},
+              tooltip:{ main:'Le Pw:Hr te dit si ton cœur a commencé à “monter” par rapport à ta puissance au fil de la sortie. En dessous de 5 % : tu étais bien dans ta zone aérobie, le cœur stable. Au-dessus de 5 % : ton corps a eu du mal à maintenir le même effort, signe de fatigue, de chaleur, ou d’une intensité trop haute.', calc:'Rapport EF de la 2ᵉᵉ moitié sur la 1ᵉʳᵉ moitié, moins 1, multiplié par 100.' }},
           ];
         })(),
       ];
@@ -1585,7 +1585,7 @@ function App() {
           const tssData = calcTSS(act, s&&s!=='error'?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
           const tss = tssData?.tss ?? null;
           return [{ label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
-            tooltip:{ main:'Training Stress Score — charge totale de la sortie. < 50 = léger, 50–100 = modéré, 100–150 = dur.', calc:'Méthode TRIMP Banister basée sur la durée et la réserve cardiaque.' } }];
+            tooltip:{ main:'Le TSS te dit combien cette sortie a coûté à ton corps, en tenant compte de l’intensité et de la durée. En dessous de 50 : léger, une nuit suffit. Entre 50 et 100 : modéré. Au-delà de 150 : compte plusieurs jours de récup.', calc:'Méthode TRIMP (Banister), basée sur la durée et ta fréquence cardiaque relative.' } }];
         })(),
       ];
     } else {
@@ -1605,13 +1605,13 @@ function App() {
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
             { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensity Factor — fraction de l’effort maximal soutenu sur la sortie. Basé sur la réserve cardiaque (FC_moy − FC_repos) ÷ (FC_max − FC_repos).', calc:'Méthode Karvonen. Renseigne FC max et FC repos dans le Profil pour plus de précision.' }},
+              tooltip:{ main:'L’IF te dit à quel pourcentage de ton effort maximal tu as couru. Un IF de 0.80 signifie que tu étais à 80 % de ta capacité. L’endurance facile se situe sous 0.75, un tempo vers 0.80–0.90.', calc:'Basé sur la réserve cardiaque (méthode Karvonen). Renseigne FC max et FC repos dans le Profil.' }},
             { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
-              tooltip:{ main:'Training Stress Score — charge totale de la sortie. < 50 = léger, 50–100 = modéré, 100–150 = dur, > 150 = très dur.', calc:'Calcul : TRIMP Banister — durée × hrFrac × 0.64 × e^(1.92 × hrFrac). Basculera sur rTSS si FTP allure est renseigné.' }},
+              tooltip:{ main:'Le TSS te dit combien cette sortie a coûté à ton corps. Une heure de tempo est bien plus lourde qu’une sortie facile d’une heure. En dessous de 50 : léger. Entre 50 et 100 : modéré. Au-delà de 150 : attends-toi à plusieurs jours avant d’être vraiment frais.', calc:'Méthode TRIMP (Banister), basée sur la durée et ta fréquence cardiaque relative.' }},
             { label:'EF', value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
-              tooltip:{ main:'Efficiency Factor — économie de course : vitesse produite par battement cardiaque. Augmente avec la forme aérobie sur des sorties similaires.', calc:'Calcul : vitesse moyenne (m/min) ÷ FC moyenne.' }},
+              tooltip:{ main:'L’EF mesure ton économie de course : combien de mètres tu parcours chaque minute pour chaque battement de cœur. Si l’EF monte progressivement sur des sorties similaires, tu cours mieux pour le même effort cardiaque — c’est une progression aérobie.', calc:'Vitesse moyenne en m/min divisée par ta fréquence cardiaque moyenne.' }},
             { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'Découplage aérobie Pa : Hr — dérive entre allure et FC. < 5 % = bonne maîtrise aérobie. > 5 % = possible dérive (fatigue, chaleur, déshydratation).', calc:'Calcul : (EF 2ᵉᵉ moitié ÷ EF 1ᵉʳᵉ moitié − 1) × 100 %.' }},
+              tooltip:{ main:'Le Pa:Hr te dit si ton cœur a commencé à s’emballer par rapport à ton allure au fil de la sortie. En dessous de 5 % : tu étais dans ta zone aérobie, le cœur stable. Au-dessus : le corps fatiguait et compensait par une hausse de FC pour maintenir l’allure.', calc:'Rapport EF de la 2ᵉᵉ moitié sur la 1ᵉʳᵉ moitié, moins 1, multiplié par 100.' }},
           ];
         })(),
       ];
