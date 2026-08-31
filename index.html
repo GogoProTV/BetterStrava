@@ -253,27 +253,26 @@ function calcTSS(act, streams, ftpW, hrMaxBpm, hrRestBpm) {
     return { tss, np, ifVal, method: 'pow' };
 
   } else if (act.sport === 'Course' || act.sport === 'Trail') {
-    // Course : rTSS basé sur allure et allure seuil (FTP pace)
-    // Allure seuil = best 20-60min. On utilise l'allure moyenne de la sortie comme approximation.
-    // IF = (allure_seuil / allure_sortie) — plus c'est rapide, plus IF est élevé
-    // rTSS = (durSec × IF²) / 3600 × 100
     if (!act.pace || act.pace <= 0) return null;
-    // Allure seuil estimée : pas dispo directement, on utilise hr-based TRIMP comme fallback
-    // Si pas de FTP pace disponible, on utilise hrTSS (TRIMP × facteur de genre)
+    // rTSS officiel si allure seuil disponible (passé via param ftpW)
+    const tPace = ftpW;
+    if (tPace && tPace > 0) {
+      const ifVal = Math.round((tPace / act.pace) * 100) / 100;
+      const tss = Math.round((durSec * ifVal * ifVal) / 3600 * 100);
+      return { tss, np: null, ifVal, method: 'rTSS' };
+    }
+    // Fallback TRIMP (Banister) si pas d’allure seuil
     if (act.hr && hrMaxBpm) {
-      // hrTSS (basé sur Banister TRIMP)
       const hrReserve = hrMaxBpm - (hrRestBpm || 50);
       const hrFrac = Math.min(1, (act.hr - (hrRestBpm || 50)) / Math.max(1, hrReserve));
-      const y = 1.92; // facteur genre neutre (entre homme 1.92 et femme 1.67)
+      const y = 1.92;
       const trimp = (durSec / 60) * hrFrac * 0.64 * Math.exp(y * hrFrac);
       const tss = Math.round(trimp);
       const ifVal = Math.round(hrFrac * 100) / 100;
       return { tss, np: null, ifVal, method: 'hr' };
     }
-    // Fallback: estimation basée sur durée + allure
     const tss = Math.round((durSec / 3600) * 100 * 0.75);
     return { tss, np: null, ifVal: null, method: 'est' };
-
   } else if (act.sport === 'Natation') {
     // sTSS simplifié : basé sur durée et FC si disponible
     if (act.hr && hrMaxBpm) {
@@ -499,9 +498,9 @@ function App() {
   const [profile, setProfile] = useState(() => {
     try {
       const saved = localStorage.getItem('bs_profile');
-      if (saved) return { name:'', gender:'Non précisé', age:'', height:'', weight:'', fcMax:'', fcRest:'', ftp:'', bikeMass:'', ...JSON.parse(saved) };
+      if (saved) return { name:'', gender:'Non précisé', age:'', height:'', weight:'', fcMax:'', fcRest:'', ftp:'', bikeMass:'', thresholdPace:'', ...JSON.parse(saved) };
     } catch(e) {}
-    return { name:'', gender:'Non précisé', age:'', height:'', weight:'', fcMax:'', fcRest:'', ftp:'', bikeMass:'' };
+    return { name:'', gender:'Non précisé', age:'', height:'', weight:'', fcMax:'', fcRest:'', ftp:'', bikeMass:'', thresholdPace:'' };
   });
   const [race, setRace] = useState(() => {
     try {
@@ -949,6 +948,28 @@ function App() {
     return Math.round(best20min * 0.95);
   })();
 
+  // ── Allure seuil estimée (course / trail) ──────────────────────────────────
+  // Meilleure allure sur 20-60 min parmi les sorties Course/Trail,
+  // puis correction Riegel vers l'équivalent 1h (allure × 1.06^((60-t)/60))
+  // multiplié par 0.97 (marge de sécurité, comme FTP × 0.95)
+  const thresholdPaceEstimated = (() => {
+    const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.dist && a.time && a.secs >= 1200 && a.secs <= 7200 && a.pace);
+    if (!runs.length) return null;
+    // Trier par allure ajustée vers 60 min (Riegel) : allure × (60/t)^(1.06-1)
+    const candidates = runs.map(a => {
+      const t = a.time; // en minutes
+      if (t < 20 || t > 120) return null;
+      // Projection allure à 60 min via Riegel : pace60 = pace × (60/t)^0.06
+      const pace60 = a.pace * Math.pow(60 / t, 0.06);
+      return { pace60, pace: a.pace, time: t };
+    }).filter(Boolean);
+    if (!candidates.length) return null;
+    // Prendre la meilleure projection (la plus rapide)
+    const best = Math.min(...candidates.map(c => c.pace60));
+    // Allure seuil ≈ pace60 × 0.97
+    return Math.round(best * 0.97 * 100) / 100;
+  })();
+
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Condition physique') return;
     chartDefaults();
@@ -1346,7 +1367,7 @@ function App() {
           const short={Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'};
           const tssEst = (() => {
             const s = actStreams[a.id];
-            const ftpV = Number(profile.ftp)||ftpEstimated||null;
+            const ftpV = a.sport==='Vélo' ? (Number(profile.ftp)||ftpEstimated||null) : (Number(profile.thresholdPace)||thresholdPaceEstimated||null);
             const td = calcTSS(a, s&&s!=='error'?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
             return td?.tss ?? a.trainingLoad ?? null;
           })();
@@ -1597,7 +1618,8 @@ function App() {
         ...(() => {
           const s = actStreams[act.id];
           const sOk = s && s !== 'error';
-          const tssData = calcTSS(act, sOk?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+          const tPaceVal = Number(profile.thresholdPace)||thresholdPaceEstimated||null;
+          const tssData = calcTSS(act, sOk?s:null, tPaceVal, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
           const tss = tssData?.tss ?? null;
           const ifVal = tssData?.ifVal ?? null;
           const avgVelMs = sOk&&s.vel ? s.vel.reduce((a,b)=>a+b,0)/s.vel.length : (act.dist&&act.time?(act.dist*1000)/(act.time*60):null);
@@ -2594,16 +2616,21 @@ function App() {
                   ['Femme','Homme','Non précisé'].map(g=>h('option',{key:g,value:g},g))
                 )
               ),
-              [{k:'age',label:'Âge (ans)',step:1},{k:'height',label:'Taille (cm)',step:1},{k:'weight',label:'Poids cycliste (kg)',step:0.1},{k:'bikeMass',label:'Poids vélo (kg)',step:0.1},{k:'fcMax',label:'FC max (bpm)',step:1},{k:'fcRest',label:'FC repos (bpm)',step:1},{k:'ftp',label:'FTP vélo (W)',step:1}].map(f=>
+              [{k:'age',label:'Âge (ans)',step:1},{k:'height',label:'Taille (cm)',step:1},{k:'weight',label:'Poids cycliste (kg)',step:0.1},{k:'bikeMass',label:'Poids vélo (kg)',step:0.1},{k:'fcMax',label:'FC max (bpm)',step:1},{k:'fcRest',label:'FC repos (bpm)',step:1},{k:'ftp',label:'FTP vélo (W)',step:1},{k:'thresholdPace',label:'Allure seuil course (min/km)',step:0.01}].map(f=>
                 h('div',{key:f.k,style:{display:'flex',flexDirection:'column',gap:'7px'}},
                   h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px'}},
                     h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},f.label),
+                    f.k==='thresholdPace'&&thresholdPaceEstimated&&h('button',{type:'button',onClick:()=>setProfile(p=>({...p,thresholdPace:thresholdPaceEstimated})),
+                      style:{padding:'2px 8px',border:'2px solid #ec3013',background:'transparent',color:'#ec3013',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer',whiteSpace:'nowrap'},
+                      onMouseEnter:e=>{e.currentTarget.style.background='#fdf1ee';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
+                    },'Est. '+thresholdPaceEstimated+' \'\u2192'),
                     f.k==='ftp'&&ftpEstimated&&h('button',{type:'button',onClick:()=>setProfile(p=>({...p,ftp:ftpEstimated})),
                       style:{padding:'2px 8px',border:'2px solid #ec3013',background:'transparent',color:'#ec3013',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer',whiteSpace:'nowrap'},
                       onMouseEnter:e=>{e.currentTarget.style.background='#fdf1ee';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';},
                     },'Est. '+ftpEstimated+' W \u2192')
                   ),
                   h('input',{type:'number',step:f.step,value:profile[f.k]??'',onChange:e=>{const v=e.target.value;setProfile(p=>({...p,[f.k]:v===''?'':Number(v)}));},style:{width:'100%',padding:'10px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600',fontVariantNumeric:'tabular-nums'}}),
+                  f.k==='thresholdPace'&&thresholdPaceEstimated&&h('p',{style:{margin:'4px 0 0',fontSize:'11px',color:'#605d5d'}},'Estimé depuis les meilleures sorties course/trail 20–120 min, projection Riegel × 0.97.'),
                   f.k==='ftp'&&ftpEstimated&&h('p',{style:{margin:'4px 0 0',fontSize:'11px',color:'#605d5d'}},'Estimé d\'après la meilleure sortie vélo 20–60 min × 0.95 · masse '+((Number(profile.weight)||0)+(Number(profile.bikeMass)||0)).toFixed(1)+' kg')
                 )
               )
