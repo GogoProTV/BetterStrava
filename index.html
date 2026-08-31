@@ -686,15 +686,15 @@ function App() {
     function smooth(arr, win) {
       if (!arr.length) return [];
       const out = new Array(arr.length);
-      let sum = 0, count = 0;
       const half = Math.floor(win / 2);
-      for (let i = 0; i < Math.min(win, arr.length); i++) { if (arr[i] != null) { sum += arr[i]; count++; } }
       for (let i = 0; i < arr.length; i++) {
-        out[i] = count > 0 ? sum / count : null;
-        const out_idx = i - half;
-        if (out_idx >= 0 && arr[out_idx] != null) { sum -= arr[out_idx]; count--; }
-        const in_idx = i + half + 1;
-        if (in_idx < arr.length && arr[in_idx] != null) { sum += arr[in_idx]; count++; }
+        const lo = Math.max(0, i - half);
+        const hi = Math.min(arr.length - 1, i + half);
+        let sum = 0, cnt = 0;
+        for (let j = lo; j <= hi; j++) {
+          if (arr[j] != null) { sum += arr[j]; cnt++; }
+        }
+        out[i] = cnt > 0 ? sum / cnt : null;
       }
       return out;
     }
@@ -717,11 +717,11 @@ function App() {
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => {
         if (!v || v <= 0) return null;
         const pace = 1000 / 60 / v;
-        return (pace >= 2 && pace <= MAX_PACE) ? Math.round(pace * 100) / 100 : null;
+        return pace > 0 ? Math.round(pace * 100) / 100 : null;
       };
       const paceVals = thin(smoothedVel).map(conv).filter(v => v !== null);
-      paceMin = paceVals.length ? Math.max(2, Math.floor(Math.min(...paceVals) * 2) / 2 - 0.5) : 2;
-      paceMax = paceVals.length ? Math.min(MAX_PACE, Math.ceil(Math.max(...paceVals) * 2) / 2 + 0.5) : 10;
+      paceMin = paceVals.length ? Math.floor(Math.min(...paceVals) * 2) / 2 - 0.5 : 0;
+      paceMax = paceVals.length ? Math.ceil(Math.max(...paceVals) * 2) / 2 + 0.5 : 15;
       datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(smoothedVel).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
     }
     if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(smooth(Array.from(estPowData), 30)), borderColor: '#7c4dbc', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
