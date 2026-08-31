@@ -1344,7 +1344,15 @@ function App() {
         const d=new Date(s.getTime()+i*86400000);
         const sessions=cur.list.filter(a=>a.date.toDateString()===d.toDateString()).map(a=>{
           const short={Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'};
-          return { sport:short[a.sport]||a.sport, time:fmtH(a.time), workout:a.name||'Donnée manquante', detail:a.dist?fmtNum(a.dist,1)+' km':'', style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px solid #d7d3d3',background:'#eae9e9',color:'#201e1d'} };
+          const tssEst = (() => {
+            const s = actStreams[a.id];
+            const ftpV = Number(profile.ftp)||ftpEstimated||null;
+            const td = calcTSS(a, s&&s!=='error'?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+            return td?.tss ?? a.trainingLoad ?? null;
+          })();
+          const sessBg = tssEst===null?'#eae9e9':tssEst<50?'#eae9e9':tssEst<100?'#fff0eb':tssEst<150?'#ffd5c8':'#ffc0a8';
+          const sessColor = tssEst!==null&&tssEst>=100?'#201e1d':'#201e1d';
+          return { sport:short[a.sport]||a.sport, time:fmtH(a.time), workout:a.name||'Donnée manquante', detail:a.dist?fmtNum(a.dist,1)+' km':'', tss:tssEst, style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px solid '+(tssEst!==null&&tssEst>=100?tssColor(tssEst):'#d7d3d3'),background:sessBg,color:sessColor} };
         });
         const isToday=d.toDateString()===today.toDateString();
         return{dow,num:d.getDate(),sessions,empty:sessions.length===0,numStyle:{fontSize:'12px',fontWeight:'800',...(isToday?{padding:'1px 6px',background:'#201e1d',color:'#ffffff'}:{color:'#201e1d'})},cellStyle:{minWidth:0,padding:'8px 6px 8px',borderRight:'1px solid #d7d3d3',borderLeft:i>0?'0':undefined}};
@@ -1553,17 +1561,17 @@ function App() {
           const decoupl = sOk&&s.pow&&s.hr ? calcDecoupling('Vélo', s.pow, s.hr) : null;
           return [
             { label:'NP', value: np?np+' W':'—', unit:'', color: np?'#201e1d':'#bab6b6',
-              tooltip:'Normalized Power : puissance ajustée tenant compte des variations d’intensité. Calculée par fenêtre glissante 30 s élevée à la puissance 4, puis racine 4ᵉ. Représente le coût physiologique réel de l’effort.' },
+              tooltip:{ main:'Puissance normalisée — représente le coût physiologique réel de la sortie, tenant compte des variations d’intensité. Plus représentatif de l’effort que la puissance moyenne.', calc:'Calcul : fenêtre glissante 30 s élevée à la puissance 4, moyenne, puis racine 4ᵉ.' }},
             { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:'Intensity Factor : rapport NP / FTP. < 0.75 = récup, 0.75–0.85 = endurance, 0.85–0.95 = tempo, 0.95–1.05 = seuil, > 1.05 = très intense.' },
-            { label:'VI', value: vi?String(vi):'—', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
-              tooltip:'Variability Index : régularité de l’effort (NP / puissance moyenne). Proche de 1.0 = effort très régulier. >1.1 = effort très variable (intervalles, côtes).' },
-            { label:'EF', value: ef?String(ef):'—', unit: ef?'W/bpm':'', color: '#201e1d',
-              tooltip:'Efficiency Factor : efficacité aérobie (NP / FC moyenne). Plus il est élevé, plus tu produis de watts pour un effort cardiaque donné. En progression si EF augmente sur des sorties similaires.' },
-            { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:'Découplage aérobie Pw:Hr : dérive entre puissance et FC sur la sortie (2ᵉ² moitié vs 1ᵉʳᵉ). < 5 % = bonne maîtrise aérobie, > 5 % = possible dérive cardiaque (fatigue, chaleur, déshydratation).' },
+              tooltip:{ main:'Intensity Factor — fraction du seuil (FTP) soutenue sur la sortie. < 0.75 = récup, 0.75–0.85 = endurance, 0.85–0.95 = tempo, 0.95–1.05 = seuil, > 1.05 = très intense.', calc:'Calcul : NP ÷ FTP.' }},
             { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
-              tooltip:'Training Stress Score : charge totale de la séance. Formule : (durée§ × NP × IF) / (FTP × 3600) × 100. < 50 = léger, 50–100 = modéré, 100–150 = dur, > 150 = très dur.' },
+              tooltip:{ main:'Training Stress Score — charge totale de la séance. < 50 = léger, 50–100 = modéré, 100–150 = dur, > 150 = très dur (plusieurs jours de récupération nécessaires).', calc:'Calcul : (durée × NP × IF) ÷ (FTP × 3600) × 100.' }},
+            { label:'VI', value: vi?String(vi):'—', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
+              tooltip:{ main:'Variability Index — régularité de l’effort. Proche de 1.0 = effort régulier (TT, tempo). > 1.1 = effort très variable (crénaux, côtes, critérium).', calc:'Calcul : NP ÷ puissance moyenne.' }},
+            { label:'EF', value: ef?String(ef):'—', unit: ef?'W/bpm':'', color: '#201e1d',
+              tooltip:{ main:'Efficiency Factor — économie aérobie : watts produits par battement cardiaque. Augmente avec la forme aérobie sur des sorties similaires.', calc:'Calcul : NP ÷ FC moyenne.' }},
+            { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
+              tooltip:{ main:'Découplage aérobie Pw : Hr — dérive entre puissance et FC. < 5 % = bonne maîtrise aérobie. > 5 % = possible dérive (fatigue, chaleur, déshydratation).', calc:'Calcul : (EF 2ᵉᵉ moitié ÷ EF 1ᵉʳᵉ moitié − 1) × 100 %.' }},
           ];
         })(),
       ];
@@ -1577,7 +1585,7 @@ function App() {
           const tssData = calcTSS(act, s&&s!=='error'?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
           const tss = tssData?.tss ?? null;
           return [{ label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
-            tooltip:'Training Stress Score : charge totale estimée par méthode TRIMP. Basé sur la durée et la fraction de FC réserve (Karvonen). < 50 = léger, 50–100 = modéré, 100–150 = dur.' }];
+            tooltip:{ main:'Training Stress Score — charge totale de la sortie. < 50 = léger, 50–100 = modéré, 100–150 = dur.', calc:'Méthode TRIMP Banister basée sur la durée et la réserve cardiaque.' } }];
         })(),
       ];
     } else {
@@ -1597,13 +1605,13 @@ function App() {
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
             { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:'Intensity Factor basé sur la réserve cardiaque (méthode Karvonen). Fraction de l’effort cardiaque maximal soutenu sur la sortie.' },
-            { label:'EF', value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
-              tooltip:'Efficiency Factor : vitesse moyenne (m/min) divisée par FC moyenne. Mesure l’économie de course à un effort cardiaque donné. En progression si EF augmente sur des sorties similaires.' },
-            { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:'Découplage aérobie Pa:Hr : dérive entre allure et FC sur la sortie (2ᵉ² moitié vs 1ᵉʳᵉ). < 5 % = bonne maîtrise aérobie, > 5 % = possible dérive (fatigue, chaleur, déshydratation).' },
+              tooltip:{ main:'Intensity Factor — fraction de l’effort maximal soutenu sur la sortie. Basé sur la réserve cardiaque (FC_moy − FC_repos) ÷ (FC_max − FC_repos).', calc:'Méthode Karvonen. Renseigne FC max et FC repos dans le Profil pour plus de précision.' }},
             { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
-              tooltip:'Training Stress Score : charge totale estimée par méthode TRIMP (Banister). Basé sur la durée et la fraction de FC réserve. < 50 = léger, 50–100 = modéré, 100–150 = dur.' },
+              tooltip:{ main:'Training Stress Score — charge totale de la sortie. < 50 = léger, 50–100 = modéré, 100–150 = dur, > 150 = très dur.', calc:'Calcul : TRIMP Banister — durée × hrFrac × 0.64 × e^(1.92 × hrFrac). Basculera sur rTSS si FTP allure est renseigné.' }},
+            { label:'EF', value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
+              tooltip:{ main:'Efficiency Factor — économie de course : vitesse produite par battement cardiaque. Augmente avec la forme aérobie sur des sorties similaires.', calc:'Calcul : vitesse moyenne (m/min) ÷ FC moyenne.' }},
+            { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
+              tooltip:{ main:'Découplage aérobie Pa : Hr — dérive entre allure et FC. < 5 % = bonne maîtrise aérobie. > 5 % = possible dérive (fatigue, chaleur, déshydratation).', calc:'Calcul : (EF 2ᵉᵉ moitié ÷ EF 1ᵉʳᵉ moitié − 1) × 100 %.' }},
           ];
         })(),
       ];
@@ -1653,11 +1661,18 @@ function App() {
                 showTip && kpi.tooltip && h('div', {
                   style:{
                     position:'absolute', bottom:'calc(100% + 6px)', left:'0', zIndex:200,
-                    background:'#201e1d', color:'#ffffff', fontSize:'11px', lineHeight:'1.5',
-                    padding:'10px 12px', width:'220px', pointerEvents:'none',
-                    boxShadow:'0 4px 12px rgba(0,0,0,0.25)',
+                    background:'#201e1d', color:'#ffffff',
+                    padding:'12px 14px', width:'240px', pointerEvents:'none',
+                    boxShadow:'0 4px 16px rgba(0,0,0,0.3)',
                   }
-                }, kpi.tooltip)
+                },
+                  h('span',{style:{display:'block',fontSize:'12px',fontWeight:'700',lineHeight:'1.5',marginBottom:'8px'}},
+                    typeof kpi.tooltip==='object' ? kpi.tooltip.main : kpi.tooltip
+                  ),
+                  typeof kpi.tooltip==='object' && kpi.tooltip.calc && h('span',{style:{display:'block',fontSize:'10px',fontWeight:'400',lineHeight:'1.5',color:'#bab6b6',borderTop:'1px solid rgba(255,255,255,0.15)',paddingTop:'7px',marginTop:'2px'}},
+                    kpi.tooltip.calc
+                  )
+                )
               );
             })
           ),
@@ -1684,7 +1699,7 @@ function App() {
               },
               onMouseEnter: e => { e.currentTarget.style.background='#ae1800'; e.currentTarget.style.borderColor='#ae1800'; },
               onMouseLeave: e => { e.currentTarget.style.background='#ec3013'; e.currentTarget.style.borderColor='#ec3013'; }
-            }, 'Analyser'),
+            }, 'Comparer'),
             serieBtns.length > 0 && h('div', { style:{ display:'flex', gap:'8px' } }, serieBtns.map(serBtn))
           ),
           isLoading && h('div', { style:{ height:'400px', display:'flex', alignItems:'center', fontSize:'12px', color:'#605d5d' } }, 'Chargement des streams Strava…'),
@@ -1820,7 +1835,8 @@ function App() {
                         h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.1'}},s.sport),
                         h('span',{style:{display:'block',fontSize:'12px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},s.workout),
                         h('span',{style:{display:'block',fontSize:'12px',fontWeight:'600',lineHeight:'1.25'}},s.time),
-                        h('span',{style:{display:'block',fontSize:'12px',fontWeight:'600',lineHeight:'1.25'}},s.detail)
+                        h('span',{style:{display:'block',fontSize:'12px',fontWeight:'600',lineHeight:'1.25'}},s.detail),
+                        s.tss&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',lineHeight:'1.4',color:tssColor(s.tss),letterSpacing:'0.04em'}},'TSS '+s.tss)
                       )),
                       day.empty&&h('span',{style:{display:'flex',alignItems:'center',height:'100%',fontSize:'12px',color:'#bab6b6'}},'Repos')
                     )
