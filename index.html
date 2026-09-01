@@ -328,15 +328,34 @@ function calcDecoupling(sport, powOrVelArr, hrArr) {
   const metric = powOrVelArr;
   if (!metric || metric.length < 60) return null;
   const n = metric.length;
+
+  // Lissage 10s sur les deux séries pour éliminer arrêts/GPS dropouts
+  const smooth = (arr, win) => {
+    const out = new Float32Array(arr.length);
+    let sum = 0;
+    for (let i = 0; i < win && i < arr.length; i++) sum += arr[i];
+    for (let i = 0; i < arr.length; i++) {
+      out[i] = sum / Math.min(win, arr.length);
+      if (i + 1 < arr.length) {
+        sum += arr[i + 1];
+        if (i - win + 1 >= 0) sum -= arr[i - win + 1];
+      }
+    }
+    return out;
+  };
+  const WIN = 10;
+  const smoothM  = smooth(metric, WIN);
+  const smoothHr = smooth(hrArr,  WIN);
+
   const mid = Math.floor(n / 2);
 
-  // Calculer EF sur chaque moitié
+  // Calculer EF sur chaque moitié (sur données lissées)
   const efHalf = (from, to) => {
     let sumM = 0, sumHr = 0, cnt = 0;
     for (let i = from; i < to; i++) {
-      const v = metric[i], hr = hrArr[i];
+      const v = smoothM[i], hr = smoothHr[i];
       if (!v || !hr || hr < 50) continue;
-      if (sport !== 'Vélo' && (v < 0.3 || v > 8.33)) continue;
+      if (sport !== 'Vélo' && (v < 0.5 || v > 8.33)) continue; // filtre pauses (< ~2 km/h)
       sumM += sport === 'Vélo' ? v : v * 60; // W ou m/min
       sumHr += hr;
       cnt++;
@@ -815,6 +834,28 @@ function App() {
     return Math.round(pace * 100) / 100;
   }
 
+  // Meilleure vitesse moyenne sur une distance cible (vélo) — symétrique de bestPaceWindow
+  // Retourne la vitesse en km/h
+  function bestSpeedWindow(distArr, targetDist) {
+    if (!distArr || distArr.length < 2) return null;
+    const total = distArr[distArr.length - 1];
+    if (total < targetDist) return null;
+    let best = null; let j = 0;
+    for (let i = 0; i < distArr.length; i++) {
+      while (j < distArr.length - 1 && distArr[j] - distArr[i] < targetDist) j++;
+      const coveredDist = distArr[j] - distArr[i];
+      if (coveredDist >= targetDist) {
+        const secs = j - i;
+        if (secs > 0) {
+          const t = secs * (targetDist / coveredDist);
+          const v = (targetDist / t) * 3.6;
+          if (best === null || v > best) best = v;
+        }
+      }
+    }
+    return best !== null ? Math.round(best * 10) / 10 : null;
+  }
+
   function paceCurveByDate(d0, d1) {
     const start = new Date(d0).getTime(), end = new Date(d1).getTime() + 86400000;
     const runs = data.filter(a => (a.sport === 'Course' || a.sport === 'Trail') && a.date.getTime() >= start && a.date.getTime() < end);
@@ -953,25 +994,46 @@ function App() {
   })();
 
   // ── Allure seuil estimée (course / trail) ──────────────────────────────────
-  // Meilleure allure sur 20-60 min parmi les sorties Course/Trail,
-  // puis correction Riegel vers l'équivalent 1h (allure × 1.06^((60-t)/60))
-  // multiplié par 0.97 (marge de sécurité, comme FTP × 0.95)
+  // Méthode 1 (streams dispo) : meilleure allure tenue sur 20 min et 30 min
+  //   via fenêtre glissante sur distance (bestPaceWindow), puis × 0.95
+  // Méthode 2 (fallback, pas de streams) : allure moyenne de la meilleure
+  //   sortie 20–60 min projetée à 60 min via Riegel, puis × 0.95
   const thresholdPaceEstimated = (() => {
-    const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.dist && a.time && a.secs >= 1200 && a.secs <= 7200 && a.pace);
+    const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.dist && a.time && a.secs >= 1200 && a.pace);
     if (!runs.length) return null;
-    // Trier par allure ajustée vers 60 min (Riegel) : allure × (60/t)^(1.06-1)
+
+    // Méthode 1 : streams — fenêtre glissante 20 min (1200 m à allure seuil ≈ 5 km)
+    // On cherche la meilleure allure sur exactement 20 min de distance couverte
+    // = bestPaceWindow sur targetDist = vitesse × 1200 s, mais on ne connaît pas la vitesse a priori.
+    // On utilise donc les distances fixes 3 km, 5 km, 6 km comme proxies d'effort 15–30 min.
+    const THRESHOLD_DISTS = [3000, 4000, 5000, 6000, 8000, 10000]; // m
+    let bestStream = null;
+    for (const a of runs) {
+      const s = actStreams[a.id];
+      if (!s || s === 'error' || !s.dist || !s.vel) continue;
+      for (const targetM of THRESHOLD_DISTS) {
+        const pace = bestPaceWindow(s.dist, s.vel, targetM);
+        if (!pace || pace > MAX_PACE) continue;
+        // Projeter vers 60 min via Riegel : t_reel = targetM/1000 / (1/pace*60) min
+        const tMin = (targetM / 1000) * pace; // durée réelle en minutes
+        if (tMin < 12 || tMin > 90) continue; // exclure trop court ou trop long
+        // pace60 = pace × (60/tMin)^0.06
+        const pace60 = pace * Math.pow(60 / tMin, 0.06);
+        if (bestStream === null || pace60 < bestStream) bestStream = pace60;
+      }
+    }
+    if (bestStream !== null) return Math.round(bestStream * 0.95 * 100) / 100;
+
+    // Méthode 2 : fallback sur allure moyenne activité + Riegel
     const candidates = runs.map(a => {
-      const t = a.time; // en minutes
-      if (t < 20 || t > 120) return null;
-      // Projection allure à 60 min via Riegel : pace60 = pace × (60/t)^0.06
+      const t = a.time;
+      if (t < 20 || t > 180) return null;
       const pace60 = a.pace * Math.pow(60 / t, 0.06);
-      return { pace60, pace: a.pace, time: t };
+      return pace60;
     }).filter(Boolean);
     if (!candidates.length) return null;
-    // Prendre la meilleure projection (la plus rapide)
-    const best = Math.min(...candidates.map(c => c.pace60));
-    // Allure seuil ≈ pace60 × 0.97
-    return Math.round(best * 0.97 * 100) / 100;
+    const best = Math.min(...candidates);
+    return Math.round(best * 0.95 * 100) / 100;
   })();
 
   useEffect(() => {
@@ -2512,13 +2574,9 @@ function App() {
                 for (const a of pool) {
                   const s=actStreams[a.id];
                   if (isVelo) {
-                    if (s&&s.dist&&s.vel) {
-                      let bestV=null,j2=0;
-                      for (let i2=0;i2<s.dist.length;i2++) {
-                        while(j2<s.dist.length-1&&s.dist[j2]-s.dist[i2]<targetM)j2++;
-                        if(s.dist[j2]-s.dist[i2]>=targetM){const secs=j2-i2;if(secs>0){const v=(targetM/secs)*3.6;if(bestV===null||v>bestV)bestV=v;}}
-                      }
-                      if(bestV!==null&&(best===null||bestV>best)){best=bestV;bestId=a.id;}
+                    if (s&&s.dist) {
+                      const v = bestSpeedWindow(s.dist, targetM);
+                      if (v!==null&&(best===null||v>best)){best=v;bestId=a.id;}
                     } else if (a.dist*1000>=targetM&&a.dist&&a.time) {
                       const v=a.dist/(a.time/60);if(best===null||v>best){best=v;bestId=a.id;}
                     }
