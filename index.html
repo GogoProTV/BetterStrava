@@ -2113,7 +2113,10 @@ function App() {
           const s = actStreams[act.id];
           const sOk = s && s !== 'error';
           const tssData = calcTSS(act, sOk?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-          const np    = tssData?.np ?? null;  // null si pas de puissance Strava native
+          // NP : puissance native Strava si dispo, sinon stream estimé (pour VI/EF)
+          const npNative = tssData?.np ?? null;
+          const npEst    = sOk&&s.pow&&s.pow.length>=30 ? calcNP(s.pow) : null;
+          const np       = npNative ?? npEst;
           const chargeVal   = tssData?.charge ?? null;
           const chargeLabel = tssData?.method ?? null;
           const ifVal  = tssData?.ifVal ?? null;
@@ -2127,22 +2130,22 @@ function App() {
           const dATL = pmcPrev&&pmcCur ? Math.round((pmcCur.atl - pmcPrev.atl)*10)/10 : null;
           const dTSB = pmcPrev&&pmcCur ? Math.round((pmcCur.tsb - pmcPrev.tsb)*10)/10 : null;
           const pmcChips = (dCTL!==null||dATL!==null) ? [
-            { label: (dCTL>=0?'+':'')+dCTL+' Cond. physique \u2192 '+(pmcCur?pmcCur.ctl:''), color:'#22c55e' },
-            { label: (dATL>=0?'+':'')+dATL+' Fatigue \u2192 '+(pmcCur?pmcCur.atl:''), color:'#f97316' },
+            { label: (dCTL>=0?'+':'')+dCTL+' Cond. physique → '+(pmcCur?pmcCur.ctl:''), color:'#22c55e' },
+            { label: (dATL>=0?'+':'')+dATL+' Fatigue → '+(pmcCur?pmcCur.atl:''), color:'#f97316' },
             dTSB!==null&&{ label: (dTSB>=0?'+':'')+dTSB+' Forme', color:'#969191' },
           ].filter(Boolean) : [];
           const pmcRow = pmcChips.length ? { label:'Gains', value:'', unit:'', color:'#201e1d', chips: pmcChips, last:true } : null;
           const avgPowArr  = sOk&&s.pow ? s.pow : null;
           const avgPowMean = avgPowArr ? Math.round(avgPowArr.reduce((a,b)=>a+b,0)/avgPowArr.length) : (act.power||null);
           const vi      = calcVI(np, avgPowMean);
-          const ef      = calcEF('V\u00e9lo', np, null, avgHr||(act.hr||null));
-          const decoupl = sOk&&s.pow&&s.hr ? calcDecoupling('V\u00e9lo', s.pow, s.hr) : null;
+          const ef      = calcEF('Vélo', np, null, avgHr||(act.hr||null));
+          const decoupl = sOk&&s.pow&&s.hr ? calcDecoupling('Vélo', s.pow, s.hr) : null;
           return [
             { label:'NP', value: np?np+' W':'\u2014', unit:'', color: np?'#201e1d':'#bab6b6',
               tooltip:{ main:'Puissance normalis\u00e9e.', calc:'Fen\u00eatre 30 s, puissance 4, racine quatri\u00e8me.' }},
             { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
               tooltip:{ main:'Intensit\u00e9 relative.', calc: tssData?.method==='TSS'?'NP / FTP.':'\u221a(TRIMP_par_min / y_LTHR).' }},
-            chargeVal!==null&&{ label:'Charge'+(chargeLabel?' ('+chargeLabel+')':''), value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
+            chargeVal!==null&&{ label:'Charge', value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
               tooltip:{ main: tssData?.method==='TSS'?'Charge puissance mesurée. 1h FTP = 100.':'Charge cardiaque HRSS. 1h LTHR = 100.', calc: tssData?.method==='TSS'?'(Durée × NP × IF) / (FTP × 3600) × 100.':'TRIMP normalisé s/s.' }},
             pmcRow,
             { label:'VI', value: vi?String(vi):'\u2014', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
@@ -2188,7 +2191,7 @@ function App() {
           return [
             { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
               tooltip:{ main:'Intensit\u00e9 relative.', calc: '\u221a(TRIMP_par_min / y_LTHR).' }},
-            chargeVal!==null&&{ label:'Charge'+(chargeLabel?' ('+chargeLabel+')':''), value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
+            chargeVal!==null&&{ label:'Charge', value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
               tooltip:{ main: 'Charge cardiaque HRSS. 1h LTHR = 100.', calc: 'TRIMP normalisé s/s.' }},
             pmcRow,
             { label:'EF', value: ef?String(ef):'\u2014', unit: ef?'m/min/bpm':'', color: '#201e1d',
@@ -2232,7 +2235,7 @@ function App() {
           return [
             { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
               tooltip:{ main:'Intensit\u00e9 relative.', calc: '\u221a(TRIMP_par_min / y_LTHR).' }},
-            chargeVal!==null&&{ label:'Charge'+(chargeLabel?' ('+chargeLabel+')':''), value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
+            chargeVal!==null&&{ label:'Charge', value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
               tooltip:{ main: 'Charge cardiaque HRSS. 1h LTHR = 100. '+(!tssData?'Aucune donnée FC disponible.':''), calc: 'TRIMP normalisé s/s.' }},
             pmcRow,
             { label:'EF', value: ef?String(ef):'\u2014', unit: ef?'m/min/bpm':'', color: '#201e1d',
@@ -2513,7 +2516,7 @@ function App() {
                           h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},s.workout),
                           h('span',{style:{display:'block',fontSize:'11px',fontWeight:'600',lineHeight:'1.25'}},s.time+(s.detail?' · '+s.detail:'')),
                           s.charge!==null&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',lineHeight:'1.4',letterSpacing:'0.04em',color:tssColor(s.charge)}},
-                            'Charge : '+s.charge+(s.method?' ('+s.method+')':'')
+                            'Charge : '+s.charge
                           ),
                         );
                       }),
