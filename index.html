@@ -317,79 +317,41 @@ function calcHRSS(durSec, avgHr, hrStream, hrMax, hrRest, lthr) {
   return { hrss, trimp: Math.round(trimp * 10) / 10, ifHR, lthrUsed: fcLTHR };
 }
 
-// ── calcTSS — retourne TOUS les indicateurs disponibles ───────────────────────
-// tss   : puissance (NP/FTP) — vélo avec capteur de puissance
-// rTSS  : allure (pace/seuil) — course/trail avec allure seuil renseignée
-// hrss  : HRSS (BPM/LTHR) — toujours calculé si FC disponible, tous sports
-// tss   : indicateur principal pour le PMC dans l'ordre : tss → rTSS → hrss
+// ── calcCharge — règle unique ─────────────────────────────────────────────────
+// TSS  : si l'activité a des données de puissance natives Strava (act.power) + FTP
+// HRSS : sinon, si FC disponible (stream ou moyenne)
+// null : si ni puissance ni FC
+// On s'y tient partout — calendrier, détail, PMC.
 function calcTSS(act, streams, ftpOrPace, hrMaxBpm, hrRestBpm, lthrBpm) {
   const durSec = act.secs || act.time * 60;
   if (!durSec || durSec < 120) return null;
 
-  let result = { tss: null, np: null, ifVal: null, method: null, rTSS: null, hrss: null, ifHR: null };
+  // ── Vélo avec puissance Strava native ────────────────────────────────────
+  // "Puissance native" = act.power vient de Strava (capteur réel), pas estimé.
+  // On n'utilise PAS le stream pow estimé (buildPowArr) pour le TSS.
+  if (act.sport === 'Vélo' && act.power && act.power > 0) {
+    const ftpW = ftpOrPace && ftpOrPace > 50 ? ftpOrPace : null;
+    if (ftpW) {
+      const np    = streams?.pow && streams.pow.length >= 30 ? calcNP(streams.pow) : act.power;
+      const ifVal = Math.round((np / ftpW) * 100) / 100;
+      const tss   = Math.round((durSec * np * ifVal) / (ftpW * 3600) * 100);
+      const hrRes = calcHRSS(durSec, act.avgHr || act.hr, streams?.hr || null, hrMaxBpm, hrRestBpm, lthrBpm);
+      return { charge: tss, method: 'TSS', np, ifVal, hrss: hrRes?.hrss ?? null, ifHR: hrRes?.ifHR ?? null };
+    }
+  }
 
-  // ── HRSS — calculé pour TOUS les sports si FC disponible ──────────────────
+  // ── HRSS pour tous les sports (y compris vélo sans capteur) ──────────────
   const hrStream = streams?.hr || null;
   const hrRes = calcHRSS(durSec, act.avgHr || act.hr, hrStream, hrMaxBpm, hrRestBpm, lthrBpm);
   if (hrRes) {
-    result.hrss  = hrRes.hrss;
-    result.ifHR  = hrRes.ifHR;
-    result.lthrUsed = hrRes.lthrUsed;
+    return { charge: hrRes.hrss, method: 'HRSS', np: null, ifVal: hrRes.ifHR, hrss: hrRes.hrss, ifHR: hrRes.ifHR, lthrUsed: hrRes.lthrUsed };
   }
 
-  // ── Vélo ──────────────────────────────────────────────────────────────────
-  if (act.sport === 'V\u00e9lo') {
-    const powArr = streams?.pow;
-    const ftpW   = ftpOrPace && ftpOrPace > 50 ? ftpOrPace : null;
-    let np = null;
-    if (powArr && powArr.length >= 30) np = calcNP(powArr);
-    else if (act.power) np = act.power;
-    if (np && ftpW) {
-      const ifVal = Math.round((np / ftpW) * 100) / 100;
-      const tss   = Math.round((durSec * np * ifVal) / (ftpW * 3600) * 100);
-      result.tss    = tss;
-      result.np     = np;
-      result.ifVal  = ifVal;
-      result.method = 'pow';
-    } else if (result.hrss !== null) {
-      // Pas de capteur puissance : HRSS devient l'indicateur principal du PMC
-      result.tss    = result.hrss;
-      result.ifVal  = result.ifHR;
-      result.method = 'hrss';
-    }
-    return result;
-  }
-
-  // ── Course / Trail ────────────────────────────────────────────────────────
-  if (act.sport === 'Course' || act.sport === 'Trail') {
-    const tPace = ftpOrPace;
-    if (tPace && tPace > 0 && act.pace && act.pace > 0) {
-      const ifVal = Math.round((tPace / act.pace) * 100) / 100;
-      const tss   = Math.round((durSec * ifVal * ifVal) / 3600 * 100);
-      result.rTSS   = tss;
-      result.tss    = tss;
-      result.ifVal  = ifVal;
-      result.method = 'rTSS';
-    } else if (result.hrss !== null) {
-      result.tss    = result.hrss;
-      result.ifVal  = result.ifHR;
-      result.method = 'hrss';
-    }
-    return result;
-  }
-
-  // ── Natation ──────────────────────────────────────────────────────────────
-  if (act.sport === 'Natation') {
-    if (result.hrss !== null) {
-      result.tss    = result.hrss;
-      result.ifVal  = result.ifHR;
-      result.method = 'hrss';
-    }
-    return result;
-  }
-
-  return result.tss !== null ? result : null;
+  // ── Pas de données suffisantes ────────────────────────────────────────────
+  return null;
 }
+// Alias pour le PMC (qui utilise .tss)
+function _tssVal(td) { return td?.charge ?? null; }
 
 function tssColor(tss) {
   if (!tss) return '#bab6b6';
@@ -1220,7 +1182,7 @@ function App() {
       const s   = actStreams[a.id];
       const sOk = s && s !== 'error';
       const td  = calcTSS(a, sOk ? s : null, ftp, fcMax, fcRest, Number(profile.lthr)||null);
-      const tss = td?.tss ?? null;
+      const tss = td?.charge ?? null;
       if (tss && tss > 0) tssPerDay[key] = (tssPerDay[key] || 0) + tss;
     }
 
@@ -1455,7 +1417,7 @@ function App() {
                   const s   = actStreams[a.id];
                   const sOk = s && s!=='error';
                   const td  = calcTSS(a, sOk?s:null, a.sport==='V\u00e9lo'?ftpV:tpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-                  const tssV = td?.tss ?? null;
+                  const tssV = td?.charge ?? null;
                   const dist = a.dist ? fmtNum(a.dist,1)+' km' : '\u2014';
                   const time = a.time ? (Math.floor(a.time/60)+'h'+String(a.time%60).padStart(2,'0')) : '\u2014';
                   const hr   = a.avgHr ? a.avgHr+' bpm' : '\u2014';
@@ -1902,10 +1864,7 @@ function App() {
             const ftpV = a.sport==='Vélo' ? (Number(profile.ftp)||ftpEstimated||null) : (Number(profile.thresholdPace)||thresholdPaceEstimated||null);
             const td = calcTSS(a, s&&s!=='error'?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
             if (!td) return { charge: null, method: null };
-            // Toujours afficher HRSS dans le calendrier si disponible
-            const charge = td.hrss !== null ? td.hrss : td.tss ?? null;
-            const method = td.hrss !== null ? 'HRSS' : td.method==='pow' ? 'TSS' : td.method==='rTSS' ? 'rTSS' : null;
-            return { charge, method };
+            return { charge: td.charge ?? null, method: td.method ?? null };
           })();
           const { charge, method } = chargeData;
           const sessBg = charge===null?'#eae9e9':charge<50?'#eae9e9':charge<100?'#fff0eb':charge<150?'#ffd5c8':'#ffc0a8';
@@ -2154,12 +2113,11 @@ function App() {
           const s = actStreams[act.id];
           const sOk = s && s !== 'error';
           const tssData = calcTSS(act, sOk?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-          const np    = tssData?.np ?? (sOk&&s.pow ? calcNP(s.pow) : null);
-          const hasPow = tssData?.method==='pow';
-          const chargeVal   = hasPow ? tssData.tss : (tssData?.hrss ?? null);
-          const chargeLabel = hasPow ? 'TSS' : (tssData?.hrss!==null ? 'HRSS' : null);
-          const ifVal  = hasPow ? tssData.ifVal : (tssData?.ifHR ?? null);
-          const ifLabel = hasPow ? 'IF' : 'IF HR';
+          const np    = tssData?.np ?? null;  // null si pas de puissance Strava native
+          const chargeVal   = tssData?.charge ?? null;
+          const chargeLabel = tssData?.method ?? null;
+          const ifVal  = tssData?.ifVal ?? null;
+          const ifLabel = tssData?.method==='TSS' ? 'IF' : 'IF HR';
           // Delta PMC pour cette activite
           const actDateKey = act.date.toISOString().slice(0,10);
           const pmcIdx  = pmcSeries.findIndex(p => p.date === actDateKey);
@@ -2183,9 +2141,9 @@ function App() {
             { label:'NP', value: np?np+' W':'\u2014', unit:'', color: np?'#201e1d':'#bab6b6',
               tooltip:{ main:'Puissance normalis\u00e9e.', calc:'Fen\u00eatre 30 s, puissance 4, racine quatri\u00e8me.' }},
             { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensit\u00e9 relative.', calc: hasPow?'NP / FTP.':'\u221a(TRIMP_par_min / y_LTHR).' }},
+              tooltip:{ main:'Intensit\u00e9 relative.', calc: tssData?.method==='TSS'?'NP / FTP.':'\u221a(TRIMP_par_min / y_LTHR).' }},
             chargeVal!==null&&{ label:'Charge'+(chargeLabel?' ('+chargeLabel+')':''), value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
-              tooltip:{ main: hasPow?'Charge puissance mesur\u00e9e. 1h FTP = 100.':'Charge cardiaque HRSS. 1h LTHR = 100.', calc: hasPow?'(Dur\u00e9e \u00d7 NP \u00d7 IF) / (FTP \u00d7 3600) \u00d7 100.':'TRIMP normalis\u00e9 s/s.' }},
+              tooltip:{ main: tssData?.method==='TSS'?'Charge puissance mesurée. 1h FTP = 100.':'Charge cardiaque HRSS. 1h LTHR = 100.', calc: tssData?.method==='TSS'?'(Durée × NP × IF) / (FTP × 3600) × 100.':'TRIMP normalisé s/s.' }},
             pmcRow,
             { label:'VI', value: vi?String(vi):'\u2014', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
               tooltip:{ main:'Variabilit\u00e9. 1.0 = lisse.', calc:'NP / puissance moy.' }},
@@ -2206,11 +2164,10 @@ function App() {
           const sOk = s && s !== 'error';
           const tPaceVal = Number(profile.thresholdPace)||thresholdPaceEstimated||null;
           const tssData = calcTSS(act, sOk?s:null, tPaceVal, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-          const hasRTSS = tssData?.method==='rTSS';
-          const chargeVal   = hasRTSS ? tssData.tss : (tssData?.hrss ?? null);
-          const chargeLabel = hasRTSS ? 'rTSS' : (tssData?.hrss!==null ? 'HRSS' : null);
-          const ifVal  = hasRTSS ? tssData.ifVal : (tssData?.ifHR ?? null);
-          const ifLabel = hasRTSS ? 'IF' : 'IF HR';
+          const chargeVal   = tssData?.charge ?? null;
+          const chargeLabel = tssData?.method ?? null;
+          const ifVal  = tssData?.ifVal ?? null;
+          const ifLabel = 'IF HR';
           // Delta PMC pour cette activite
           const actDateKey = act.date.toISOString().slice(0,10);
           const pmcIdx  = pmcSeries.findIndex(p => p.date === actDateKey);
@@ -2230,9 +2187,9 @@ function App() {
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
             { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensit\u00e9 relative.', calc: hasRTSS?'Allure seuil / allure moy.':'\u221a(TRIMP_par_min / y_LTHR).' }},
+              tooltip:{ main:'Intensit\u00e9 relative.', calc: '\u221a(TRIMP_par_min / y_LTHR).' }},
             chargeVal!==null&&{ label:'Charge'+(chargeLabel?' ('+chargeLabel+')':''), value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
-              tooltip:{ main: hasRTSS?'Charge allure mesur\u00e9e. 1h allure seuil = 100.':'Charge cardiaque HRSS. 1h LTHR = 100.', calc: hasRTSS?'(Dur\u00e9e \u00d7 IF\u00b2) / 3600 \u00d7 100.':'TRIMP normalis\u00e9 s/s.' }},
+              tooltip:{ main: 'Charge cardiaque HRSS. 1h LTHR = 100.', calc: 'TRIMP normalisé s/s.' }},
             pmcRow,
             { label:'EF', value: ef?String(ef):'\u2014', unit: ef?'m/min/bpm':'', color: '#201e1d',
               tooltip:{ main:'Efficacit\u00e9 a\u00e9robie.', calc:'Vitesse (m/min) / FC moy.' }},
@@ -2252,11 +2209,10 @@ function App() {
           const sOk = s && s !== 'error';
           const tPaceVal = Number(profile.thresholdPace)||thresholdPaceEstimated||null;
           const tssData = calcTSS(act, sOk?s:null, tPaceVal, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-          const hasRTSS = tssData?.method==='rTSS';
-          const chargeVal   = hasRTSS ? tssData.tss : (tssData?.hrss ?? null);
-          const chargeLabel = hasRTSS ? 'rTSS' : (tssData?.hrss!==null ? 'HRSS' : null);
-          const ifVal  = hasRTSS ? tssData.ifVal : (tssData?.ifHR ?? null);
-          const ifLabel = hasRTSS ? 'IF' : 'IF HR';
+          const chargeVal   = tssData?.charge ?? null;
+          const chargeLabel = tssData?.method ?? null;
+          const ifVal  = tssData?.ifVal ?? null;
+          const ifLabel = 'IF HR';
           const actDateKey = act.date.toISOString().slice(0,10);
           const pmcIdx  = pmcSeries.findIndex(p => p.date === actDateKey);
           const pmcPrev = pmcIdx > 0 ? pmcSeries[pmcIdx-1] : null;
@@ -2275,9 +2231,9 @@ function App() {
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
             { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensit\u00e9 relative.', calc: hasRTSS?'Allure seuil / allure moy.':'\u221a(TRIMP_par_min / y_LTHR).' }},
+              tooltip:{ main:'Intensit\u00e9 relative.', calc: '\u221a(TRIMP_par_min / y_LTHR).' }},
             chargeVal!==null&&{ label:'Charge'+(chargeLabel?' ('+chargeLabel+')':''), value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
-              tooltip:{ main: hasRTSS?'Charge allure. 1h allure seuil = 100.':'Charge cardiaque HRSS. 1h LTHR = 100.', calc: hasRTSS?'(Dur\u00e9e \u00d7 IF\u00b2) / 3600 \u00d7 100.':'TRIMP normalis\u00e9 s/s.' }},
+              tooltip:{ main: 'Charge cardiaque HRSS. 1h LTHR = 100. '+(!tssData?'Aucune donnée FC disponible.':''), calc: 'TRIMP normalisé s/s.' }},
             pmcRow,
             { label:'EF', value: ef?String(ef):'\u2014', unit: ef?'m/min/bpm':'', color: '#201e1d',
               tooltip:{ main:'Efficacit\u00e9 a\u00e9robie.', calc:'Vitesse (m/min) / FC moy.' }},
@@ -2319,10 +2275,10 @@ function App() {
               const [showTip, setShowTip] = React.useState(false);
               // Rendu spécial pour Gains (chips colorés) — toujours en dernière position
               if (kpi.chips) return h('div', { key:i,
-                style:{ padding:'10px 14px 12px', marginLeft:'auto', borderLeft:'2px solid #201e1d' } },
-                h('span', { style:{ display:'block', fontSize:'10px', fontWeight:'700', letterSpacing:'0.1em', textTransform:'uppercase', color:'#201e1d' } }, kpi.label),
+                style:{ padding:'10px 14px 12px', marginLeft:'auto', borderLeft:'1px solid #d7d3d3' } },
+                h('span', { style:{ display:'block', fontSize:'10px', fontWeight:'600', letterSpacing:'0.1em', textTransform:'uppercase', color:'#605d5d' } }, kpi.label),
                 h('div', { style:{ display:'flex', flexDirection:'column', gap:'2px', marginTop:'6px' } },
-                  kpi.chips.map((c,ci) => h('span', { key:ci, style:{ fontSize:'12px', fontWeight:'800', color: c.color, letterSpacing:'0.02em' } }, c.label))
+                  kpi.chips.map((c,ci) => h('span', { key:ci, style:{ fontSize:'10px', fontWeight:'700', color: c.color, letterSpacing:'0.02em' } }, c.label))
                 )
               );
               return h('div', { key:i,
@@ -2557,7 +2513,7 @@ function App() {
                           h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},s.workout),
                           h('span',{style:{display:'block',fontSize:'11px',fontWeight:'600',lineHeight:'1.25'}},s.time+(s.detail?' · '+s.detail:'')),
                           s.charge!==null&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',lineHeight:'1.4',letterSpacing:'0.04em',color:tssColor(s.charge)}},
-                            (s.method||'Charge')+' '+s.charge
+                            'Charge : '+s.charge+(s.method?' ('+s.method+')':'')
                           ),
                         );
                       }),
