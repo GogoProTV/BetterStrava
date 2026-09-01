@@ -317,13 +317,28 @@ function calcHRSS(durSec, avgHr, hrStream, hrMax, hrRest, lthr) {
   return { hrss, trimp: Math.round(trimp * 10) / 10, ifHR, lthrUsed: fcLTHR };
 }
 
+// ── calcTSS — retourne TOUS les indicateurs disponibles ───────────────────────
+// tss   : puissance (NP/FTP) — vélo avec capteur de puissance
+// rTSS  : allure (pace/seuil) — course/trail avec allure seuil renseignée
+// hrss  : HRSS (BPM/LTHR) — toujours calculé si FC disponible, tous sports
+// tss   : indicateur principal pour le PMC dans l'ordre : tss → rTSS → hrss
 function calcTSS(act, streams, ftpOrPace, hrMaxBpm, hrRestBpm, lthrBpm) {
   const durSec = act.secs || act.time * 60;
   if (!durSec || durSec < 120) return null;
 
-  // ── Velo ──────────────────────────────────────────────────────────────────
+  let result = { tss: null, np: null, ifVal: null, method: null, rTSS: null, hrss: null, ifHR: null };
+
+  // ── HRSS — calculé pour TOUS les sports si FC disponible ──────────────────
+  const hrStream = streams?.hr || null;
+  const hrRes = calcHRSS(durSec, act.avgHr || act.hr, hrStream, hrMaxBpm, hrRestBpm, lthrBpm);
+  if (hrRes) {
+    result.hrss  = hrRes.hrss;
+    result.ifHR  = hrRes.ifHR;
+    result.lthrUsed = hrRes.lthrUsed;
+  }
+
+  // ── Vélo ──────────────────────────────────────────────────────────────────
   if (act.sport === 'V\u00e9lo') {
-    // Priorite 1 : NP -> TSS si FTP et stream puissance disponibles
     const powArr = streams?.pow;
     const ftpW   = ftpOrPace && ftpOrPace > 50 ? ftpOrPace : null;
     let np = null;
@@ -332,40 +347,48 @@ function calcTSS(act, streams, ftpOrPace, hrMaxBpm, hrRestBpm, lthrBpm) {
     if (np && ftpW) {
       const ifVal = Math.round((np / ftpW) * 100) / 100;
       const tss   = Math.round((durSec * np * ifVal) / (ftpW * 3600) * 100);
-      return { tss, np, ifVal, method: 'pow' };
+      result.tss    = tss;
+      result.np     = np;
+      result.ifVal  = ifVal;
+      result.method = 'pow';
+    } else if (result.hrss !== null) {
+      // Pas de capteur puissance : HRSS devient l'indicateur principal du PMC
+      result.tss    = result.hrss;
+      result.ifVal  = result.ifHR;
+      result.method = 'hrss';
     }
-    // Priorite 2 : HRSS (methode principale sans capteur de puissance)
-    const hrStream = streams?.hr || null;
-    const hrRes = calcHRSS(durSec, act.avgHr || act.hr, hrStream, hrMaxBpm, hrRestBpm, lthrBpm);
-    if (hrRes) return { tss: hrRes.hrss, np: null, ifVal: hrRes.ifHR, method: 'hrss', lthrUsed: hrRes.lthrUsed };
-    return { tss: null, np: null, ifVal: null, method: 'pow' };
+    return result;
   }
 
   // ── Course / Trail ────────────────────────────────────────────────────────
   if (act.sport === 'Course' || act.sport === 'Trail') {
-    // Priorite 1 : rTSS si allure seuil disponible
     const tPace = ftpOrPace;
     if (tPace && tPace > 0 && act.pace && act.pace > 0) {
       const ifVal = Math.round((tPace / act.pace) * 100) / 100;
       const tss   = Math.round((durSec * ifVal * ifVal) / 3600 * 100);
-      return { tss, np: null, ifVal, method: 'rTSS' };
+      result.rTSS   = tss;
+      result.tss    = tss;
+      result.ifVal  = ifVal;
+      result.method = 'rTSS';
+    } else if (result.hrss !== null) {
+      result.tss    = result.hrss;
+      result.ifVal  = result.ifHR;
+      result.method = 'hrss';
     }
-    // Priorite 2 : HRSS
-    const hrStream = streams?.hr || null;
-    const hrRes = calcHRSS(durSec, act.avgHr || act.hr, hrStream, hrMaxBpm, hrRestBpm, lthrBpm);
-    if (hrRes) return { tss: hrRes.hrss, np: null, ifVal: hrRes.ifHR, method: 'hrss', lthrUsed: hrRes.lthrUsed };
-    return { tss: Math.round((durSec / 3600) * 100 * 0.75), np: null, ifVal: null, method: 'est' };
+    return result;
   }
 
   // ── Natation ──────────────────────────────────────────────────────────────
   if (act.sport === 'Natation') {
-    const hrStream = streams?.hr || null;
-    const hrRes = calcHRSS(durSec, act.avgHr || act.hr, hrStream, hrMaxBpm, hrRestBpm, lthrBpm);
-    if (hrRes) return { tss: hrRes.hrss, np: null, ifVal: hrRes.ifHR, method: 'hrss', lthrUsed: hrRes.lthrUsed };
-    return { tss: Math.round((durSec / 3600) * 60), np: null, ifVal: null, method: 'est' };
+    if (result.hrss !== null) {
+      result.tss    = result.hrss;
+      result.ifVal  = result.ifHR;
+      result.method = 'hrss';
+    }
+    return result;
   }
 
-  return null;
+  return result.tss !== null ? result : null;
 }
 
 function tssColor(tss) {
@@ -2099,27 +2122,33 @@ function App() {
           const s = actStreams[act.id];
           const sOk = s && s !== 'error';
           const tssData = calcTSS(act, sOk?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-          const np = tssData?.np ?? (sOk&&s.pow ? calcNP(s.pow) : null);
-          const ifVal = tssData?.ifVal ?? null;
-          const tss = tssData?.tss ?? null;
-          const avgPowArr = sOk&&s.pow ? s.pow : null;
+          const np    = tssData?.np ?? (sOk&&s.pow ? calcNP(s.pow) : null);
+          const tss   = tssData?.method==='pow' ? tssData.tss : null;
+          const ifVal = tssData?.method==='pow' ? tssData.ifVal : null;
+          const hrss  = tssData?.hrss ?? null;
+          const ifHR  = tssData?.ifHR ?? null;
+          const avgPowArr  = sOk&&s.pow ? s.pow : null;
           const avgPowMean = avgPowArr ? Math.round(avgPowArr.reduce((a,b)=>a+b,0)/avgPowArr.length) : (act.power||null);
-          const vi = calcVI(np, avgPowMean);
-          const ef = calcEF('Vélo', np, null, avgHr||(act.hr||null));
+          const vi      = calcVI(np, avgPowMean);
+          const ef      = calcEF('Vélo', np, null, avgHr||(act.hr||null));
           const decoupl = sOk&&s.pow&&s.hr ? calcDecoupling('Vélo', s.pow, s.hr) : null;
           return [
-            { label:'NP', value: np?np+' W':'—', unit:'', color: np?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Ta puissance réelle de la sortie. Comme l’effort varie constamment — côtes, accélérations, vent — la puissance moyenne sous-estime ce que ton corps a dû fournir. La NP corrige ça et te donne un chiffre plus représentatif de l’effort physiologique.', calc:'Fenêtre glissante 30 s élevée à la puissance 4, moyenne globale, puis racine quatrième.' }},
-            { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'L’IF te dit à quel pourcentage de ton seuil tu as roulé. Un IF de 0.80 signifie que tu étais à 80 % de ta FTP. L’endurance générale se situe entre 0.60 et 0.75, un tempo entre 0.80 et 0.90, et une course courte peut monter jusqu’à 1.05 ou plus.', calc:'NP divisée par ta FTP. Renseigne ta FTP dans le Profil pour un résultat précis.' }},
-            { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
-              tooltip:{ main:'Le TSS dit combien cette sortie a stressé ton corps, en prenant en compte à la fois l’intensité et la durée. 90 minutes à tempo vaut bien plus qu’une heure au même IF. En dessous de 50 : sortie facile, une nuit suffit. Entre 50 et 100 : modérée, récup en 1–2 jours. Au-delà de 150 : plusieurs jours nécessaires.', calc:'(Durée en secondes × NP × IF) divisé par (FTP × 3600), multiplié par 100.' }},
-            { label:'VI', value: vi?String(vi):'—', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
-              tooltip:{ main:'Le VI te dit si tu as roulé de manière régulière ou en dents de scie. Proche de 1.0 : effort lisse, parfait pour un contre-la-montre. Au-dessus de 1.1 : l’effort était très variable, typique d’une course avec des côtes ou des accélérations répétées. Un VI élevé est plus coûteux énergétiquement qu’il n’y paraît.', calc:'NP divisée par la puissance moyenne de la sortie.' }},
-            { label:'EF', value: ef?String(ef):'—', unit: ef?'W/bpm':'', color: '#201e1d',
-              tooltip:{ main:'L’EF mesure combien de watts tu produis pour chaque battement de cœur. Plus il est élevé, plus ton système aérobie est efficace. Si l’EF augmente progressivement sur des sorties similaires en intensité, c’est un signe clair de progression de ta forme aérobie.', calc:'NP divisée par ta fréquence cardiaque moyenne.' }},
+            { label:'NP',    value: np?np+' W':'—', unit:'', color: np?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Puissance normalisée — représente le vrai coût physiologique de la sortie, corrigé des variations d’intensité.', calc:'Fenêtre glissante 30 s élevée à la puissance 4, moyenne, puis racine quatrième.' }},
+            { label:'IF',    value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Intensité relative par rapport à la FTP. 0.80 = 80 % de ta FTP.', calc:'NP / FTP.' }},
+            { label:'TSS',   value: tss!==null?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
+              tooltip:{ main:'Charge basée sur la puissance (NP/FTP). Nécessite un capteur de puissance et la FTP renseignée.', calc:'(Durée × NP × IF) / (FTP × 3600) × 100.' }},
+            { label:'HRSS',  value: hrss!==null?String(hrss):'—', unit:'', color: tssColor(hrss),
+              tooltip:{ main:'Charge cardiaque (Heart Rate Stress Score). Disponible même sans capteur de puissance. 1h à la LTHR = 100 pts.', calc:'TRIMP normalisé : Σ(1/60 × hrFrac × 0.64 × e^(1.92×hrFrac)) / (60 × y_LTHR) × 100.' }},
+            { label:'IF HR', value: ifHR?String(ifHR):'—', unit:'', color: ifHR?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Intensité relative basée sur la FC. Analogue à l’IF puissance.', calc:'√(TRIMP_par_min / y_LTHR).' }},
+            { label:'VI',    value: vi?String(vi):'—', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
+              tooltip:{ main:'Indice de variabilité : proche de 1.0 = effort lisse. Au-dessus de 1.1 = très variable.', calc:'NP / puissance moyenne.' }},
+            { label:'EF',    value: ef?String(ef):'—', unit: ef?'W/bpm':'', color: '#201e1d',
+              tooltip:{ main:'Efficacité aérobie : watts produits par battement de cœur.', calc:'NP / FC moyenne.' }},
             { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'Le Pw:Hr te dit si ton cœur a commencé à “monter” par rapport à ta puissance au fil de la sortie. En dessous de 5 % : tu étais bien dans ta zone aérobie, le cœur stable. Au-dessus de 5 % : ton corps a eu du mal à maintenir le même effort, signe de fatigue, de chaleur, ou d’une intensité trop haute.', calc:'Rapport EF de la 2ᵉᵉ moitié sur la 1ᵉʳᵉ moitié, moins 1, multiplié par 100.' }},
+              tooltip:{ main:'Découplage aérobie. < 5 % = stable. > 5 % = fatigue ou intensité trop haute.', calc:'EF 2ème moitié / EF 1ère moitié - 1, × 100.' }},
           ];
         })(),
       ];
@@ -2131,9 +2160,12 @@ function App() {
         ...(() => {
           const s = actStreams[act.id];
           const tssData = calcTSS(act, s&&s!=='error'?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-          const tss = tssData?.tss ?? null;
-          return [{ label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
-            tooltip:{ main:'Le TSS te dit combien cette sortie a coûté à ton corps, en tenant compte de l’intensité et de la durée. En dessous de 50 : léger, une nuit suffit. Entre 50 et 100 : modéré. Au-delà de 150 : compte plusieurs jours de récup.', calc:'Méthode TRIMP (Banister), basée sur la durée et ta fréquence cardiaque relative.' } }];
+          const hrss = tssData?.hrss ?? null;
+          const tss  = tssData?.tss  ?? null;
+          return [
+            { label:'HRSS', value: hrss!==null?String(hrss):'—', unit:'', color: tssColor(hrss), bold: true,
+              tooltip:{ main:'Charge cardiaque. 1h à la LTHR = 100 pts. Indicateur principal sans capteur.', calc:'TRIMP normalisé depuis le stream FC seconde par seconde.' }},
+          ];
         })(),
       ];
     } else {
@@ -2147,20 +2179,26 @@ function App() {
           const sOk = s && s !== 'error';
           const tPaceVal = Number(profile.thresholdPace)||thresholdPaceEstimated||null;
           const tssData = calcTSS(act, sOk?s:null, tPaceVal, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-          const tss = tssData?.tss ?? null;
-          const ifVal = tssData?.ifVal ?? null;
+          const rTSS  = tssData?.method==='rTSS' ? tssData.tss : null;
+          const ifVal = tssData?.method==='rTSS' ? tssData.ifVal : null;
+          const hrss  = tssData?.hrss ?? null;
+          const ifHR  = tssData?.ifHR ?? null;
           const avgVelMs = sOk&&s.vel ? s.vel.reduce((a,b)=>a+b,0)/s.vel.length : (act.dist&&act.time?(act.dist*1000)/(act.time*60):null);
-          const ef = calcEF('Course', null, avgVelMs, avgHr||(act.hr||null));
+          const ef      = calcEF('Course', null, avgVelMs, avgHr||(act.hr||null));
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
-            { label:'IF', value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'L’IF te dit à quel pourcentage de ton effort maximal tu as couru. Un IF de 0.80 signifie que tu étais à 80 % de ta capacité. L’endurance facile se situe sous 0.75, un tempo vers 0.80–0.90.', calc:'Basé sur la réserve cardiaque (méthode Karvonen). Renseigne FC max et FC repos dans le Profil.' }},
-            { label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
-              tooltip:{ main:'Le TSS te dit combien cette sortie a coûté à ton corps. Une heure de tempo est bien plus lourde qu’une sortie facile d’une heure. En dessous de 50 : léger. Entre 50 et 100 : modéré. Au-delà de 150 : attends-toi à plusieurs jours avant d’être vraiment frais.', calc:'Méthode TRIMP (Banister), basée sur la durée et ta fréquence cardiaque relative.' }},
-            { label:'EF', value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
-              tooltip:{ main:'L’EF mesure ton économie de course : combien de mètres tu parcours chaque minute pour chaque battement de cœur. Si l’EF monte progressivement sur des sorties similaires, tu cours mieux pour le même effort cardiaque — c’est une progression aérobie.', calc:'Vitesse moyenne en m/min divisée par ta fréquence cardiaque moyenne.' }},
+            { label:'IF',    value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Intensité relative par rapport à l’allure seuil. 0.80 = 80 % de ta capacité.', calc:'Allure seuil / allure moyenne.' }},
+            { label:'rTSS',  value: rTSS!==null?String(rTSS):'—', unit:'', color: tssColor(rTSS), bold: true,
+              tooltip:{ main:'Charge basée sur l’allure (Running TSS). Nécessite l’allure seuil renseignée dans le Profil.', calc:'(Durée × IF²) / 3600 × 100.' }},
+            { label:'HRSS',  value: hrss!==null?String(hrss):'—', unit:'', color: tssColor(hrss),
+              tooltip:{ main:'Charge cardiaque. 1h à la LTHR = 100 pts. Disponible même sans allure seuil.', calc:'TRIMP normalisé depuis le stream FC seconde par seconde.' }},
+            { label:'IF HR', value: ifHR?String(ifHR):'—', unit:'', color: ifHR?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Intensité cardiaque relative.', calc:'√(TRIMP_par_min / y_LTHR).' }},
+            { label:'EF',    value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
+              tooltip:{ main:'Efficacité aérobie : mètres parcourus par minute par battement de cœur.', calc:'Vitesse (m/min) / FC moyenne.' }},
             { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'Le Pa:Hr te dit si ton cœur a commencé à s’emballer par rapport à ton allure au fil de la sortie. En dessous de 5 % : tu étais dans ta zone aérobie, le cœur stable. Au-dessus : le corps fatiguait et compensait par une hausse de FC pour maintenir l’allure.', calc:'Rapport EF de la 2ᵉᵉ moitié sur la 1ᵉʳᵉ moitié, moins 1, multiplié par 100.' }},
+              tooltip:{ main:'Découplage aérobie. < 5 % = stable. > 5 % = fatigue ou allure trop soutenue.', calc:'EF 2ème moitié / EF 1ère moitié - 1, × 100.' }},
           ];
         })(),
       ];
