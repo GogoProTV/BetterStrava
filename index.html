@@ -1301,11 +1301,11 @@ function App() {
 
     // Zones TSB selon intervals.icu
     const TSB_ZONES = [
-      { min: 20,        max: Infinity, color: 'rgba(59,130,246,0.85)',  label: 'Transition' },
-      { min: 5,         max: 20,       color: 'rgba(34,197,94,0.85)',   label: 'Frais' },
+      { min: 20,        max: Infinity, color: 'rgba(234,179,8,0.9)',    label: 'Transition' },
+      { min: 5,         max: 20,       color: 'rgba(59,130,246,0.85)',  label: 'Frais' },
       { min: -10,       max: 5,        color: 'rgba(150,145,145,0.72)', label: 'Zone grise' },
-      { min: -30,       max: -10,      color: 'rgba(249,115,22,0.85)',  label: 'Optimal' },
-      { min: -Infinity, max: -30,      color: 'rgba(236,48,19,0.9)',    label: 'Surentra\u00eenement' },
+      { min: -30,       max: -10,      color: 'rgba(34,197,94,0.85)',   label: 'Optimal' },
+      { min: -Infinity, max: -30,      color: 'rgba(236,48,19,0.9)',    label: 'Surentraînement' },
     ];
     const tsbZoneColor = v => {
       for (const z of TSB_ZONES) if (v >= z.min && v < z.max) return z.color;
@@ -1356,10 +1356,10 @@ function App() {
         ctx.save();
         ctx.beginPath(); ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height); ctx.clip();
         const bgZones = [
-          { min: 20,     max: tsbMax, color: 'rgba(59,130,246,0.08)' },
-          { min: 5,      max: 20,     color: 'rgba(34,197,94,0.08)' },
+          { min: 20,     max: tsbMax, color: 'rgba(234,179,8,0.09)' },
+          { min: 5,      max: 20,     color: 'rgba(59,130,246,0.09)' },
           { min: -10,    max: 5,      color: 'rgba(150,145,145,0.06)' },
-          { min: -30,    max: -10,    color: 'rgba(249,115,22,0.09)' },
+          { min: -30,    max: -10,    color: 'rgba(34,197,94,0.09)' },
           { min: tsbMin, max: -30,    color: 'rgba(236,48,19,0.10)' },
         ];
         for (const z of bgZones) {
@@ -1880,15 +1880,30 @@ function App() {
         const d=new Date(s.getTime()+i*86400000);
         const sessions=cur.list.filter(a=>a.date.toDateString()===d.toDateString()).map(a=>{
           const short={Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'};
-          const tssEst = (() => {
+          const chargeData = (() => {
             const s = actStreams[a.id];
             const ftpV = a.sport==='Vélo' ? (Number(profile.ftp)||ftpEstimated||null) : (Number(profile.thresholdPace)||thresholdPaceEstimated||null);
             const td = calcTSS(a, s&&s!=='error'?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-            return td?.tss ?? a.trainingLoad ?? null;
+            if (!td) return { charge: null, method: null };
+            // Toujours afficher HRSS dans le calendrier si disponible
+            const charge = td.hrss !== null ? td.hrss : td.tss ?? null;
+            const method = td.hrss !== null ? 'HRSS' : td.method==='pow' ? 'TSS' : td.method==='rTSS' ? 'rTSS' : null;
+            return { charge, method };
           })();
-          const sessBg = tssEst===null?'#eae9e9':tssEst<50?'#eae9e9':tssEst<100?'#fff0eb':tssEst<150?'#ffd5c8':'#ffc0a8';
-          const sessColor = tssEst!==null&&tssEst>=100?'#201e1d':'#201e1d';
-          return { sport:short[a.sport]||a.sport, time:fmtH(a.time), workout:a.name||'Donnée manquante', detail:a.dist?fmtNum(a.dist,1)+' km':'', tss:tssEst, style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px solid '+(tssEst!==null&&tssEst>=100?tssColor(tssEst):'#d7d3d3'),background:sessBg,color:sessColor} };
+          const { charge, method } = chargeData;
+          const sessBg = charge===null?'#eae9e9':charge<50?'#eae9e9':charge<100?'#fff0eb':charge<150?'#ffd5c8':'#ffc0a8';
+          // Navigation vers l'onglet Activités et ouverture du déroulant
+          const navToAct = () => {
+            setTab('activites');
+            setTimeout(() => {
+              setExpanded(true);
+              setTimeout(() => {
+                const el = document.getElementById('act-row-'+a.id);
+                if (el) { el.scrollIntoView({behavior:'smooth',block:'center'}); toggleRow(a); }
+              }, 150);
+            }, 80);
+          };
+          return { sport:short[a.sport]||a.sport, time:fmtH(a.time), workout:a.name||'Donnée manquante', detail:a.dist?fmtNum(a.dist,1)+' km':'', charge, method, act:a, onClick:navToAct, style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px solid '+(charge!==null&&charge>=100?tssColor(charge):'#d7d3d3'),background:sessBg,color:'#201e1d',cursor:'pointer'} };
         });
         const isToday=d.toDateString()===today.toDateString();
         return{dow,num:d.getDate(),sessions,empty:sessions.length===0,numStyle:{fontSize:'12px',fontWeight:'800',...(isToday?{padding:'1px 6px',background:'#201e1d',color:'#ffffff'}:{color:'#201e1d'})},cellStyle:{minWidth:0,padding:'8px 6px 8px',borderRight:'1px solid #d7d3d3',borderLeft:i>0?'0':undefined}};
@@ -2452,13 +2467,34 @@ function App() {
                       h('span',{style:day.numStyle},day.num)
                     ),
                     h('div',{style:{display:'flex',flexDirection:'column',gap:'4px',marginTop:'8px',height:'168px'}},
-                      day.sessions.map((s,si)=>h('div',{key:si,style:s.style},
-                        h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.1'}},s.sport),
-                        h('span',{style:{display:'block',fontSize:'12px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},s.workout),
-                        h('span',{style:{display:'block',fontSize:'12px',fontWeight:'600',lineHeight:'1.25'}},s.time),
-                        h('span',{style:{display:'block',fontSize:'12px',fontWeight:'600',lineHeight:'1.25'}},s.detail),
-                        s.tss&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',lineHeight:'1.4',color:tssColor(s.tss),letterSpacing:'0.04em'}},'TSS '+s.tss)
-                      )),
+                      day.sessions.map((s,si)=>{
+                        const actDate = s.act ? s.act.date.toISOString().slice(0,10) : null;
+                        const pmcIdx  = actDate ? pmcSeries.findIndex(p=>p.date===actDate) : -1;
+                        const pmcPrev = pmcIdx>0 ? pmcSeries[pmcIdx-1] : null;
+                        const pmcCur  = pmcIdx>=0 ? pmcSeries[pmcIdx] : null;
+                        const dCTL = pmcPrev&&pmcCur ? Math.round((pmcCur.ctl-pmcPrev.ctl)*10)/10 : null;
+                        const dATL = pmcPrev&&pmcCur ? Math.round((pmcCur.atl-pmcPrev.atl)*10)/10 : null;
+                        const dTSB = pmcPrev&&pmcCur ? Math.round((pmcCur.tsb-pmcPrev.tsb)*10)/10 : null;
+                        return h('div',{key:si,style:s.style,onClick:s.onClick},
+                          h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.1'}},s.sport),
+                          h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},s.workout),
+                          h('span',{style:{display:'block',fontSize:'11px',fontWeight:'600',lineHeight:'1.25'}},s.time+(s.detail?' · '+s.detail:'')),
+                          s.charge!==null&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',lineHeight:'1.4',letterSpacing:'0.04em',color:tssColor(s.charge)}},
+                            (s.method||'Charge')+' '+s.charge
+                          ),
+                          (dCTL!==null||dATL!==null)&&h('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'2px'}},
+                            dCTL!==null&&h('span',{style:{fontSize:'9px',fontWeight:'700',color:'#22c55e'}},
+                              (dCTL>=0?'+':'')+dCTL+' CTL → '+(pmcCur?pmcCur.ctl:'')
+                            ),
+                            dATL!==null&&h('span',{style:{fontSize:'9px',fontWeight:'700',color:'#f97316'}},
+                              (dATL>=0?'+':'')+dATL+' ATL → '+(pmcCur?pmcCur.atl:'')
+                            ),
+                            dTSB!==null&&h('span',{style:{fontSize:'9px',fontWeight:'700',color:'#969191'}},
+                              (dTSB>=0?'+':'')+dTSB+' Forme'
+                            )
+                          )
+                        );
+                      }),
                       day.empty&&h('span',{style:{display:'flex',alignItems:'center',height:'100%',fontSize:'12px',color:'#bab6b6'}},'Repos')
                     )
                   ))
@@ -2487,7 +2523,7 @@ function App() {
                 {label:'CTL',value:pmcToday.ctl,color:'#ec3013'},
                 {label:'ATL',value:pmcToday.atl,color:'#201e1d'},
                 {label:'TSB',value:(pmcToday.tsb>0?'+':'')+pmcToday.tsb,
-                  color:pmcToday.tsb>=5&&pmcToday.tsb<=20?'#22c55e':pmcToday.tsb>20?'#3b82f6':pmcToday.tsb>=-10?'#969191':pmcToday.tsb>=-30?'#f97316':'#ec3013'},
+                  color:pmcToday.tsb>=5&&pmcToday.tsb<=20?'#3b82f6':pmcToday.tsb>20?'#ca8a04':pmcToday.tsb>=-10?'#969191':pmcToday.tsb>=-30?'#22c55e':'#ec3013'},
                 {label:'Ramp',value:(pmcRampRate!==null?(pmcRampRate>0?'+':'')+pmcRampRate:'—'),color:pmcRampRate!==null&&Math.abs(pmcRampRate)>7?'#ec3013':'#201e1d'},
               ].map(s=>h('div',{key:s.label,style:{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:'1px'}},
                 h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#bab6b6'}},s.label),
@@ -2514,11 +2550,11 @@ function App() {
             h('div',{style:{display:'flex',alignItems:'center',gap:'12px',marginTop:'6px',flexWrap:'wrap',flexShrink:0,paddingBottom:'10px'}},
               h('span',{style:{fontSize:'11px',fontWeight:'700',color:'#201e1d'}},'Forme (TSB)'),
               ...[
-                {label:'Transition >+20',  color:'rgba(59,130,246,0.85)'},
-                {label:'Frais +5→+20',     color:'rgba(34,197,94,0.85)'},
+                {label:'Transition >+20',  color:'rgba(234,179,8,0.9)'},
+                {label:'Frais +5→+20',     color:'rgba(59,130,246,0.85)'},
                 {label:'Zone grise -10→+5',color:'rgba(150,145,145,0.72)'},
-                {label:'Optimal -30→-10',  color:'rgba(249,115,22,0.85)'},
-                {label:'Surentraînem.<-30',color:'rgba(236,48,19,0.9)'},
+                {label:'Optimal -30→-10',  color:'rgba(34,197,94,0.85)'},
+                {label:'Surentraînement.<-30',color:'rgba(236,48,19,0.9)'},
               ].map(z=>h('span',{key:z.label,style:{display:'flex',alignItems:'center',gap:'3px',fontSize:'9px',letterSpacing:'0.05em',textTransform:'uppercase',color:'#605d5d'}},
                 h('span',{style:{display:'inline-block',width:'8px',height:'8px',background:z.color,flexShrink:0}}),
                 z.label
