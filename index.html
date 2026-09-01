@@ -603,7 +603,7 @@ function App() {
 
   const lineRef = useRef(null); const barRef = useRef(null); const dailyRef = useRef(null);
   const zoneRef = useRef(null); const powerRef = useRef(null); const paceRef = useRef(null);
-  const hrRef = useRef(null); const fitRef = useRef(null);
+  const hrRef = useRef(null); const fitRef = useRef(null); const fitRef2 = useRef(null);
   const charts = useRef({});
 
   function destroyChart(key) { if (charts.current[key]) { charts.current[key].destroy(); charts.current[key] = null; } }
@@ -1219,86 +1219,210 @@ function App() {
     if (tab!=='athlete'||athleteSection!=='Condition physique') return;
     chartDefaults();
 
-    // Filtrer selon fitRange (nombre de jours)
+    // Filtrer selon fitRange
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - fitRange);
     const visible = pmcSeries.filter(p => new Date(p.date) >= cutoff);
-
-    // Thinning adaptatif pour les longues périodes (max ~600 labels)
     const step = Math.max(1, Math.ceil(visible.length / 600));
     const thin = visible.filter((_, i) => i % step === 0 || i === visible.length - 1);
-
-    const labels = thin.map(p => p.date);
+    const labels  = thin.map(p => p.date);
     const ctlData = thin.map(p => p.ctl);
     const atlData = thin.map(p => p.atl);
     const tsbData = thin.map(p => p.tsb);
 
+    // Zones TSB (intervals.icu) :
+    //   > 25  : Très frais (bleu)
+    //   5–25  : Optimal    (vert)
+    //   -10–5 : Gris       (gris neutre)
+    //  -30–-10: Surcharge  (orange)
+    //   < -30 : Danger     (rouge)
+    const TSB_ZONES = [
+      { min: 25,   max: Infinity, color: 'rgba(59,130,246,0.85)',  label: 'Très frais' },
+      { min: 5,    max: 25,       color: 'rgba(34,197,94,0.85)',   label: 'Optimal' },
+      { min: -10,  max: 5,        color: 'rgba(150,145,145,0.75)', label: 'Neutre' },
+      { min: -30,  max: -10,      color: 'rgba(249,115,22,0.85)',  label: 'Charge' },
+      { min: -Infinity, max: -30, color: 'rgba(236,48,19,0.9)',    label: 'Surcharge' },
+    ];
+
+    const tsbZoneColor = v => {
+      for (const z of TSB_ZONES) if (v >= z.min && v < z.max) return z.color;
+      return 'rgba(150,145,145,0.75)';
+    };
+
+    // Plugin : dessine les rectangles de zone colorés DERRIÈRE la courbe TSB
+    const zonePlugin = {
+      id: 'tsbZones',
+      beforeDatasetsDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        if (!chartArea || !scales.y) return;
+        const { left, right, top, bottom } = chartArea;
+        const yScale = scales.y;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(left, top, right - left, bottom - top);
+        ctx.clip();
+        const zones = [
+          { min: 25,   max: 60,  color: 'rgba(59,130,246,0.10)' },
+          { min: 5,    max: 25,  color: 'rgba(34,197,94,0.10)' },
+          { min: -10,  max: 5,   color: 'rgba(150,145,145,0.07)' },
+          { min: -30,  max: -10, color: 'rgba(249,115,22,0.10)' },
+          { min: -60,  max: -30, color: 'rgba(236,48,19,0.12)' },
+        ];
+        for (const z of zones) {
+          const yTop = Math.max(top,    yScale.getPixelForValue(z.max));
+          const yBot = Math.min(bottom, yScale.getPixelForValue(z.min));
+          if (yBot <= yTop) continue;
+          ctx.fillStyle = z.color;
+          ctx.fillRect(left, yTop, right - left, yBot - yTop);
+        }
+        ctx.restore();
+      }
+    };
+
+    // Plugin : colorie chaque segment de la courbe TSB selon sa zone
+    const segmentColorPlugin = {
+      id: 'tsbSegmentColor',
+      beforeDatasetDraw(chart, args) {
+        if (args.index !== 0) return; // dataset 0 = TSB
+        const dataset = chart.data.datasets[0];
+        const meta    = chart.getDatasetMeta(0);
+        if (!meta.data.length) return;
+        const { ctx, chartArea, scales } = chart;
+        if (!chartArea) return;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height);
+        ctx.clip();
+        // Dessiner segment par segment avec la couleur de la zone du point de départ
+        for (let i = 1; i < meta.data.length; i++) {
+          const p0 = meta.data[i - 1];
+          const p1 = meta.data[i];
+          const v0 = dataset.data[i - 1];
+          const v1 = dataset.data[i];
+          const midV = (v0 + v1) / 2;
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          ctx.lineTo(p1.x, p1.y);
+          ctx.strokeStyle = tsbZoneColor(midV);
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+        }
+        ctx.restore();
+        return false; // empêche Chart.js de redessiner le dataset par-dessus
+      }
+    };
+
+    // ── Graphique 1 : CTL + ATL ───────────────────────────────────────────────
     upsert('fitness', fitRef, {
       type:'line', plugins:[crosshairPlugin],
       data:{ labels, datasets:[
-        { label:'Forme (TSB)', data: tsbData, borderColor:'#bab6b6', borderWidth:1.5,
-          backgroundColor: ctx => {
-            const chart = ctx.chart;
-            const { ctx: c, chartArea } = chart;
-            if (!chartArea) return 'rgba(186,182,182,0.15)';
-            const g = c.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-            g.addColorStop(0, 'rgba(34,197,94,0.18)');
-            g.addColorStop(0.5, 'rgba(186,182,182,0.05)');
-            g.addColorStop(1, 'rgba(236,48,19,0.12)');
-            return g;
-          },
-          fill:'origin', tension:0.3, pointRadius:0, yAxisID:'y1' },
         { label:'Fatigue (ATL)', data: atlData, borderColor:'#201e1d', borderWidth:1.5,
-          borderDash:[4,3], backgroundColor:'transparent', fill:false, tension:0.3, pointRadius:0, yAxisID:'y' },
+          borderDash:[4,3], backgroundColor:'rgba(32,30,29,0.06)', fill:true,
+          tension:0.3, pointRadius:0, yAxisID:'y' },
         { label:'Condition physique (CTL)', data: ctlData, borderColor:'#ec3013', borderWidth:2.5,
-          backgroundColor:'rgba(236,48,19,0.07)', fill:true, tension:0.3, pointRadius:0, yAxisID:'y' },
+          backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.3, pointRadius:0, yAxisID:'y' },
       ]},
       options:{
         responsive:true, maintainAspectRatio:false, animation:{duration:0},
         interaction:{ mode:'index', intersect:false },
         plugins:{
-          legend:{ display:true, position:'bottom', labels:{ boxWidth:20, boxHeight:2, padding:20, font:{ size:11 } } },
+          legend:{ display:true, position:'bottom', labels:{ boxWidth:20, boxHeight:2, padding:16, font:{size:11} } },
           tooltip:{
             enabled:true, animation:false,
             callbacks:{
               title: items => items[0]?.label || '',
               label: item => {
-                const v = item.raw;
-                const sign = v > 0 ? '+' : '';
-                if (item.dataset.label.startsWith('Forme'))      return `  Forme (TSB) : ${sign}${v}`;
-                if (item.dataset.label.startsWith('Fatigue'))    return `  Fatigue (ATL) : ${v}`;
-                if (item.dataset.label.startsWith('Condition'))  return `  Condition (CTL) : ${v}`;
-                return `  ${v}`;
+                if (item.dataset.label.startsWith('Fatigue'))   return `  Fatigue (ATL) : ${item.raw}`;
+                if (item.dataset.label.startsWith('Condition')) return `  Condition (CTL) : ${item.raw}`;
+                return `  ${item.raw}`;
               },
               afterBody: items => {
                 const idx = items[0]?.dataIndex;
                 if (idx == null || !thin[idx]) return [];
                 const p = thin[idx];
-                const lines = [];
-                if (p.tss > 0) lines.push(`  Charge du jour : ${p.tss} TSS`);
-                if (p.tsb >= 5 && p.tsb <= 25) lines.push('  ✓ Zone optimale de performance');
-                else if (p.tsb > 25) lines.push('  ↑ Très frais — peux forcer');
-                else if (p.tsb < -30) lines.push('  ⚠ Surcharge — risque de blessure');
-                return lines;
+                return p.tss > 0 ? [`  Charge du jour : ${p.tss} TSS`] : [];
               }
             },
-            backgroundColor:'#201e1d', titleColor:'#fff', bodyColor:'#d7d3d3',
-            padding:12, cornerRadius:0, borderWidth:0,
+            backgroundColor:'#201e1d', titleColor:'#fff', bodyColor:'#d7d3d3', padding:12, cornerRadius:0,
           },
         },
         scales:{
-          x:{ grid:{ display:false }, ticks:{ maxTicksLimit:8, maxRotation:0, font:{ size:10 }, color:'#bab6b6' }, border:{ display:false } },
-          y:{ position:'left', grid:{ color:'rgba(32,30,29,0.08)', drawTicks:false }, border:{ display:false },
-              beginAtZero:true, title:{ display:true, text:'CTL / ATL', color:'#605d5d', font:{ size:10 } },
-              ticks:{ font:{ size:10 }, color:'#bab6b6' } },
-          y1:{ position:'right', grid:{ display:false }, border:{ display:false },
-               title:{ display:true, text:'TSB (Forme)', color:'#605d5d', font:{ size:10 } },
-               ticks:{ font:{ size:10 }, color:'#bab6b6',
-                 callback: v => (v > 0 ? '+' : '') + v } },
+          x:{ grid:{display:false}, ticks:{maxTicksLimit:8, maxRotation:0, font:{size:10}, color:'#bab6b6'}, border:{display:false} },
+          y:{ position:'left', grid:{color:'rgba(32,30,29,0.08)', drawTicks:false}, border:{display:false},
+              beginAtZero:true, title:{display:true, text:'CTL / ATL', color:'#605d5d', font:{size:10}},
+              ticks:{font:{size:10}, color:'#bab6b6'} },
         },
       },
     });
-    return () => destroyChart('fitness');
+
+    // ── Graphique 2 : TSB (Forme) avec zones colorées ─────────────────────────
+    // Ligne zéro visible + zones de fond
+    const zeroLine = labels.map(() => 0);
+    upsert('fitness2', fitRef2, {
+      type:'line', plugins:[zonePlugin, segmentColorPlugin, crosshairPlugin],
+      data:{ labels, datasets:[
+        // Dataset TSB — couleur de la ligne gérée par segmentColorPlugin
+        { label:'Forme (TSB)', data: tsbData,
+          borderColor:'rgba(150,145,145,0)', // transparent : le plugin gère la couleur
+          borderWidth:2.5, backgroundColor:'transparent', fill:false,
+          tension:0.3, pointRadius:0, yAxisID:'y' },
+        // Ligne zéro de référence
+        { label:'', data: zeroLine,
+          borderColor:'rgba(32,30,29,0.25)', borderWidth:1, borderDash:[3,3],
+          backgroundColor:'transparent', fill:false, pointRadius:0, yAxisID:'y' },
+      ]},
+      options:{
+        responsive:true, maintainAspectRatio:false, animation:{duration:0},
+        interaction:{ mode:'index', intersect:false },
+        plugins:{
+          legend:{
+            display:true, position:'bottom',
+            labels:{
+              generateLabels: () => TSB_ZONES.map(z => ({
+                text: z.label,
+                fillStyle: z.color,
+                strokeStyle: z.color,
+                lineWidth: 0,
+                hidden: false,
+                fontColor: '#605d5d',
+              })),
+              boxWidth:14, boxHeight:8, padding:14, font:{size:10},
+            }
+          },
+          tooltip:{
+            enabled:true, animation:false,
+            filter: item => item.datasetIndex === 0,
+            callbacks:{
+              title: items => items[0]?.label || '',
+              label: item => {
+                const v = item.raw;
+                const sign = v > 0 ? '+' : '';
+                const zone = TSB_ZONES.find(z => v >= z.min && v < z.max);
+                return `  Forme (TSB) : ${sign}${v} — ${zone?.label || ''}`;
+              },
+              afterBody: items => {
+                const v = items[0]?.raw;
+                if (v == null) return [];
+                if (v >= 5 && v <= 25) return ['  ✓ Fenêtre de performance optimale'];
+                if (v > 25) return ['  ↑ Très frais — idéal avant compétition'];
+                if (v < -30) return ['  ⚠ Risque de surmenage — récupère'];
+                return [];
+              }
+            },
+            backgroundColor:'#201e1d', titleColor:'#fff', bodyColor:'#d7d3d3', padding:12, cornerRadius:0,
+          },
+        },
+        scales:{
+          x:{ grid:{display:false}, ticks:{maxTicksLimit:8, maxRotation:0, font:{size:10}, color:'#bab6b6'}, border:{display:false} },
+          y:{ position:'left', grid:{color:'rgba(32,30,29,0.06)', drawTicks:false}, border:{display:false},
+              title:{display:true, text:'TSB (Forme)', color:'#605d5d', font:{size:10}},
+              ticks:{font:{size:10}, color:'#bab6b6', callback: v => (v > 0 ? '+' : '') + v},
+            },
+        },
+      },
+    });
+
+    return () => { destroyChart('fitness'); destroyChart('fitness2'); };
   }, [tab, athleteSection, pmcSeries, fitRange]);
 
   useEffect(() => {
@@ -2271,17 +2395,28 @@ function App() {
               h('div',{style:{marginTop:'6px',fontSize:'12px',color:'#605d5d'}},st.sub)
             ))
           ),
-          h('section',{style:{padding:'28px 32px 32px'}},
-            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
-              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Condition physique, fatigue et forme'),
-              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : CTL · Noir pointillé : ATL · Gris : TSB (axe droit)')
+          h('section',{style:{padding:'20px 32px 32px'}},
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'8px'}},
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Condition physique & fatigue'),
+              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge\u202f: CTL · Noir pointillé\u202f: ATL')
             ),
-            !pmcSeries.length && h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},'Donnée manquante — connecte ton compte Strava pour calculer CTL / ATL / TSB.'),
-            pmcSeries.length > 0 && h('p',{style:{margin:'0 0 12px',fontSize:'11px',color:'#605d5d',maxWidth:'90ch'}},
-              'Zone optimale TSB\u202f: +5\u202fà\u202f+25 pour performer · 0\u202fà\u202f\u221230 en bloc d\'entraînement · Ramp rate idéal\u202f: ≤\u202f+5 CTL / semaine.'
-              + (pmcToday ? ' Calculé sur '+pmcSeries.length+'\u202fjours d\'historique.' : '')
+            !pmcSeries.length && h('p',{style:{margin:'0 0 12px',fontSize:'12px',color:'#605d5d'}},'Donnée manquante — connecte ton compte Strava pour calculer CTL / ATL / TSB.'),
+            pmcSeries.length > 0 && h('p',{style:{margin:'0 0 8px',fontSize:'11px',color:'#bab6b6',maxWidth:'90ch'}},
+              'Calculé sur '+pmcSeries.length+'\u202fjours d\'historique.'
+              +(pmcToday ? ' CTL\u202f=\u202f'+pmcToday.ctl+' · ATL\u202f=\u202f'+pmcToday.atl : '')
             ),
-            h('div',{style:{height:'calc(100vh - 460px)',minHeight:'320px'}},h('canvas',{ref:fitRef}))
+            h('div',{style:{height:'calc((100vh - 520px) * 0.55)',minHeight:'180px'}}, h('canvas',{ref:fitRef})),
+            h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px',margin:'18px 0 6px'}},
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Forme (TSB)'),
+              h('div',{style:{display:'flex',gap:'12px',flexWrap:'wrap'}},
+                [{min:25,label:'Très frais',color:'rgba(59,130,246,0.85)'},{min:5,label:'Optimal',color:'rgba(34,197,94,0.85)'},{min:-10,label:'Neutre',color:'rgba(150,145,145,0.75)'},{min:-30,label:'Charge',color:'rgba(249,115,22,0.85)'},{min:-99,label:'Surcharge',color:'rgba(236,48,19,0.9)'}]
+                  .map(z=>h('span',{key:z.label,style:{display:'flex',alignItems:'center',gap:'4px',fontSize:'10px',letterSpacing:'0.08em',textTransform:'uppercase',color:'#605d5d'}},
+                    h('span',{style:{display:'inline-block',width:'10px',height:'10px',background:z.color,flexShrink:0}}),
+                    z.label
+                  ))
+              )
+            ),
+            h('div',{style:{height:'calc((100vh - 520px) * 0.45)',minHeight:'140px'}}, h('canvas',{ref:fitRef2}))
           )
         ),
         athleteSection==='Puissance'&&h('div',null,
