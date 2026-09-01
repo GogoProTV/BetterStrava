@@ -1219,7 +1219,6 @@ function App() {
     if (tab!=='athlete'||athleteSection!=='Condition physique') return;
     chartDefaults();
 
-    // Filtrer selon fitRange
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - fitRange);
     const visible = pmcSeries.filter(p => new Date(p.date) >= cutoff);
@@ -1230,194 +1229,185 @@ function App() {
     const atlData = thin.map(p => p.atl);
     const tsbData = thin.map(p => p.tsb);
 
-    // Zones TSB (intervals.icu) :
-    //   > 25  : Très frais (bleu)
-    //   5–25  : Optimal    (vert)
-    //   -10–5 : Gris       (gris neutre)
-    //  -30–-10: Surcharge  (orange)
-    //   < -30 : Danger     (rouge)
-    const TSB_ZONES = [
-      { min: 25,   max: Infinity, color: 'rgba(59,130,246,0.85)',  label: 'Très frais' },
-      { min: 5,    max: 25,       color: 'rgba(34,197,94,0.85)',   label: 'Optimal' },
-      { min: -10,  max: 5,        color: 'rgba(150,145,145,0.75)', label: 'Neutre' },
-      { min: -30,  max: -10,      color: 'rgba(249,115,22,0.85)',  label: 'Charge' },
-      { min: -Infinity, max: -30, color: 'rgba(236,48,19,0.9)',    label: 'Surcharge' },
-    ];
+    // Echelles Y fixes sur toute la carriere (independant de fitRange)
+    const allCTL = pmcSeries.map(p => p.ctl);
+    const allATL = pmcSeries.map(p => p.atl);
+    const allTSB = pmcSeries.map(p => p.tsb);
+    const yMax1  = Math.ceil(Math.max(10, ...allCTL, ...allATL) / 10) * 10 + 10;
+    const tsbMin = Math.floor(Math.min(-5, ...allTSB) / 10) * 10 - 5;
+    const tsbMax = Math.ceil(Math.max(5,  ...allTSB) / 10) * 10 + 5;
 
+    // Zones TSB selon intervals.icu
+    const TSB_ZONES = [
+      { min: 20,        max: Infinity, color: 'rgba(59,130,246,0.85)',  label: 'Transition' },
+      { min: 5,         max: 20,       color: 'rgba(34,197,94,0.85)',   label: 'Frais' },
+      { min: -10,       max: 5,        color: 'rgba(150,145,145,0.72)', label: 'Zone grise' },
+      { min: -30,       max: -10,      color: 'rgba(249,115,22,0.85)',  label: 'Optimal' },
+      { min: -Infinity, max: -30,      color: 'rgba(236,48,19,0.9)',    label: 'Surentra\u00eenement' },
+    ];
     const tsbZoneColor = v => {
       for (const z of TSB_ZONES) if (v >= z.min && v < z.max) return z.color;
-      return 'rgba(150,145,145,0.75)';
+      return 'rgba(150,145,145,0.72)';
     };
 
-    // Plugin : dessine les rectangles de zone colorés DERRIÈRE la courbe TSB
+    // Points d'activites sur la courbe CTL
+    const actByDate = {};
+    for (const a of data) {
+      const key = a.date.toISOString().slice(0,10);
+      if (!actByDate[key]) actByDate[key] = [];
+      actByDate[key].push(a);
+    }
+    const pointRadii  = thin.map(p => actByDate[p.date] ? 4 : 0);
+    const pointColors = thin.map(p => actByDate[p.date] ? '#ec3013' : 'transparent');
+    const actAtIdx    = thin.map(p => actByDate[p.date] || null);
+
+    // Plugin zones de fond TSB
     const zonePlugin = {
       id: 'tsbZones',
       beforeDatasetsDraw(chart) {
         const { ctx, chartArea, scales } = chart;
         if (!chartArea || !scales.y) return;
-        const { left, right, top, bottom } = chartArea;
-        const yScale = scales.y;
         ctx.save();
-        ctx.beginPath();
-        ctx.rect(left, top, right - left, bottom - top);
-        ctx.clip();
-        const zones = [
-          { min: 25,   max: 60,  color: 'rgba(59,130,246,0.10)' },
-          { min: 5,    max: 25,  color: 'rgba(34,197,94,0.10)' },
-          { min: -10,  max: 5,   color: 'rgba(150,145,145,0.07)' },
-          { min: -30,  max: -10, color: 'rgba(249,115,22,0.10)' },
-          { min: -60,  max: -30, color: 'rgba(236,48,19,0.12)' },
+        ctx.beginPath(); ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height); ctx.clip();
+        const bgZones = [
+          { min: 20,     max: tsbMax, color: 'rgba(59,130,246,0.08)' },
+          { min: 5,      max: 20,     color: 'rgba(34,197,94,0.08)' },
+          { min: -10,    max: 5,      color: 'rgba(150,145,145,0.06)' },
+          { min: -30,    max: -10,    color: 'rgba(249,115,22,0.09)' },
+          { min: tsbMin, max: -30,    color: 'rgba(236,48,19,0.10)' },
         ];
-        for (const z of zones) {
-          const yTop = Math.max(top,    yScale.getPixelForValue(z.max));
-          const yBot = Math.min(bottom, yScale.getPixelForValue(z.min));
-          if (yBot <= yTop) continue;
+        for (const z of bgZones) {
+          const yT = Math.max(chartArea.top,    scales.y.getPixelForValue(z.max));
+          const yB = Math.min(chartArea.bottom, scales.y.getPixelForValue(z.min));
+          if (yB <= yT) continue;
           ctx.fillStyle = z.color;
-          ctx.fillRect(left, yTop, right - left, yBot - yTop);
+          ctx.fillRect(chartArea.left, yT, chartArea.width, yB - yT);
+        }
+        for (const boundary of [20, 5, -10, -30]) {
+          const py = scales.y.getPixelForValue(boundary);
+          if (py < chartArea.top || py > chartArea.bottom) continue;
+          ctx.beginPath(); ctx.moveTo(chartArea.left, py); ctx.lineTo(chartArea.right, py);
+          ctx.strokeStyle = 'rgba(32,30,29,0.15)'; ctx.lineWidth = 1; ctx.setLineDash([3,4]); ctx.stroke(); ctx.setLineDash([]);
         }
         ctx.restore();
       }
     };
 
-    // Plugin : colorie chaque segment de la courbe TSB selon sa zone
+    // Plugin segments colores TSB
     const segmentColorPlugin = {
       id: 'tsbSegmentColor',
       beforeDatasetDraw(chart, args) {
-        if (args.index !== 0) return; // dataset 0 = TSB
-        const dataset = chart.data.datasets[0];
-        const meta    = chart.getDatasetMeta(0);
+        if (args.index !== 0) return;
+        const meta = chart.getDatasetMeta(0);
         if (!meta.data.length) return;
-        const { ctx, chartArea, scales } = chart;
+        const { ctx, chartArea } = chart;
         if (!chartArea) return;
         ctx.save();
-        ctx.beginPath();
-        ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height);
-        ctx.clip();
-        // Dessiner segment par segment avec la couleur de la zone du point de départ
+        ctx.beginPath(); ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height); ctx.clip();
         for (let i = 1; i < meta.data.length; i++) {
-          const p0 = meta.data[i - 1];
-          const p1 = meta.data[i];
-          const v0 = dataset.data[i - 1];
-          const v1 = dataset.data[i];
-          const midV = (v0 + v1) / 2;
-          ctx.beginPath();
-          ctx.moveTo(p0.x, p0.y);
-          ctx.lineTo(p1.x, p1.y);
-          ctx.strokeStyle = tsbZoneColor(midV);
-          ctx.lineWidth = 2.5;
-          ctx.stroke();
+          const p0 = meta.data[i-1], p1 = meta.data[i];
+          ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y);
+          ctx.strokeStyle = tsbZoneColor((tsbData[i-1]+tsbData[i])/2);
+          ctx.lineWidth = 2.5; ctx.stroke();
         }
         ctx.restore();
-        return false; // empêche Chart.js de redessiner le dataset par-dessus
+        return false;
       }
     };
 
-    // ── Graphique 1 : CTL + ATL ───────────────────────────────────────────────
+    // Graphique 1 : CTL + ATL + points activites
     upsert('fitness', fitRef, {
       type:'line', plugins:[crosshairPlugin],
       data:{ labels, datasets:[
         { label:'Fatigue (ATL)', data: atlData, borderColor:'#201e1d', borderWidth:1.5,
-          borderDash:[4,3], backgroundColor:'rgba(32,30,29,0.06)', fill:true,
+          borderDash:[4,3], backgroundColor:'rgba(32,30,29,0.05)', fill:true,
           tension:0.3, pointRadius:0, yAxisID:'y' },
         { label:'Condition physique (CTL)', data: ctlData, borderColor:'#ec3013', borderWidth:2.5,
-          backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.3, pointRadius:0, yAxisID:'y' },
+          backgroundColor:'rgba(236,48,19,0.07)', fill:true, tension:0.3,
+          pointRadius: pointRadii, pointBackgroundColor: pointColors,
+          pointBorderColor: pointColors, pointHoverRadius: 6, yAxisID:'y' },
       ]},
       options:{
         responsive:true, maintainAspectRatio:false, animation:{duration:0},
         interaction:{ mode:'index', intersect:false },
         plugins:{
-          legend:{ display:true, position:'bottom', labels:{ boxWidth:20, boxHeight:2, padding:16, font:{size:11} } },
+          legend:{ display:false },
           tooltip:{
             enabled:true, animation:false,
             callbacks:{
               title: items => items[0]?.label || '',
               label: item => {
-                if (item.dataset.label.startsWith('Fatigue'))   return `  Fatigue (ATL) : ${item.raw}`;
-                if (item.dataset.label.startsWith('Condition')) return `  Condition (CTL) : ${item.raw}`;
-                return `  ${item.raw}`;
+                if (item.dataset.label.startsWith('Fatigue'))   return '  Fatigue (ATL) : '+item.raw;
+                if (item.dataset.label.startsWith('Condition')) return '  Condition (CTL) : '+item.raw;
+                return '  '+item.raw;
               },
               afterBody: items => {
                 const idx = items[0]?.dataIndex;
-                if (idx == null || !thin[idx]) return [];
-                const p = thin[idx];
-                return p.tss > 0 ? [`  Charge du jour : ${p.tss} TSS`] : [];
+                if (idx==null) return [];
+                const acts = actAtIdx[idx];
+                if (!acts || !acts.length) return [];
+                const ftpV = Number(profile.ftp)||ftpEstimated||null;
+                const tpV  = Number(profile.thresholdPace)||thresholdPaceEstimated||null;
+                return acts.flatMap(a => {
+                  const s   = actStreams[a.id];
+                  const sOk = s && s!=='error';
+                  const td  = calcTSS(a, sOk?s:null, a.sport==='V\u00e9lo'?ftpV:tpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+                  const tssV = td?.tss ?? null;
+                  const dist = a.dist ? fmtNum(a.dist,1)+' km' : '\u2014';
+                  const time = a.time ? (Math.floor(a.time/60)+'h'+String(a.time%60).padStart(2,'0')) : '\u2014';
+                  const hr   = a.avgHr ? a.avgHr+' bpm' : '\u2014';
+                  return [
+                    '  \u2500\u2500 '+a.name,
+                    '  '+a.sport+' \u00b7 '+dist+' \u00b7 '+time+(hr!=='\u2014'?' \u00b7 '+hr:'')+(tssV?' \u00b7 '+Math.round(tssV)+' TSS':''),
+                  ];
+                });
               }
             },
             backgroundColor:'#201e1d', titleColor:'#fff', bodyColor:'#d7d3d3', padding:12, cornerRadius:0,
           },
         },
         scales:{
-          x:{ grid:{display:false}, ticks:{maxTicksLimit:8, maxRotation:0, font:{size:10}, color:'#bab6b6'}, border:{display:false} },
-          y:{ position:'left', grid:{color:'rgba(32,30,29,0.08)', drawTicks:false}, border:{display:false},
-              beginAtZero:true, title:{display:true, text:'CTL / ATL', color:'#605d5d', font:{size:10}},
-              ticks:{font:{size:10}, color:'#bab6b6'} },
+          x:{ grid:{display:false}, ticks:{maxTicksLimit:8,maxRotation:0,font:{size:10},color:'#bab6b6'}, border:{display:false} },
+          y:{ position:'left', min:0, max:yMax1, grid:{color:'rgba(32,30,29,0.07)',drawTicks:false}, border:{display:false},
+              ticks:{font:{size:10},color:'#bab6b6',maxTicksLimit:5} },
         },
       },
     });
 
-    // ── Graphique 2 : TSB (Forme) avec zones colorées ─────────────────────────
-    // Ligne zéro visible + zones de fond
-    const zeroLine = labels.map(() => 0);
+    // Graphique 2 : TSB zones colorees
     upsert('fitness2', fitRef2, {
       type:'line', plugins:[zonePlugin, segmentColorPlugin, crosshairPlugin],
       data:{ labels, datasets:[
-        // Dataset TSB — couleur de la ligne gérée par segmentColorPlugin
         { label:'Forme (TSB)', data: tsbData,
-          borderColor:'rgba(150,145,145,0)', // transparent : le plugin gère la couleur
-          borderWidth:2.5, backgroundColor:'transparent', fill:false,
-          tension:0.3, pointRadius:0, yAxisID:'y' },
-        // Ligne zéro de référence
-        { label:'', data: zeroLine,
-          borderColor:'rgba(32,30,29,0.25)', borderWidth:1, borderDash:[3,3],
+          borderColor:'rgba(0,0,0,0)', borderWidth:2.5, backgroundColor:'transparent',
+          fill:false, tension:0.3, pointRadius:0, yAxisID:'y' },
+        { label:'', data: labels.map(()=>0),
+          borderColor:'rgba(32,30,29,0.2)', borderWidth:1, borderDash:[2,3],
           backgroundColor:'transparent', fill:false, pointRadius:0, yAxisID:'y' },
       ]},
       options:{
         responsive:true, maintainAspectRatio:false, animation:{duration:0},
         interaction:{ mode:'index', intersect:false },
         plugins:{
-          legend:{
-            display:true, position:'bottom',
-            labels:{
-              generateLabels: () => TSB_ZONES.map(z => ({
-                text: z.label,
-                fillStyle: z.color,
-                strokeStyle: z.color,
-                lineWidth: 0,
-                hidden: false,
-                fontColor: '#605d5d',
-              })),
-              boxWidth:14, boxHeight:8, padding:14, font:{size:10},
-            }
-          },
+          legend:{ display:false },
           tooltip:{
             enabled:true, animation:false,
-            filter: item => item.datasetIndex === 0,
+            filter: item => item.datasetIndex===0,
             callbacks:{
-              title: items => items[0]?.label || '',
+              title: items => items[0]?.label||'',
               label: item => {
-                const v = item.raw;
-                const sign = v > 0 ? '+' : '';
-                const zone = TSB_ZONES.find(z => v >= z.min && v < z.max);
-                return `  Forme (TSB) : ${sign}${v} — ${zone?.label || ''}`;
+                const v = item.raw; const sign = v>0?'+':'';
+                const zone = TSB_ZONES.find(z=>v>=z.min&&v<z.max);
+                return '  Forme (TSB) : '+sign+v+' \u2014 '+(zone?.label||'');
               },
-              afterBody: items => {
-                const v = items[0]?.raw;
-                if (v == null) return [];
-                if (v >= 5 && v <= 25) return ['  ✓ Fenêtre de performance optimale'];
-                if (v > 25) return ['  ↑ Très frais — idéal avant compétition'];
-                if (v < -30) return ['  ⚠ Risque de surmenage — récupère'];
-                return [];
-              }
             },
             backgroundColor:'#201e1d', titleColor:'#fff', bodyColor:'#d7d3d3', padding:12, cornerRadius:0,
           },
         },
         scales:{
-          x:{ grid:{display:false}, ticks:{maxTicksLimit:8, maxRotation:0, font:{size:10}, color:'#bab6b6'}, border:{display:false} },
-          y:{ position:'left', grid:{color:'rgba(32,30,29,0.06)', drawTicks:false}, border:{display:false},
-              title:{display:true, text:'TSB (Forme)', color:'#605d5d', font:{size:10}},
-              ticks:{font:{size:10}, color:'#bab6b6', callback: v => (v > 0 ? '+' : '') + v},
-            },
+          x:{ grid:{display:false}, ticks:{maxTicksLimit:8,maxRotation:0,font:{size:10},color:'#bab6b6'}, border:{display:false} },
+          y:{ position:'left', min:tsbMin, max:tsbMax, grid:{display:false}, border:{display:false},
+              ticks:{font:{size:10},color:'#bab6b6',maxTicksLimit:6,callback:v=>(v>0?'+':'')+v} },
         },
       },
     });
@@ -2384,39 +2374,75 @@ function App() {
             h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},athleteSection)
           )
         ),
-        athleteSection==='Condition physique'&&h('div',null,
-          h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
-            h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période de calcul'),h(BtnRow,{options:mkOptions(powPeriods,fitRange,setFitRange)}))
+        athleteSection==='Condition physique'&&h('div',{style:{display:'flex',flexDirection:'column',height:'calc(100vh - 0px)',boxSizing:'border-box',overflow:'auto'}},
+          // ── Bande de contrôle période ──────────────────────────────────────
+          h('section',{style:{display:'flex',alignItems:'center',gap:'24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexShrink:0}},
+            h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
+            h(BtnRow,{options:mkOptions(powPeriods,fitRange,setFitRange)}),
+            pmcToday&&h('div',{style:{marginLeft:'auto',display:'flex',gap:'20px'}},
+              [
+                {label:'CTL',value:pmcToday.ctl,color:'#ec3013'},
+                {label:'ATL',value:pmcToday.atl,color:'#201e1d'},
+                {label:'TSB',value:(pmcToday.tsb>0?'+':'')+pmcToday.tsb,
+                  color:pmcToday.tsb>=5&&pmcToday.tsb<=20?'#22c55e':pmcToday.tsb>20?'#3b82f6':pmcToday.tsb>=-10?'#969191':pmcToday.tsb>=-30?'#f97316':'#ec3013'},
+                {label:'Ramp',value:(pmcRampRate!==null?(pmcRampRate>0?'+':'')+pmcRampRate:'—'),color:pmcRampRate!==null&&Math.abs(pmcRampRate)>7?'#ec3013':'#201e1d'},
+              ].map(s=>h('div',{key:s.label,style:{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:'1px'}},
+                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#bab6b6'}},s.label),
+                h('span',{style:{fontSize:'18px',fontWeight:'800',letterSpacing:'-0.02em',color:s.color}},String(s.value))
+              ))
+            )
           ),
-          h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',borderBottom:'2px solid #201e1d'}},
-            fitStats.map((st,i)=>h('div',{key:i,style:{minWidth:0,padding:'20px 32px 22px',borderRight:i<3?'1px solid #d7d3d3':undefined}},
-              h('div',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},st.label),
-              h('div',{style:st.valueStyle},st.value),
-              h('div',{style:{marginTop:'6px',fontSize:'12px',color:'#605d5d'}},st.sub)
-            ))
+          // ── Corps : 2 graphiques collés ────────────────────────────────────
+          h('div',{style:{flex:1,display:'flex',flexDirection:'column',padding:'20px 32px 0',minHeight:0}},
+            // Légende CTL/ATL en haut du graphique 1
+            h('div',{style:{display:'flex',alignItems:'center',gap:'20px',marginBottom:'6px'}},
+              h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'-0.01em',color:'#201e1d'}},'Condition physique & fatigue'),
+              h('span',{style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'10px',color:'#ec3013'}},
+                h('span',{style:{display:'inline-block',width:'18px',height:'3px',background:'#ec3013'}}), 'CTL'),
+              h('span',{style:{display:'flex',alignItems:'center',gap:'5px',fontSize:'10px',color:'#605d5d'}},
+                h('span',{style:{display:'inline-block',width:'18px',height:'2px',background:'#201e1d',borderTop:'2px dashed #201e1d'}}), 'ATL'),
+              !pmcSeries.length&&h('span',{style:{marginLeft:'auto',fontSize:'11px',color:'#bab6b6'}},'Connecte Strava pour calculer CTL / ATL / TSB')
+            ),
+            // Graphique 1 : CTL/ATL — hauteur 58%
+            h('div',{style:{flex:'0 0 58%',minHeight:'200px',marginBottom:'0'}}, h('canvas',{ref:fitRef})),
+            // Graphique 2 : TSB — collé, hauteur 42%
+            h('div',{style:{display:'flex',alignItems:'center',gap:'16px',margin:'4px 0 4px'}},
+              h('span',{style:{fontSize:'11px',fontWeight:'700',color:'#201e1d'}},'Forme (TSB)'),
+              ...[
+                {label:'Transition +20',color:'rgba(59,130,246,0.85)'},
+                {label:'Frais +5→+20',color:'rgba(34,197,94,0.85)'},
+                {label:'Zone grise -10→+5',color:'rgba(150,145,145,0.7)'},
+                {label:'Optimal -30→-10',color:'rgba(249,115,22,0.85)'},
+                {label:'Surentraînem. <-30',color:'rgba(236,48,19,0.9)'},
+              ].map(z=>h('span',{key:z.label,style:{display:'flex',alignItems:'center',gap:'3px',fontSize:'9px',letterSpacing:'0.06em',textTransform:'uppercase',color:'#605d5d'}},
+                h('span',{style:{display:'inline-block',width:'8px',height:'8px',background:z.color,flexShrink:0}}),
+                z.label
+              ))
+            ),
+            h('div',{style:{flex:'0 0 42%',minHeight:'150px',marginBottom:'0'}}, h('canvas',{ref:fitRef2}))
           ),
-          h('section',{style:{padding:'20px 32px 32px'}},
-            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'8px'}},
-              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Condition physique & fatigue'),
-              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge\u202f: CTL · Noir pointillé\u202f: ATL')
-            ),
-            !pmcSeries.length && h('p',{style:{margin:'0 0 12px',fontSize:'12px',color:'#605d5d'}},'Donnée manquante — connecte ton compte Strava pour calculer CTL / ATL / TSB.'),
-            pmcSeries.length > 0 && h('p',{style:{margin:'0 0 8px',fontSize:'11px',color:'#bab6b6',maxWidth:'90ch'}},
-              'Calculé sur '+pmcSeries.length+'\u202fjours d\'historique.'
-              +(pmcToday ? ' CTL\u202f=\u202f'+pmcToday.ctl+' · ATL\u202f=\u202f'+pmcToday.atl : '')
-            ),
-            h('div',{style:{height:'calc((100vh - 520px) * 0.55)',minHeight:'180px'}}, h('canvas',{ref:fitRef})),
-            h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px',margin:'18px 0 6px'}},
-              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Forme (TSB)'),
-              h('div',{style:{display:'flex',gap:'12px',flexWrap:'wrap'}},
-                [{min:25,label:'Très frais',color:'rgba(59,130,246,0.85)'},{min:5,label:'Optimal',color:'rgba(34,197,94,0.85)'},{min:-10,label:'Neutre',color:'rgba(150,145,145,0.75)'},{min:-30,label:'Charge',color:'rgba(249,115,22,0.85)'},{min:-99,label:'Surcharge',color:'rgba(236,48,19,0.9)'}]
-                  .map(z=>h('span',{key:z.label,style:{display:'flex',alignItems:'center',gap:'4px',fontSize:'10px',letterSpacing:'0.08em',textTransform:'uppercase',color:'#605d5d'}},
-                    h('span',{style:{display:'inline-block',width:'10px',height:'10px',background:z.color,flexShrink:0}}),
-                    z.label
-                  ))
+          // ── Texte explicatif ───────────────────────────────────────────────
+          h('section',{style:{padding:'16px 32px 24px',borderTop:'2px solid #201e1d',flexShrink:0,marginTop:'12px'}},
+            h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'24px 40px'}},
+              h('div',null,
+                h('p',{style:{margin:'0 0 4px',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Comment c\'est calculé'),
+                h('p',{style:{margin:0,fontSize:'11px',color:'#605d5d',lineHeight:'1.6'}},
+                  'CTL (Condition physique) = moyenne exponentielle du TSS sur 42 jours. ATL (Fatigue) = moyenne exponentielle sur 7 jours. TSB (Forme) = CTL − ATL de la veille. Le TSS vélo est calculé depuis la puissance estimée / FTP. Le TSS course depuis l\'allure / seuil. Sinon, TRIMP depuis la FC.'
+                )
+              ),
+              h('div',null,
+                h('p',{style:{margin:'0 0 4px',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Comment lire le graphique'),
+                h('p',{style:{margin:0,fontSize:'11px',color:'#605d5d',lineHeight:'1.6'}},
+                  'CTL qui monte = bloc de construction. ATL > CTL = surcharge récente. TSB positif = tu es frais. TSB négatif = tu accumules de la fatigue. Les points sur la courbe CTL représentent tes activités. Survole-les pour voir le détail.'
+                )
+              ),
+              h('div',null,
+                h('p',{style:{margin:'0 0 4px',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Zones TSB & action'),
+                h('p',{style:{margin:0,fontSize:'11px',color:'#605d5d',lineHeight:'1.6'}},
+                  'Transition (> +20) : trop frais, force ou reprends. Frais (+5 à +20) : idéal avant compétition. Zone grise (-10 à +5) : entraînement normal. Optimal (-10 à -30) : charge élevée mais contrôlée, tu progresses. Surentraînement (< -30) : récupère, risque de blessure.'
+                )
               )
-            ),
-            h('div',{style:{height:'calc((100vh - 520px) * 0.45)',minHeight:'140px'}}, h('canvas',{ref:fitRef2}))
+            )
           )
         ),
         athleteSection==='Puissance'&&h('div',null,
