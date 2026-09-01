@@ -213,6 +213,50 @@ function estimatePower(v_kmh, slope_pct, totalMassKg) {
   return Math.max(0, Math.round((P_roll + P_aero + P_grav) / ETA));
 }
 
+// ── Construction du stream de puissance avec lissage altimétrique ────────────
+// Lissage altitude sur ±15 s (fenêtre 30 s) avant calcul de pente,
+// identique à la méthode Strava/Garmin pour le gradient affiché.
+// Sans lissage, le bruit GPS (~1-3 m) sur 1 seconde génère des pics de pente
+// artificiels (ex. 0% / 25% / 0% au lieu d'une côte régulière à 6%).
+function buildPowArr(vel, alt, dist, totalMassKg) {
+  if (!vel || !vel.length || !totalMassKg) return null;
+  const n = vel.length;
+  const pow = new Float32Array(n);
+
+  // Étape 1 : lisser l'altitude avec une moyenne glissante ±15 s
+  const HALF = 15;
+  let smoothAlt = null;
+  if (alt && alt.length === n) {
+    smoothAlt = new Float32Array(n);
+    let sum = 0;
+    // Initialiser la fenêtre sur les premiers HALF points
+    for (let k = 0; k < Math.min(HALF, n); k++) sum += alt[k];
+    let lo = 0, hi = Math.min(HALF, n - 1), cnt = hi - lo + 1;
+    for (let i = 0; i < n; i++) {
+      smoothAlt[i] = sum / cnt;
+      // Faire glisser la fenêtre
+      const nextHi = Math.min(i + HALF + 1, n - 1);
+      const nextLo = Math.max(0, i - HALF + 1);
+      if (nextHi > hi) { sum += alt[nextHi]; hi = nextHi; cnt++; }
+      if (nextLo > lo) { sum -= alt[lo]; lo = nextLo; cnt--; }
+    }
+  }
+
+  // Étape 2 : calculer la puissance seconde par seconde avec la pente lissée
+  for (let i = 0; i < n; i++) {
+    const v_kmh = vel[i] * 3.6;
+    let slope = 0;
+    if (smoothAlt && i > 0) {
+      const dAlt  = smoothAlt[i] - smoothAlt[i - 1];
+      const dDist = dist ? Math.max(0.1, dist[i] - dist[i - 1]) : Math.max(0.1, vel[i]);
+      slope = Math.max(-30, Math.min(30, (dAlt / dDist) * 100));
+    }
+    const p = estimatePower(v_kmh, slope, totalMassKg);
+    pow[i] = p !== null ? p : 0;
+  }
+  return pow;
+}
+
 // ── TSS / NP / IF (méthode TrainingPeaks) ────────────────────────────────────
 function calcNP(powArr) {
   // Étape 1 : moyenne glissante 30s
@@ -474,21 +518,9 @@ function App() {
         const dist = res && res.distance        && res.distance.data;
         const hr   = res && res.heartrate       && res.heartrate.data;
         if (vel && vel.length) {
-          let pow = null;
-          if (a.sport==='Vélo' && totalMass > 0) {
-            pow = new Float32Array(vel.length);
-            for (let i = 0; i < vel.length; i++) {
-              const v_kmh = vel[i] * 3.6;
-              let slope = 0;
-              if (alt && i > 0) {
-                const dAlt = alt[i] - alt[i-1];
-                const dDist = dist ? Math.max(0.1, dist[i] - dist[i-1]) : Math.max(0.1, vel[i]);
-                slope = Math.max(-30, Math.min(30, (dAlt / dDist) * 100));
-              }
-              const p = estimatePower(v_kmh, slope, totalMass);
-              pow[i] = p !== null ? p : 0;
-            }
-          }
+          const pow = (a.sport==='Vélo' && totalMass > 0)
+            ? buildPowArr(vel, alt, dist, totalMass)
+            : null;
           setActStreams(prev => ({ ...prev, [a.id]: {
             vel:  new Float32Array(vel),
             dist: dist ? new Float32Array(dist) : null,
@@ -557,18 +589,7 @@ function App() {
         if (!s || s === 'error' || !s.vel || s.pow) continue;
         const act = data.find(a => String(a.id) === String(id));
         if (!act || act.sport !== 'Vélo') continue;
-        const pow = new Float32Array(s.vel.length);
-        for (let i = 0; i < s.vel.length; i++) {
-          const v_kmh = s.vel[i] * 3.6;
-          let slope = 0;
-          if (s.alt && i > 0) {
-            const dAlt = s.alt[i] - s.alt[i-1];
-            const dDist = s.dist ? Math.max(0.1, s.dist[i] - s.dist[i-1]) : Math.max(0.1, s.vel[i]);
-            slope = Math.max(-30, Math.min(30, (dAlt / dDist) * 100));
-          }
-          const p = estimatePower(v_kmh, slope, totalMass);
-          pow[i] = p !== null ? p : 0;
-        }
+        const pow = buildPowArr(s.vel, s.alt, s.dist, totalMass);
         next[id] = { ...s, pow };
         changed = true;
       }
@@ -1689,11 +1710,9 @@ function App() {
     const altArr  = hasData && st.altitude   && st.altitude.data   ? st.altitude.data   : [];
     const hrArr   = hasData && st.heartrate  && st.heartrate.data  ? st.heartrate.data  : [];
     const distArr = hasData && st.distance   && st.distance.data   ? st.distance.data   : [];
-    const estPowArr = (isBike && totalMass > 0 && velArr.length) ? velArr.map((v, i) => {
-      const v_kmh = v * 3.6; let slope = 0;
-      if (altArr.length > 1 && i > 0) { const dAlt = altArr[i] - altArr[i-1]; const dDist = distArr.length > i ? (distArr[i] - distArr[i-1]) : 1; slope = dDist > 0.5 ? (dAlt / dDist) * 100 : 0; }
-      return estimatePower(v_kmh, slope, totalMass);
-    }) : [];
+    const estPowArr = (isBike && totalMass > 0 && velArr.length)
+      ? Array.from(buildPowArr(velArr, altArr.length ? altArr : null, distArr.length ? distArr : null, totalMass))
+      : [];
     const avgEstPow = estPowArr.length ? Math.round(estPowArr.filter(v=>v!==null&&v>0).reduce((s,v)=>s+v,0) / estPowArr.filter(v=>v!==null&&v>0).length) : null;
     const maxEstPow = estPowArr.length ? Math.max(...estPowArr.filter(v=>v!==null)) : null;
     const wPerKg = avgEstPow && profile.weight ? Math.round((avgEstPow / Number(profile.weight)) * 100) / 100 : null;
