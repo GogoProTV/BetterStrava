@@ -975,66 +975,149 @@ function App() {
   const [selActId2, setSelActId2] = useState(null);
   const clearSelActs = () => { setSelActId1(null); setSelActId2(null); };
 
-  // ── FTP estimée ────────────────────────────────────────────────────────────
-  const ftpEstimated = (() => {
+  // ── Régression linéaire (moindres carrés) ────────────────────────────────────
+  // Retourne { slope, intercept, r2 } sur les points [(x0,y0), ...]
+  function linReg(points) {
+    const n = points.length;
+    if (n < 2) return null;
+    let sx = 0, sy = 0, sxy = 0, sx2 = 0, sy2 = 0;
+    for (const [x, y] of points) { sx += x; sy += y; sxy += x * y; sx2 += x * x; sy2 += y * y; }
+    const denom = n * sx2 - sx * sx;
+    if (Math.abs(denom) < 1e-9) return null;
+    const slope = (n * sxy - sx * sy) / denom;
+    const intercept = (sy - slope * sx) / n;
+    const ssTot = sy2 - sy * sy / n;
+    const ssRes = points.reduce((s, [x, y]) => s + Math.pow(y - (slope * x + intercept), 2), 0);
+    const r2 = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 0;
+    return { slope, intercept, r2 };
+  }
+
+  // ── FTP estimée — modèle Puissance Critique 2 paramètres (CP model) ──────────
+  // Modèle : W_lim(t) = W' + CP × t   (W_lim = puissance_max × durée = travail total)
+  // Régression linéaire sur (t, W_lim) → pente = CP, ordonnée = W'
+  // Durées cibles : 3 min, 5 min, 10 min, 20 min, 30 min, 60 min (si streams dispo)
+  // Minimum 2 durées distinctes, durée min = 3 min pour éviter biais anaérobie
+  // Fallback : meilleur effort 20 min stream × 0.95, ou vitesse moy. activité × 0.95
+  const cpModel = (() => {
+    // Durées cibles en secondes — on cherche best avg power sur chaque durée
+    const CP_DURS = [180, 300, 600, 1200, 1800, 3600];
+    const MIN_DUR = 180; // 3 min minimum pour limiter l'influence anaérobie
+
+    // Collecter les meilleurs efforts par durée sur tout l'historique vélo
+    const rides = data.filter(a => a.sport === 'Vélo');
+    const bestByDur = {}; // { dur_s: best_watts }
+
+    for (const a of rides) {
+      const s = actStreams[a.id];
+      if (!s || s === 'error' || !s.pow) continue;
+      for (const dur of CP_DURS) {
+        if (s.pow.length < dur) continue;
+        const w = bestAvgWindow(s.pow, dur);
+        if (w && w > 0) bestByDur[dur] = bestByDur[dur] ? Math.max(bestByDur[dur], w) : w;
+      }
+    }
+
+    const points = Object.entries(bestByDur)
+      .map(([t, w]) => [Number(t), w * Number(t)]) // (durée_s, W_lim = watts × s)
+      .filter(([t]) => t >= MIN_DUR)
+      .sort((a, b) => a[0] - b[0]);
+
+    if (points.length >= 2) {
+      const reg = linReg(points);
+      if (reg && reg.slope > 50 && reg.slope < 700 && reg.intercept > 0) {
+        // slope = CP en watts, intercept = W' en joules
+        const cp = Math.round(reg.slope);
+        const wPrime = Math.round(reg.intercept);
+        const nPts = points.length;
+        // Confiance : r² et nombre de points
+        const conf = nPts >= 4 && reg.r2 >= 0.98 ? 'haute'
+                   : nPts >= 3 && reg.r2 >= 0.95 ? 'bonne'
+                   : nPts >= 2 && reg.r2 >= 0.85 ? 'faible'
+                   : null;
+        if (conf) return { cp, wPrime, r2: Math.round(reg.r2 * 1000) / 1000, nPts, conf, method: 'cp_model' };
+      }
+    }
+
+    // Fallback 1 : meilleur effort 20 min depuis streams × 0.95
+    if (bestByDur[1200]) return { cp: Math.round(bestByDur[1200] * 0.95), wPrime: null, r2: null, nPts: 1, conf: null, method: 'best20' };
+
+    // Fallback 2 : vitesse moyenne activité (ancienne méthode, sans bonus artificiel)
     const totalMassFtp = (Number(profile.weight)||0) + (Number(profile.bikeMass)||0);
-    if (!totalMassFtp) return null;
-    const rides = data.filter(a => a.sport==='Vélo' && a.dist && a.time && a.secs >= 1200);
-    if (!rides.length) return null;
-    const candidates = rides.map(a => {
-      const v = a.dist / (a.time / 60);
-      const slope = a.elev && a.dist ? (a.elev / (a.dist * 1000)) * 100 : 0;
-      const pEst = estimatePower(v, slope, totalMassFtp);
-      const confBonus = (a.time >= 20 && a.time <= 65) ? 1.05 : 1.0;
-      return pEst ? Math.round(pEst * confBonus) : null;
-    }).filter(Boolean);
-    if (!candidates.length) return null;
-    const best20min = Math.max(...candidates);
-    return Math.round(best20min * 0.95);
+    if (totalMassFtp) {
+      const candidates = data.filter(a => a.sport==='Vélo' && a.dist && a.time && a.secs >= 1200)
+        .map(a => {
+          const v = a.dist / (a.time / 60);
+          const slope = a.elev && a.dist ? (a.elev / (a.dist * 1000)) * 100 : 0;
+          return estimatePower(v, slope, totalMassFtp);
+        }).filter(Boolean);
+      if (candidates.length) return { cp: Math.round(Math.max(...candidates) * 0.95), wPrime: null, r2: null, nPts: 0, conf: null, method: 'avg_speed' };
+    }
+    return null;
   })();
+  const ftpEstimated = cpModel ? cpModel.cp : null;
 
-  // ── Allure seuil estimée (course / trail) ──────────────────────────────────
-  // Méthode 1 (streams dispo) : meilleure allure tenue sur 20 min et 30 min
-  //   via fenêtre glissante sur distance (bestPaceWindow), puis × 0.95
-  // Méthode 2 (fallback, pas de streams) : allure moyenne de la meilleure
-  //   sortie 20–60 min projetée à 60 min via Riegel, puis × 0.95
-  const thresholdPaceEstimated = (() => {
-    const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.dist && a.time && a.secs >= 1200 && a.pace);
-    if (!runs.length) return null;
+  // ── Allure seuil estimée — modèle Vitesse Critique 2 paramètres (CV model) ───
+  // Modèle : D(t) = D' + CV × t   (symétrique du CP, avec vitesse au lieu de puissance)
+  // CV = vitesse critique ≈ allure seuil, D' = réserve de distance anaérobie (m)
+  // Régression linéaire sur (t_s, dist_m) → pente = CV en m/s → convertie en min/km
+  // Distances cibles : 1 km, 2 km, 3 km, 5 km, 8 km, 10 km
+  // Minimum 2 distances distinctes, distance min = 1 km
+  const cvModel = (() => {
+    const CV_DISTS = [1000, 2000, 3000, 5000, 8000, 10000]; // m
+    const MIN_DIST = 1000; // 1 km minimum
 
-    // Méthode 1 : streams — fenêtre glissante 20 min (1200 m à allure seuil ≈ 5 km)
-    // On cherche la meilleure allure sur exactement 20 min de distance couverte
-    // = bestPaceWindow sur targetDist = vitesse × 1200 s, mais on ne connaît pas la vitesse a priori.
-    // On utilise donc les distances fixes 3 km, 5 km, 6 km comme proxies d'effort 15–30 min.
-    const THRESHOLD_DISTS = [3000, 4000, 5000, 6000, 8000, 10000]; // m
-    let bestStream = null;
+    const runs = data.filter(a => (a.sport === 'Course' || a.sport === 'Trail'));
+    const bestByDist = {}; // { dist_m: best_time_s (le plus court = le plus rapide) }
+
     for (const a of runs) {
       const s = actStreams[a.id];
       if (!s || s === 'error' || !s.dist || !s.vel) continue;
-      for (const targetM of THRESHOLD_DISTS) {
-        const pace = bestPaceWindow(s.dist, s.vel, targetM);
+      for (const targetM of CV_DISTS) {
+        const pace = bestPaceWindow(s.dist, s.vel, targetM); // min/km
         if (!pace || pace > MAX_PACE) continue;
-        // Projeter vers 60 min via Riegel : t_reel = targetM/1000 / (1/pace*60) min
-        const tMin = (targetM / 1000) * pace; // durée réelle en minutes
-        if (tMin < 12 || tMin > 90) continue; // exclure trop court ou trop long
-        // pace60 = pace × (60/tMin)^0.06
-        const pace60 = pace * Math.pow(60 / tMin, 0.06);
-        if (bestStream === null || pace60 < bestStream) bestStream = pace60;
+        const timeS = pace * (targetM / 1000) * 60; // durée en secondes pour couvrir targetM
+        if (!bestByDist[targetM] || timeS < bestByDist[targetM]) bestByDist[targetM] = timeS;
       }
     }
-    if (bestStream !== null) return Math.round(bestStream * 0.95 * 100) / 100;
 
-    // Méthode 2 : fallback sur allure moyenne activité + Riegel
-    const candidates = runs.map(a => {
+    const points = Object.entries(bestByDist)
+      .map(([d, t]) => [Number(t), Number(d)]) // (temps_s, distance_m) pour régression D = CV×t + D'
+      .filter(([, d]) => d >= MIN_DIST)
+      .sort((a, b) => a[0] - b[0]);
+
+    if (points.length >= 2) {
+      const reg = linReg(points);
+      if (reg && reg.slope > 1.5 && reg.slope < 8.0) {
+        // slope = CV en m/s, intercept = D' en mètres
+        const cvMs = reg.slope; // m/s
+        const cvPace = 1000 / cvMs / 60; // min/km
+        const dPrime = Math.round(reg.intercept); // mètres
+        const nPts = points.length;
+        const conf = nPts >= 4 && reg.r2 >= 0.98 ? 'haute'
+                   : nPts >= 3 && reg.r2 >= 0.95 ? 'bonne'
+                   : nPts >= 2 && reg.r2 >= 0.85 ? 'faible'
+                   : null;
+        if (conf) return { cv: Math.round(cvPace * 100) / 100, dPrime, r2: Math.round(reg.r2 * 1000) / 1000, nPts, conf, method: 'cv_model' };
+      }
+    }
+
+    // Fallback : meilleure allure sur 5 km depuis streams (proxy seuil)
+    if (bestByDist[5000]) {
+      const pace = bestByDist[5000] / 5 / 60; // min/km
+      return { cv: Math.round(pace * 0.95 * 100) / 100, dPrime: null, r2: null, nPts: 1, conf: null, method: 'best5k' };
+    }
+
+    // Fallback Riegel sur allure moyenne activité
+    const fallbackRuns = runs.filter(a => a.dist && a.time && a.secs >= 1200 && a.pace);
+    const candidates = fallbackRuns.map(a => {
       const t = a.time;
       if (t < 20 || t > 180) return null;
-      const pace60 = a.pace * Math.pow(60 / t, 0.06);
-      return pace60;
+      return a.pace * Math.pow(60 / t, 0.06);
     }).filter(Boolean);
     if (!candidates.length) return null;
-    const best = Math.min(...candidates);
-    return Math.round(best * 0.95 * 100) / 100;
+    return { cv: Math.round(Math.min(...candidates) * 0.95 * 100) / 100, dPrime: null, r2: null, nPts: 0, conf: null, method: 'riegel' };
   })();
+  const thresholdPaceEstimated = cvModel ? cvModel.cv : null;
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Condition physique') return;
@@ -2230,8 +2313,12 @@ function App() {
               h('p',{style:{margin:0,fontSize:'11px',color:'#bab6b6',lineHeight:'1.6',maxWidth:'90ch'}},
                 powSport==='Vélo'
                   ? '⚠ Puissance estimée par modèle physique — Crr = 0.008, CdA = 0.35 m², ρ = 1.225 kg/m³, η = 0.97 (rendement transmission). '
-                    +'FTP estimée : meilleur effort moyen 20–60 min × 0.95. Puissance critique (CP) : meilleur effort 30–60 min × 0.92. '
-                    +'W/kg calculé avec le poids renseigné dans le Profil. Wmax : pic de la courbe sur la période sélectionnée.'
+                    +(cpModel&&cpModel.method==='cp_model'
+                      ? 'FTP = puissance critique (CP) · modèle W’ + CP×t · '+cpModel.nPts+' durées · r² = '+cpModel.r2+' · confiance '+cpModel.conf+(cpModel.wPrime?' · W′ = '+Math.round(cpModel.wPrime/1000)+' kJ':'')+''
+                      : cpModel&&cpModel.method==="best20"
+                        ? 'FTP = meilleur effort 20 min × 0.95 (données insuffisantes pour le modèle CP).'
+                        : 'FTP estimée depuis la vitesse moyenne des sorties (aucun stream disponible).')
+                    +' W/kg calculé avec le poids renseigné dans le Profil. Wmax : pic de la courbe sur la période sélectionnée.'
                   : powSport==='Trail'
                     ? 'Allure calculée par fenêtre glissante seconde par seconde sur les streams Strava (distance + vitesse). '
                       +'Pour le Trail, la vitesse affichée correspond à la vitesse brute GPS — aucune correction VAP (Vitesse Ascensionnelle en Pourcent) n’est appliquée à ce stade. '
@@ -2765,8 +2852,18 @@ function App() {
                     },'Est. '+ftpEstimated+' W \u2192')
                   ),
                   h('input',{type:'number',step:f.step,value:profile[f.k]??'',onChange:e=>{const v=e.target.value;setProfile(p=>({...p,[f.k]:v===''?'':Number(v)}));},style:{width:'100%',padding:'10px 12px',border:'2px solid #201e1d',background:'#ffffff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600',fontVariantNumeric:'tabular-nums'}}),
-                  f.k==='thresholdPace'&&thresholdPaceEstimated&&h('p',{style:{margin:'4px 0 0',fontSize:'11px',color:'#605d5d'}},'Estimé depuis les meilleures sorties course/trail 20–120 min, projection Riegel × 0.97.'),
-                  f.k==='ftp'&&ftpEstimated&&h('p',{style:{margin:'4px 0 0',fontSize:'11px',color:'#605d5d'}},'Estimé d\'après la meilleure sortie vélo 20–60 min × 0.95 · masse '+((Number(profile.weight)||0)+(Number(profile.bikeMass)||0)).toFixed(1)+' kg')
+                  f.k==='thresholdPace'&&thresholdPaceEstimated&&h('p',{style:{margin:'4px 0 0',fontSize:'11px',color:'#605d5d'}},
+                    cvModel&&cvModel.method==='cv_model'
+                      ? 'Modèle vitesse critique (CV) · '+cvModel.nPts+' distances · r²\u202f=\u202f'+cvModel.r2+' · confiance\u202f: '+cvModel.conf+(cvModel.dPrime?' · D\u2032\u202f=\u202f'+cvModel.dPrime+'\u202fm':'')
+                      : cvModel&&cvModel.method==='best5k' ? 'Meilleure allure 5 km × 0.95 (données insuffisantes pour le modèle CV)'
+                      : 'Estimation Riegel depuis allure moyenne (pas de streams disponibles)'
+                  ),
+                  f.k==='ftp'&&ftpEstimated&&h('p',{style:{margin:'4px 0 0',fontSize:'11px',color:'#605d5d'}},
+                    cpModel&&cpModel.method==='cp_model'
+                      ? 'Modèle puissance critique (CP) · '+cpModel.nPts+' durées · r²\u202f=\u202f'+cpModel.r2+' · confiance\u202f: '+cpModel.conf+(cpModel.wPrime?' · W\u2032\u202f=\u202f'+cpModel.wPrime+'\u202fkJ':'')
+                      : cpModel&&cpModel.method==='best20' ? 'Meilleur effort 20 min × 0.95 (données insuffisantes pour le modèle CP)'
+                      : 'Estimation vitesse moyenne (pas de streams disponibles) · masse '+((Number(profile.weight)||0)+(Number(profile.bikeMass)||0)).toFixed(1)+' kg'
+                  )
                 )
               )
             ),
