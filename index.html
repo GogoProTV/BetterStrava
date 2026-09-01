@@ -24,7 +24,7 @@ button { font-family: inherit; }
 <body>
 <div id="root"></div>
 <script>
-const { createElement: h, useState, useEffect, useRef, useCallback } = React;
+const { createElement: h, useState, useEffect, useRef, useCallback, useMemo } = React;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function weekStart(d) {
@@ -1140,23 +1140,166 @@ function App() {
   })();
   const thresholdPaceEstimated = cvModel ? cvModel.cv : null;
 
+  const smallStat={marginTop:'6px',fontSize:'14px',fontWeight:'600',color:'#605d5d',overflowWrap:'anywhere'};
+
+  // ── PMC — Calcul CTL / ATL / TSB sur tout l'historique ──────────────────────
+  // Formules EWMA identiques à intervals.icu / TrainingPeaks :
+  //   CTL_j = CTL_{j-1} × e^(-1/42) + TSS_j × (1 − e^(-1/42))
+  //   ATL_j = ATL_{j-1} × e^(-1/7)  + TSS_j × (1 − e^(-1/7))
+  //   TSB_j = CTL_{j-1} − ATL_{j-1}   (valeurs de la veille, convention TP)
+  const pmcSeries = useMemo(() => {
+    if (!data.length) return [];
+    const ftpV  = Number(profile.ftp)  || ftpEstimated  || null;
+    const tpV   = Number(profile.thresholdPace) || thresholdPaceEstimated || null;
+    const fcMax = Number(profile.fcMax) || null;
+    const fcRest= Number(profile.fcRest)|| null;
+
+    // Construire un dictionnaire TSS par jour (YYYY-MM-DD)
+    const tssPerDay = {};
+    for (const a of data) {
+      const key = a.date.toISOString().slice(0, 10);
+      const ftp = a.sport === 'Vélo' ? ftpV : (a.sport === 'Course' || a.sport === 'Trail') ? tpV : null;
+      const s   = actStreams[a.id];
+      const sOk = s && s !== 'error';
+      const td  = calcTSS(a, sOk ? s : null, ftp, fcMax, fcRest);
+      const tss = td?.tss ?? null;
+      if (tss && tss > 0) tssPerDay[key] = (tssPerDay[key] || 0) + tss;
+    }
+
+    // Trouver la plage de dates (du plus ancien au aujourd'hui)
+    const sorted = data.map(a => a.date.toISOString().slice(0, 10)).sort();
+    if (!sorted.length) return [];
+    const startDate = new Date(sorted[0]);
+    const endDate   = new Date();
+    endDate.setHours(0, 0, 0, 0);
+
+    // Constantes de décroissance
+    const kCTL = Math.exp(-1 / 42);
+    const kATL = Math.exp(-1 / 7);
+    const wCTL = 1 - kCTL;
+    const wATL = 1 - kATL;
+
+    let ctl = 0, atl = 0;
+    const series = [];
+    const cur = new Date(startDate);
+
+    while (cur <= endDate) {
+      const key = cur.toISOString().slice(0, 10);
+      const tss = tssPerDay[key] || 0;
+      // TSB = différence entre CTL et ATL de la VEILLE (avant application du TSS du jour)
+      const tsb = Math.round((ctl - atl) * 10) / 10;
+      ctl = ctl * kCTL + tss * wCTL;
+      atl = atl * kATL + tss * wATL;
+      series.push({
+        date: key,
+        ctl:  Math.round(ctl * 10) / 10,
+        atl:  Math.round(atl * 10) / 10,
+        tsb,
+        tss,
+      });
+      cur.setDate(cur.getDate() + 1);
+    }
+    return series;
+  }, [data, actStreams, profile.ftp, profile.thresholdPace, profile.fcMax, profile.fcRest, ftpEstimated, thresholdPaceEstimated]);
+
+  // Stats actuelles (dernier jour de la série)
+  const pmcToday = pmcSeries.length ? pmcSeries[pmcSeries.length - 1] : null;
+  const pmcRampRate = pmcSeries.length >= 8
+    ? Math.round((pmcToday.ctl - pmcSeries[pmcSeries.length - 8].ctl) * 10) / 10
+    : null;
+
+  const fitStats = pmcToday ? [
+    { label: 'Condition physique', value: String(pmcToday.ctl), valueStyle: { ...smallStat, fontSize: '26px', fontWeight: '800', letterSpacing: '-0.02em', color: '#ec3013' }, sub: 'CTL · charge chronique 42 j' },
+    { label: 'Fatigue',            value: String(pmcToday.atl), valueStyle: { ...smallStat, fontSize: '26px', fontWeight: '800', letterSpacing: '-0.02em', color: '#201e1d' }, sub: 'ATL · charge aiguë 7 j' },
+    { label: 'Forme',              value: (pmcToday.tsb > 0 ? '+' : '') + String(pmcToday.tsb), valueStyle: { ...smallStat, fontSize: '26px', fontWeight: '800', letterSpacing: '-0.02em', color: pmcToday.tsb >= 0 ? '#22c55e' : pmcToday.tsb >= -10 ? '#f97316' : '#ec3013' }, sub: 'TSB = CTL − ATL (J−1)' },
+    { label: 'Progression sem.',   value: pmcRampRate !== null ? (pmcRampRate > 0 ? '+' : '') + String(pmcRampRate) : '—', valueStyle: { ...smallStat, fontSize: '26px', fontWeight: '800', letterSpacing: '-0.02em', color: pmcRampRate !== null && Math.abs(pmcRampRate) > 7 ? '#ec3013' : '#201e1d' }, sub: 'Ramp rate · idéal ±5 / sem.' },
+  ] : ['Condition physique','Fatigue','Forme','Progression sem.'].map(l => ({ label: l, value: 'Donnée manquante', valueStyle: smallStat, sub: '' }));
+
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Condition physique') return;
     chartDefaults();
+
+    // Filtrer selon fitRange (nombre de jours)
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - fitRange);
+    const visible = pmcSeries.filter(p => new Date(p.date) >= cutoff);
+
+    // Thinning adaptatif pour les longues périodes (max ~600 labels)
+    const step = Math.max(1, Math.ceil(visible.length / 600));
+    const thin = visible.filter((_, i) => i % step === 0 || i === visible.length - 1);
+
+    const labels = thin.map(p => p.date);
+    const ctlData = thin.map(p => p.ctl);
+    const atlData = thin.map(p => p.atl);
+    const tsbData = thin.map(p => p.tsb);
+
     upsert('fitness', fitRef, {
       type:'line', plugins:[crosshairPlugin],
-      data:{ labels:[], datasets:[
-        { label:'Forme', data:[], borderColor:'#bab6b6', borderWidth:2, backgroundColor:'rgba(186,182,182,0.22)', fill:'origin', tension:0.25, pointRadius:0, yAxisID:'y1' },
-        { label:'Fatigue', data:[], borderColor:'#201e1d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:0, yAxisID:'y' },
-        { label:'Condition physique', data:[], borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.25, pointRadius:0, yAxisID:'y' },
+      data:{ labels, datasets:[
+        { label:'Forme (TSB)', data: tsbData, borderColor:'#bab6b6', borderWidth:1.5,
+          backgroundColor: ctx => {
+            const chart = ctx.chart;
+            const { ctx: c, chartArea } = chart;
+            if (!chartArea) return 'rgba(186,182,182,0.15)';
+            const g = c.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+            g.addColorStop(0, 'rgba(34,197,94,0.18)');
+            g.addColorStop(0.5, 'rgba(186,182,182,0.05)');
+            g.addColorStop(1, 'rgba(236,48,19,0.12)');
+            return g;
+          },
+          fill:'origin', tension:0.3, pointRadius:0, yAxisID:'y1' },
+        { label:'Fatigue (ATL)', data: atlData, borderColor:'#201e1d', borderWidth:1.5,
+          borderDash:[4,3], backgroundColor:'transparent', fill:false, tension:0.3, pointRadius:0, yAxisID:'y' },
+        { label:'Condition physique (CTL)', data: ctlData, borderColor:'#ec3013', borderWidth:2.5,
+          backgroundColor:'rgba(236,48,19,0.07)', fill:true, tension:0.3, pointRadius:0, yAxisID:'y' },
       ]},
-      options:{ responsive:true, maintainAspectRatio:false, animation:{duration:0},
-        plugins:{ legend:{display:true,position:'bottom',labels:{boxWidth:14,boxHeight:2,padding:16}}, tooltip:{enabled:false} },
-        scales:{ x:{grid:{display:false}}, y:{grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},beginAtZero:true,title:{display:true,text:'Charge (CTL / ATL)',color:'#605d5d'}}, y1:{position:'right',grid:{display:false},border:{display:false},title:{display:true,text:'Forme (TSB)',color:'#605d5d'}} },
+      options:{
+        responsive:true, maintainAspectRatio:false, animation:{duration:0},
+        interaction:{ mode:'index', intersect:false },
+        plugins:{
+          legend:{ display:true, position:'bottom', labels:{ boxWidth:20, boxHeight:2, padding:20, font:{ size:11 } } },
+          tooltip:{
+            enabled:true, animation:false,
+            callbacks:{
+              title: items => items[0]?.label || '',
+              label: item => {
+                const v = item.raw;
+                const sign = v > 0 ? '+' : '';
+                if (item.dataset.label.startsWith('Forme'))      return `  Forme (TSB) : ${sign}${v}`;
+                if (item.dataset.label.startsWith('Fatigue'))    return `  Fatigue (ATL) : ${v}`;
+                if (item.dataset.label.startsWith('Condition'))  return `  Condition (CTL) : ${v}`;
+                return `  ${v}`;
+              },
+              afterBody: items => {
+                const idx = items[0]?.dataIndex;
+                if (idx == null || !thin[idx]) return [];
+                const p = thin[idx];
+                const lines = [];
+                if (p.tss > 0) lines.push(`  Charge du jour : ${p.tss} TSS`);
+                if (p.tsb >= 5 && p.tsb <= 25) lines.push('  ✓ Zone optimale de performance');
+                else if (p.tsb > 25) lines.push('  ↑ Très frais — peux forcer');
+                else if (p.tsb < -30) lines.push('  ⚠ Surcharge — risque de blessure');
+                return lines;
+              }
+            },
+            backgroundColor:'#201e1d', titleColor:'#fff', bodyColor:'#d7d3d3',
+            padding:12, cornerRadius:0, borderWidth:0,
+          },
+        },
+        scales:{
+          x:{ grid:{ display:false }, ticks:{ maxTicksLimit:8, maxRotation:0, font:{ size:10 }, color:'#bab6b6' }, border:{ display:false } },
+          y:{ position:'left', grid:{ color:'rgba(32,30,29,0.08)', drawTicks:false }, border:{ display:false },
+              beginAtZero:true, title:{ display:true, text:'CTL / ATL', color:'#605d5d', font:{ size:10 } },
+              ticks:{ font:{ size:10 }, color:'#bab6b6' } },
+          y1:{ position:'right', grid:{ display:false }, border:{ display:false },
+               title:{ display:true, text:'TSB (Forme)', color:'#605d5d', font:{ size:10 } },
+               ticks:{ font:{ size:10 }, color:'#bab6b6',
+                 callback: v => (v > 0 ? '+' : '') + v } },
+        },
       },
     });
     return () => destroyChart('fitness');
-  }, [tab, athleteSection]);
+  }, [tab, athleteSection, pmcSeries, fitRange]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Puissance') return;
@@ -1627,8 +1770,6 @@ function App() {
   const acts=filtered(data,range,sport);
   const curW=window2(data,0,range,sport);
   const prevW=window2(data,1,range,sport);
-  const smallStat={marginTop:'6px',fontSize:'14px',fontWeight:'600',color:'#605d5d',overflowWrap:'anywhere'};
-  const fitStats=['Condition physique','Fatigue','Forme','Ratio charge'].map(l=>({label:l,value:'Donnée manquante',valueStyle:smallStat,sub:''}));
   const rows=acts.slice(0,expanded?40:8).map(a=>({
     id:a.id, act:a,
     name: a.name || 'Donnée manquante',
@@ -2131,9 +2272,16 @@ function App() {
             ))
           ),
           h('section',{style:{padding:'28px 32px 32px'}},
-            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Condition physique, fatigue et forme'),h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : condition physique · Noir : fatigue · Gris : forme')),
-            h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},'Donnée manquante — aucune activité importée.'),
-            h('div',{style:{height:'calc(100vh - 440px)',minHeight:'340px'}},h('canvas',{ref:fitRef}))
+            h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Condition physique, fatigue et forme'),
+              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Rouge : CTL · Noir pointillé : ATL · Gris : TSB (axe droit)')
+            ),
+            !pmcSeries.length && h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},'Donnée manquante — connecte ton compte Strava pour calculer CTL / ATL / TSB.'),
+            pmcSeries.length > 0 && h('p',{style:{margin:'0 0 12px',fontSize:'11px',color:'#605d5d',maxWidth:'90ch'}},
+              'Zone optimale TSB\u202f: +5\u202fà\u202f+25 pour performer · 0\u202fà\u202f\u221230 en bloc d\'entraînement · Ramp rate idéal\u202f: ≤\u202f+5 CTL / semaine.'
+              + (pmcToday ? ' Calculé sur '+pmcSeries.length+'\u202fjours d\'historique.' : '')
+            ),
+            h('div',{style:{height:'calc(100vh - 460px)',minHeight:'320px'}},h('canvas',{ref:fitRef}))
           )
         ),
         athleteSection==='Puissance'&&h('div',null,
