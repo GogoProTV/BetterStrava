@@ -463,7 +463,7 @@ function App() {
               let slope = 0;
               if (alt && i > 0) {
                 const dAlt = alt[i] - alt[i-1];
-                const dDist = Math.max(0.1, vel[i]);
+                const dDist = dist ? Math.max(0.1, dist[i] - dist[i-1]) : Math.max(0.1, vel[i]);
                 slope = Math.max(-30, Math.min(30, (dAlt / dDist) * 100));
               }
               const p = estimatePower(v_kmh, slope, totalMass);
@@ -544,7 +544,7 @@ function App() {
           let slope = 0;
           if (s.alt && i > 0) {
             const dAlt = s.alt[i] - s.alt[i-1];
-            const dDist = Math.max(0.1, s.vel[i]);
+            const dDist = s.dist ? Math.max(0.1, s.dist[i] - s.dist[i-1]) : Math.max(0.1, s.vel[i]);
             slope = Math.max(-30, Math.min(30, (dAlt / dDist) * 100));
           }
           const p = estimatePower(v_kmh, slope, totalMass);
