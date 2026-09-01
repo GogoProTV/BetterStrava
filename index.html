@@ -1279,7 +1279,24 @@ function App() {
 
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - fitRange);
-    const visible = pmcSeries.filter(p => new Date(p.date) >= cutoff);
+    // Étendre d'1 semaine dans le futur pour visualiser la redescente
+    const futureEnd = new Date(); futureEnd.setDate(futureEnd.getDate() + 7);
+    // Générer les 7 jours futurs (TSS=0, CTL/ATL continuent de décroître)
+    const lastPmc = pmcSeries.length ? pmcSeries[pmcSeries.length-1] : null;
+    const kCTLf = Math.exp(-1/42), kATLf = Math.exp(-1/7);
+    const futurePts = lastPmc ? Array.from({length:7},(_,j)=>{
+      const d = new Date(); d.setDate(d.getDate()+j+1);
+      const prev = j===0 ? lastPmc : null; // on recalcule au fil
+      return { date: d.toISOString().slice(0,10), _future: true };
+    }).reduce((acc, pt, j) => {
+      const prev = j===0 ? lastPmc : acc[j-1];
+      const ctl = prev.ctl * kCTLf;
+      const atl = prev.atl * kATLf;
+      const tsb = Math.round((prev.ctl - prev.atl)*10)/10;
+      acc.push({...pt, ctl:Math.round(ctl*10)/10, atl:Math.round(atl*10)/10, tsb, tss:0});
+      return acc;
+    }, []) : [];
+    const visible = [...pmcSeries.filter(p => new Date(p.date) >= cutoff), ...futurePts];
     const step = Math.max(1, Math.ceil(visible.length / 600));
     const thin = visible.filter((_, i) => i % step === 0 || i === visible.length - 1);
     const labels  = thin.map(p => p.date);
@@ -2138,33 +2155,45 @@ function App() {
           const sOk = s && s !== 'error';
           const tssData = calcTSS(act, sOk?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
           const np    = tssData?.np ?? (sOk&&s.pow ? calcNP(s.pow) : null);
-          const tss   = tssData?.method==='pow' ? tssData.tss : null;
-          const ifVal = tssData?.method==='pow' ? tssData.ifVal : null;
-          const hrss  = tssData?.hrss ?? null;
-          const ifHR  = tssData?.ifHR ?? null;
+          const hasPow = tssData?.method==='pow';
+          const chargeVal   = hasPow ? tssData.tss : (tssData?.hrss ?? null);
+          const chargeLabel = hasPow ? 'TSS' : (tssData?.hrss!==null ? 'HRSS' : null);
+          const ifVal  = hasPow ? tssData.ifVal : (tssData?.ifHR ?? null);
+          const ifLabel = hasPow ? 'IF' : 'IF HR';
+          // Delta PMC pour cette activite
+          const actDateKey = act.date.toISOString().slice(0,10);
+          const pmcIdx  = pmcSeries.findIndex(p => p.date === actDateKey);
+          const pmcPrev = pmcIdx > 0 ? pmcSeries[pmcIdx-1] : null;
+          const pmcCur  = pmcIdx >= 0 ? pmcSeries[pmcIdx] : null;
+          const dCTL = pmcPrev&&pmcCur ? Math.round((pmcCur.ctl - pmcPrev.ctl)*10)/10 : null;
+          const dATL = pmcPrev&&pmcCur ? Math.round((pmcCur.atl - pmcPrev.atl)*10)/10 : null;
+          const dTSB = pmcPrev&&pmcCur ? Math.round((pmcCur.tsb - pmcPrev.tsb)*10)/10 : null;
+          const pmcChips = (dCTL!==null||dATL!==null) ? [
+            { label: (dCTL>=0?'+':'')+dCTL+' CTL \u2192 '+(pmcCur?pmcCur.ctl:''), color:'#22c55e' },
+            { label: (dATL>=0?'+':'')+dATL+' ATL \u2192 '+(pmcCur?pmcCur.atl:''), color:'#f97316' },
+            dTSB!==null&&{ label: (dTSB>=0?'+':'')+dTSB+' Forme', color:'#969191' },
+          ].filter(Boolean) : [];
+          const pmcRow = pmcChips.length ? { label:'Impact PMC', value:'', unit:'', color:'#201e1d', chips: pmcChips } : null;
           const avgPowArr  = sOk&&s.pow ? s.pow : null;
           const avgPowMean = avgPowArr ? Math.round(avgPowArr.reduce((a,b)=>a+b,0)/avgPowArr.length) : (act.power||null);
           const vi      = calcVI(np, avgPowMean);
-          const ef      = calcEF('Vélo', np, null, avgHr||(act.hr||null));
-          const decoupl = sOk&&s.pow&&s.hr ? calcDecoupling('Vélo', s.pow, s.hr) : null;
+          const ef      = calcEF('V\u00e9lo', np, null, avgHr||(act.hr||null));
+          const decoupl = sOk&&s.pow&&s.hr ? calcDecoupling('V\u00e9lo', s.pow, s.hr) : null;
           return [
-            { label:'NP',    value: np?np+' W':'—', unit:'', color: np?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Puissance normalisée — représente le vrai coût physiologique de la sortie, corrigé des variations d’intensité.', calc:'Fenêtre glissante 30 s élevée à la puissance 4, moyenne, puis racine quatrième.' }},
-            { label:'IF',    value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensité relative par rapport à la FTP. 0.80 = 80 % de ta FTP.', calc:'NP / FTP.' }},
-            { label:'TSS',   value: tss!==null?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
-              tooltip:{ main:'Charge basée sur la puissance (NP/FTP). Nécessite un capteur de puissance et la FTP renseignée.', calc:'(Durée × NP × IF) / (FTP × 3600) × 100.' }},
-            { label:'HRSS',  value: hrss!==null?String(hrss):'—', unit:'', color: tssColor(hrss),
-              tooltip:{ main:'Charge cardiaque (Heart Rate Stress Score). Disponible même sans capteur de puissance. 1h à la LTHR = 100 pts.', calc:'TRIMP normalisé : Σ(1/60 × hrFrac × 0.64 × e^(1.92×hrFrac)) / (60 × y_LTHR) × 100.' }},
-            { label:'IF HR', value: ifHR?String(ifHR):'—', unit:'', color: ifHR?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensité relative basée sur la FC. Analogue à l’IF puissance.', calc:'√(TRIMP_par_min / y_LTHR).' }},
-            { label:'VI',    value: vi?String(vi):'—', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
-              tooltip:{ main:'Indice de variabilité : proche de 1.0 = effort lisse. Au-dessus de 1.1 = très variable.', calc:'NP / puissance moyenne.' }},
-            { label:'EF',    value: ef?String(ef):'—', unit: ef?'W/bpm':'', color: '#201e1d',
-              tooltip:{ main:'Efficacité aérobie : watts produits par battement de cœur.', calc:'NP / FC moyenne.' }},
-            { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'Découplage aérobie. < 5 % = stable. > 5 % = fatigue ou intensité trop haute.', calc:'EF 2ème moitié / EF 1ère moitié - 1, × 100.' }},
-          ];
+            { label:'NP', value: np?np+' W':'\u2014', unit:'', color: np?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Puissance normalis\u00e9e.', calc:'Fen\u00eatre 30 s, puissance 4, racine quatri\u00e8me.' }},
+            { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Intensit\u00e9 relative.', calc: hasPow?'NP / FTP.':'\u221a(TRIMP_par_min / y_LTHR).' }},
+            chargeVal!==null&&{ label:'Charge'+(chargeLabel?' ('+chargeLabel+')':''), value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
+              tooltip:{ main: hasPow?'Charge puissance mesur\u00e9e. 1h FTP = 100.':'Charge cardiaque HRSS. 1h LTHR = 100.', calc: hasPow?'(Dur\u00e9e \u00d7 NP \u00d7 IF) / (FTP \u00d7 3600) \u00d7 100.':'TRIMP normalis\u00e9 s/s.' }},
+            pmcRow,
+            { label:'VI', value: vi?String(vi):'\u2014', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
+              tooltip:{ main:'Variabilit\u00e9. 1.0 = lisse.', calc:'NP / puissance moy.' }},
+            { label:'EF', value: ef?String(ef):'\u2014', unit: ef?'W/bpm':'', color: '#201e1d',
+              tooltip:{ main:'Efficacit\u00e9 a\u00e9robie.', calc:'NP / FC moy.' }},
+            { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'\u2014', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
+              tooltip:{ main:'D\u00e9couplage a\u00e9robie. < 5 % = stable.', calc:'EF 2\u00e8me moiti\u00e9 / EF 1\u00e8re - 1 \u00d7 100.' }},
+          ].filter(Boolean);
         })(),
       ];
     } else if (isSwim) {
@@ -2174,13 +2203,42 @@ function App() {
         { label:'Allure moy.', value: act.pace?fmtPace(act.pace/10):'Donnée manquante', unit: act.pace?'/100m':'' },
         ...(() => {
           const s = actStreams[act.id];
-          const tssData = calcTSS(act, s&&s!=='error'?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-          const hrss = tssData?.hrss ?? null;
-          const tss  = tssData?.tss  ?? null;
+          const sOk = s && s !== 'error';
+          const tPaceVal = Number(profile.thresholdPace)||thresholdPaceEstimated||null;
+          const tssData = calcTSS(act, sOk?s:null, tPaceVal, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
+          const hasRTSS = tssData?.method==='rTSS';
+          const chargeVal   = hasRTSS ? tssData.tss : (tssData?.hrss ?? null);
+          const chargeLabel = hasRTSS ? 'rTSS' : (tssData?.hrss!==null ? 'HRSS' : null);
+          const ifVal  = hasRTSS ? tssData.ifVal : (tssData?.ifHR ?? null);
+          const ifLabel = hasRTSS ? 'IF' : 'IF HR';
+          // Delta PMC pour cette activite
+          const actDateKey = act.date.toISOString().slice(0,10);
+          const pmcIdx  = pmcSeries.findIndex(p => p.date === actDateKey);
+          const pmcPrev = pmcIdx > 0 ? pmcSeries[pmcIdx-1] : null;
+          const pmcCur  = pmcIdx >= 0 ? pmcSeries[pmcIdx] : null;
+          const dCTL = pmcPrev&&pmcCur ? Math.round((pmcCur.ctl - pmcPrev.ctl)*10)/10 : null;
+          const dATL = pmcPrev&&pmcCur ? Math.round((pmcCur.atl - pmcPrev.atl)*10)/10 : null;
+          const dTSB = pmcPrev&&pmcCur ? Math.round((pmcCur.tsb - pmcPrev.tsb)*10)/10 : null;
+          const pmcChips = (dCTL!==null||dATL!==null) ? [
+            { label: (dCTL>=0?'+':'')+dCTL+' CTL \u2192 '+(pmcCur?pmcCur.ctl:''), color:'#22c55e' },
+            { label: (dATL>=0?'+':'')+dATL+' ATL \u2192 '+(pmcCur?pmcCur.atl:''), color:'#f97316' },
+            dTSB!==null&&{ label: (dTSB>=0?'+':'')+dTSB+' Forme', color:'#969191' },
+          ].filter(Boolean) : [];
+          const pmcRow = pmcChips.length ? { label:'Impact PMC', value:'', unit:'', color:'#201e1d', chips: pmcChips } : null;
+          const avgVelMs = sOk&&s.vel ? s.vel.reduce((a,b)=>a+b,0)/s.vel.length : (act.dist&&act.time?(act.dist*1000)/(act.time*60):null);
+          const ef      = calcEF('Course', null, avgVelMs, avgHr||(act.hr||null));
+          const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
-            { label:'HRSS', value: hrss!==null?String(hrss):'—', unit:'', color: tssColor(hrss), bold: true,
-              tooltip:{ main:'Charge cardiaque. 1h à la LTHR = 100 pts. Indicateur principal sans capteur.', calc:'TRIMP normalisé depuis le stream FC seconde par seconde.' }},
-          ];
+            { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Intensit\u00e9 relative.', calc: hasRTSS?'Allure seuil / allure moy.':'\u221a(TRIMP_par_min / y_LTHR).' }},
+            chargeVal!==null&&{ label:'Charge'+(chargeLabel?' ('+chargeLabel+')':''), value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
+              tooltip:{ main: hasRTSS?'Charge allure mesur\u00e9e. 1h allure seuil = 100.':'Charge cardiaque HRSS. 1h LTHR = 100.', calc: hasRTSS?'(Dur\u00e9e \u00d7 IF\u00b2) / 3600 \u00d7 100.':'TRIMP normalis\u00e9 s/s.' }},
+            pmcRow,
+            { label:'EF', value: ef?String(ef):'\u2014', unit: ef?'m/min/bpm':'', color: '#201e1d',
+              tooltip:{ main:'Efficacit\u00e9 a\u00e9robie.', calc:'Vitesse (m/min) / FC moy.' }},
+            { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'\u2014', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
+              tooltip:{ main:'D\u00e9couplage a\u00e9robie. < 5 % = stable.', calc:'EF 2\u00e8me moiti\u00e9 / EF 1\u00e8re - 1 \u00d7 100.' }},
+          ].filter(Boolean);
         })(),
       ];
     } else {
@@ -2194,27 +2252,38 @@ function App() {
           const sOk = s && s !== 'error';
           const tPaceVal = Number(profile.thresholdPace)||thresholdPaceEstimated||null;
           const tssData = calcTSS(act, sOk?s:null, tPaceVal, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
-          const rTSS  = tssData?.method==='rTSS' ? tssData.tss : null;
-          const ifVal = tssData?.method==='rTSS' ? tssData.ifVal : null;
-          const hrss  = tssData?.hrss ?? null;
-          const ifHR  = tssData?.ifHR ?? null;
+          const hasRTSS = tssData?.method==='rTSS';
+          const chargeVal   = hasRTSS ? tssData.tss : (tssData?.hrss ?? null);
+          const chargeLabel = hasRTSS ? 'rTSS' : (tssData?.hrss!==null ? 'HRSS' : null);
+          const ifVal  = hasRTSS ? tssData.ifVal : (tssData?.ifHR ?? null);
+          const ifLabel = hasRTSS ? 'IF' : 'IF HR';
+          const actDateKey = act.date.toISOString().slice(0,10);
+          const pmcIdx  = pmcSeries.findIndex(p => p.date === actDateKey);
+          const pmcPrev = pmcIdx > 0 ? pmcSeries[pmcIdx-1] : null;
+          const pmcCur  = pmcIdx >= 0 ? pmcSeries[pmcIdx] : null;
+          const dCTL = pmcPrev&&pmcCur ? Math.round((pmcCur.ctl - pmcPrev.ctl)*10)/10 : null;
+          const dATL = pmcPrev&&pmcCur ? Math.round((pmcCur.atl - pmcPrev.atl)*10)/10 : null;
+          const dTSB = pmcPrev&&pmcCur ? Math.round((pmcCur.tsb - pmcPrev.tsb)*10)/10 : null;
+          const pmcChips = (dCTL!==null||dATL!==null) ? [
+            { label: (dCTL>=0?'+':'')+dCTL+' CTL \u2192 '+(pmcCur?pmcCur.ctl:''), color:'#22c55e' },
+            { label: (dATL>=0?'+':'')+dATL+' ATL \u2192 '+(pmcCur?pmcCur.atl:''), color:'#f97316' },
+            dTSB!==null&&{ label: (dTSB>=0?'+':'')+dTSB+' Forme', color:'#969191' },
+          ].filter(Boolean) : [];
+          const pmcRow = pmcChips.length ? { label:'Impact PMC', value:'', unit:'', color:'#201e1d', chips: pmcChips } : null;
           const avgVelMs = sOk&&s.vel ? s.vel.reduce((a,b)=>a+b,0)/s.vel.length : (act.dist&&act.time?(act.dist*1000)/(act.time*60):null);
           const ef      = calcEF('Course', null, avgVelMs, avgHr||(act.hr||null));
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
-            { label:'IF',    value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensité relative par rapport à l’allure seuil. 0.80 = 80 % de ta capacité.', calc:'Allure seuil / allure moyenne.' }},
-            { label:'rTSS',  value: rTSS!==null?String(rTSS):'—', unit:'', color: tssColor(rTSS), bold: true,
-              tooltip:{ main:'Charge basée sur l’allure (Running TSS). Nécessite l’allure seuil renseignée dans le Profil.', calc:'(Durée × IF²) / 3600 × 100.' }},
-            { label:'HRSS',  value: hrss!==null?String(hrss):'—', unit:'', color: tssColor(hrss),
-              tooltip:{ main:'Charge cardiaque. 1h à la LTHR = 100 pts. Disponible même sans allure seuil.', calc:'TRIMP normalisé depuis le stream FC seconde par seconde.' }},
-            { label:'IF HR', value: ifHR?String(ifHR):'—', unit:'', color: ifHR?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensité cardiaque relative.', calc:'√(TRIMP_par_min / y_LTHR).' }},
-            { label:'EF',    value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
-              tooltip:{ main:'Efficacité aérobie : mètres parcourus par minute par battement de cœur.', calc:'Vitesse (m/min) / FC moyenne.' }},
-            { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'Découplage aérobie. < 5 % = stable. > 5 % = fatigue ou allure trop soutenue.', calc:'EF 2ème moitié / EF 1ère moitié - 1, × 100.' }},
-          ];
+            { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Intensit\u00e9 relative.', calc: hasRTSS?'Allure seuil / allure moy.':'\u221a(TRIMP_par_min / y_LTHR).' }},
+            chargeVal!==null&&{ label:'Charge'+(chargeLabel?' ('+chargeLabel+')':''), value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
+              tooltip:{ main: hasRTSS?'Charge allure. 1h allure seuil = 100.':'Charge cardiaque HRSS. 1h LTHR = 100.', calc: hasRTSS?'(Dur\u00e9e \u00d7 IF\u00b2) / 3600 \u00d7 100.':'TRIMP normalis\u00e9 s/s.' }},
+            pmcRow,
+            { label:'EF', value: ef?String(ef):'\u2014', unit: ef?'m/min/bpm':'', color: '#201e1d',
+              tooltip:{ main:'Efficacit\u00e9 a\u00e9robie.', calc:'Vitesse (m/min) / FC moy.' }},
+            { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'\u2014', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
+              tooltip:{ main:'D\u00e9couplage a\u00e9robie. < 5 % = stable.', calc:'EF 2\u00e8me / EF 1\u00e8re - 1 \u00d7 100.' }},
+          ].filter(Boolean);
         })(),
       ];
     }
@@ -2248,6 +2317,14 @@ function App() {
           h('div', { style:{ display:'grid', gridTemplateColumns:'repeat('+nCols+',1fr)', gap:'0', borderBottom:'1px solid #d7d3d3', marginBottom:'20px' } },
             detailKpis.map((kpi,i) => {
               const [showTip, setShowTip] = React.useState(false);
+              // Rendu spécial pour Impact PMC (chips colorés)
+              if (kpi.chips) return h('div', { key:i,
+                style:{ padding:'10px 14px 12px', borderRight: i<nCols-1 ? '1px solid #d7d3d3' : undefined } },
+                h('span', { style:{ display:'block', fontSize:'10px', fontWeight:'600', letterSpacing:'0.1em', textTransform:'uppercase', color:'#605d5d' } }, kpi.label),
+                h('div', { style:{ display:'flex', flexDirection:'column', gap:'2px', marginTop:'6px' } },
+                  kpi.chips.map((c,ci) => h('span', { key:ci, style:{ fontSize:'11px', fontWeight:'700', color: c.color, letterSpacing:'0.02em' } }, c.label))
+                )
+              );
               return h('div', { key:i,
                 style:{ padding:'10px 14px 12px', borderRight: i<nCols-1 ? '1px solid #d7d3d3' : undefined, position:'relative', cursor: kpi.tooltip?'help':'default' },
                 onMouseEnter: () => { if(kpi.tooltip) setShowTip(true); },
