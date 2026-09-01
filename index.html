@@ -257,9 +257,8 @@ function buildPowArr(vel, alt, dist, totalMassKg) {
   return pow;
 }
 
-// ── TSS / NP / IF (méthode TrainingPeaks) ────────────────────────────────────
+// ── TSS / NP / IF (méthode TrainingPeaks + HRSS Elevate) ─────────────────────
 function calcNP(powArr) {
-  // Étape 1 : moyenne glissante 30s
   if (!powArr || powArr.length < 30) return null;
   const n = powArr.length;
   const roll30 = new Float32Array(n);
@@ -269,67 +268,103 @@ function calcNP(powArr) {
     roll30[i] = win / 30;
     win += powArr[i] - powArr[i - 30];
   }
-  // Étape 2 : puissance 4 → moyenne → racine 4e
   let sum4 = 0, count4 = 0;
-  for (let i = 30; i < n; i++) {
-    sum4 += Math.pow(roll30[i], 4);
-    count4++;
-  }
+  for (let i = 30; i < n; i++) { sum4 += Math.pow(roll30[i], 4); count4++; }
   if (!count4) return null;
   return Math.round(Math.pow(sum4 / count4, 0.25));
 }
 
-function calcTSS(act, streams, ftpW, hrMaxBpm, hrRestBpm) {
-  const durSec = act.secs || act.time * 60;
-  if (!durSec || durSec < 120) return null; // moins de 2 min = pas fiable
+// ── HRSS — Heart Rate Stress Score (Elevate / intervals.icu) ─────────────────
+// 1h a la LTHR = 100 points (normalisation identique a intervals.icu)
+// Stream HR prioritaire; fallback sur FC moyenne si pas de stream.
+function calcHRSS(durSec, avgHr, hrStream, hrMax, hrRest, lthr) {
+  const fcMax  = hrMax  || 190;
+  const fcRest = hrRest || 50;
+  // LTHR par defaut : 88% de la reserve FC si non renseigne
+  const fcLTHR = lthr || Math.round(fcRest + (fcMax - fcRest) * 0.88);
+  const reserve = fcMax - fcRest;
+  if (reserve <= 0) return null;
 
-  if (act.sport === 'Vélo') {
-    // Vélo : NP → IF → TSS
-    const powArr = streams && streams.pow;
-    let np = null;
-    if (powArr && powArr.length >= 30) {
-      np = calcNP(powArr);
-    } else if (act.power) {
-      np = act.power; // fallback sur puissance moyenne
+  const lthrFrac = Math.min(1, (fcLTHR - fcRest) / reserve);
+  const yLTHR    = lthrFrac * 0.64 * Math.exp(1.92 * lthrFrac);
+  const trimpRef = 60 * yLTHR;
+  if (trimpRef <= 0) return null;
+
+  let trimp = 0;
+  let durMin = durSec / 60;
+
+  if (hrStream && hrStream.length >= 30) {
+    for (let i = 0; i < hrStream.length; i++) {
+      const hr = hrStream[i];
+      if (!hr || hr < 50) continue;
+      const hrFrac = Math.min(1.2, (hr - fcRest) / reserve);
+      if (hrFrac <= 0) continue;
+      trimp += (1 / 60) * hrFrac * 0.64 * Math.exp(1.92 * hrFrac);
     }
-    if (!np || !ftpW) return { tss: null, np, ifVal: null, method: 'pow' };
-    const ifVal = Math.round((np / ftpW) * 100) / 100;
-    const tss = Math.round((durSec * np * ifVal) / (ftpW * 3600) * 100);
-    return { tss, np, ifVal, method: 'pow' };
+    durMin = hrStream.filter(h => h && h > 50).length / 60;
+  } else if (avgHr && avgHr > 50) {
+    const hrFrac = Math.min(1.2, (avgHr - fcRest) / reserve);
+    if (hrFrac <= 0) return null;
+    trimp = (durSec / 60) * hrFrac * 0.64 * Math.exp(1.92 * hrFrac);
+  } else {
+    return null;
+  }
 
-  } else if (act.sport === 'Course' || act.sport === 'Trail') {
-    if (!act.pace || act.pace <= 0) return null;
-    // rTSS officiel si allure seuil disponible (passé via param ftpW)
-    const tPace = ftpW;
-    if (tPace && tPace > 0) {
+  const hrss = Math.round((trimp / trimpRef) * 100);
+  const ifHR = durMin > 0
+    ? Math.round(Math.sqrt((trimp / durMin) / yLTHR) * 100) / 100
+    : 0;
+  return { hrss, trimp: Math.round(trimp * 10) / 10, ifHR, lthrUsed: fcLTHR };
+}
+
+function calcTSS(act, streams, ftpOrPace, hrMaxBpm, hrRestBpm, lthrBpm) {
+  const durSec = act.secs || act.time * 60;
+  if (!durSec || durSec < 120) return null;
+
+  // ── Velo ──────────────────────────────────────────────────────────────────
+  if (act.sport === 'V\u00e9lo') {
+    // Priorite 1 : NP -> TSS si FTP et stream puissance disponibles
+    const powArr = streams?.pow;
+    const ftpW   = ftpOrPace && ftpOrPace > 50 ? ftpOrPace : null;
+    let np = null;
+    if (powArr && powArr.length >= 30) np = calcNP(powArr);
+    else if (act.power) np = act.power;
+    if (np && ftpW) {
+      const ifVal = Math.round((np / ftpW) * 100) / 100;
+      const tss   = Math.round((durSec * np * ifVal) / (ftpW * 3600) * 100);
+      return { tss, np, ifVal, method: 'pow' };
+    }
+    // Priorite 2 : HRSS (methode principale sans capteur de puissance)
+    const hrStream = streams?.hr || null;
+    const hrRes = calcHRSS(durSec, act.avgHr || act.hr, hrStream, hrMaxBpm, hrRestBpm, lthrBpm);
+    if (hrRes) return { tss: hrRes.hrss, np: null, ifVal: hrRes.ifHR, method: 'hrss', lthrUsed: hrRes.lthrUsed };
+    return { tss: null, np: null, ifVal: null, method: 'pow' };
+  }
+
+  // ── Course / Trail ────────────────────────────────────────────────────────
+  if (act.sport === 'Course' || act.sport === 'Trail') {
+    // Priorite 1 : rTSS si allure seuil disponible
+    const tPace = ftpOrPace;
+    if (tPace && tPace > 0 && act.pace && act.pace > 0) {
       const ifVal = Math.round((tPace / act.pace) * 100) / 100;
-      const tss = Math.round((durSec * ifVal * ifVal) / 3600 * 100);
+      const tss   = Math.round((durSec * ifVal * ifVal) / 3600 * 100);
       return { tss, np: null, ifVal, method: 'rTSS' };
     }
-    // Fallback TRIMP (Banister) si pas d’allure seuil
-    if (act.hr && hrMaxBpm) {
-      const hrReserve = hrMaxBpm - (hrRestBpm || 50);
-      const hrFrac = Math.min(1, (act.hr - (hrRestBpm || 50)) / Math.max(1, hrReserve));
-      const y = 1.92;
-      const trimp = (durSec / 60) * hrFrac * 0.64 * Math.exp(y * hrFrac);
-      const tss = Math.round(trimp);
-      const ifVal = Math.round(hrFrac * 100) / 100;
-      return { tss, np: null, ifVal, method: 'hr' };
-    }
-    const tss = Math.round((durSec / 3600) * 100 * 0.75);
-    return { tss, np: null, ifVal: null, method: 'est' };
-  } else if (act.sport === 'Natation') {
-    // sTSS simplifié : basé sur durée et FC si disponible
-    if (act.hr && hrMaxBpm) {
-      const hrReserve = hrMaxBpm - (hrRestBpm || 50);
-      const hrFrac = Math.min(1, (act.hr - (hrRestBpm || 50)) / Math.max(1, hrReserve));
-      const y = 1.92;
-      const trimp = (durSec / 60) * hrFrac * 0.64 * Math.exp(y * hrFrac);
-      const tss = Math.round(trimp);
-      return { tss, np: null, ifVal: Math.round(hrFrac * 100) / 100, method: 'hr' };
-    }
+    // Priorite 2 : HRSS
+    const hrStream = streams?.hr || null;
+    const hrRes = calcHRSS(durSec, act.avgHr || act.hr, hrStream, hrMaxBpm, hrRestBpm, lthrBpm);
+    if (hrRes) return { tss: hrRes.hrss, np: null, ifVal: hrRes.ifHR, method: 'hrss', lthrUsed: hrRes.lthrUsed };
+    return { tss: Math.round((durSec / 3600) * 100 * 0.75), np: null, ifVal: null, method: 'est' };
+  }
+
+  // ── Natation ──────────────────────────────────────────────────────────────
+  if (act.sport === 'Natation') {
+    const hrStream = streams?.hr || null;
+    const hrRes = calcHRSS(durSec, act.avgHr || act.hr, hrStream, hrMaxBpm, hrRestBpm, lthrBpm);
+    if (hrRes) return { tss: hrRes.hrss, np: null, ifVal: hrRes.ifHR, method: 'hrss', lthrUsed: hrRes.lthrUsed };
     return { tss: Math.round((durSec / 3600) * 60), np: null, ifVal: null, method: 'est' };
   }
+
   return null;
 }
 
@@ -550,9 +585,9 @@ function App() {
   const [profile, setProfile] = useState(() => {
     try {
       const saved = localStorage.getItem('bs_profile');
-      if (saved) return { name:'', gender:'Non précisé', age:'', height:'', weight:'', fcMax:'', fcRest:'', ftp:'', bikeMass:'', thresholdPace:'', ...JSON.parse(saved) };
+      if (saved) return { name:'', gender:'Non précisé', age:'', height:'', weight:'', fcMax:'', fcRest:'', lthr:'', ftp:'', bikeMass:'', thresholdPace:'', ...JSON.parse(saved) };
     } catch(e) {}
-    return { name:'', gender:'Non précisé', age:'', height:'', weight:'', fcMax:'', fcRest:'', ftp:'', bikeMass:'', thresholdPace:'' };
+    return { name:'', gender:'Non précisé', age:'', height:'', weight:'', fcMax:'', fcRest:'', lthr:'', ftp:'', bikeMass:'', thresholdPace:'' };
   });
   const [race, setRace] = useState(() => {
     try {
@@ -1161,7 +1196,7 @@ function App() {
       const ftp = a.sport === 'Vélo' ? ftpV : (a.sport === 'Course' || a.sport === 'Trail') ? tpV : null;
       const s   = actStreams[a.id];
       const sOk = s && s !== 'error';
-      const td  = calcTSS(a, sOk ? s : null, ftp, fcMax, fcRest);
+      const td  = calcTSS(a, sOk ? s : null, ftp, fcMax, fcRest, Number(profile.lthr)||null);
       const tss = td?.tss ?? null;
       if (tss && tss > 0) tssPerDay[key] = (tssPerDay[key] || 0) + tss;
     }
@@ -1200,7 +1235,7 @@ function App() {
       cur.setDate(cur.getDate() + 1);
     }
     return series;
-  }, [data, actStreams, profile.ftp, profile.thresholdPace, profile.fcMax, profile.fcRest, ftpEstimated, thresholdPaceEstimated]);
+  }, [data, actStreams, profile.ftp, profile.thresholdPace, profile.fcMax, profile.fcRest, profile.lthr, ftpEstimated, thresholdPaceEstimated]);
 
   // Stats actuelles (dernier jour de la série)
   const pmcToday = pmcSeries.length ? pmcSeries[pmcSeries.length - 1] : null;
@@ -1379,7 +1414,7 @@ function App() {
                 return acts.flatMap(a => {
                   const s   = actStreams[a.id];
                   const sOk = s && s!=='error';
-                  const td  = calcTSS(a, sOk?s:null, a.sport==='V\u00e9lo'?ftpV:tpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+                  const td  = calcTSS(a, sOk?s:null, a.sport==='V\u00e9lo'?ftpV:tpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
                   const tssV = td?.tss ?? null;
                   const dist = a.dist ? fmtNum(a.dist,1)+' km' : '\u2014';
                   const time = a.time ? (Math.floor(a.time/60)+'h'+String(a.time%60).padStart(2,'0')) : '\u2014';
@@ -1825,7 +1860,7 @@ function App() {
           const tssEst = (() => {
             const s = actStreams[a.id];
             const ftpV = a.sport==='Vélo' ? (Number(profile.ftp)||ftpEstimated||null) : (Number(profile.thresholdPace)||thresholdPaceEstimated||null);
-            const td = calcTSS(a, s&&s!=='error'?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+            const td = calcTSS(a, s&&s!=='error'?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
             return td?.tss ?? a.trainingLoad ?? null;
           })();
           const sessBg = tssEst===null?'#eae9e9':tssEst<50?'#eae9e9':tssEst<100?'#fff0eb':tssEst<150?'#ffd5c8':'#ffc0a8';
@@ -2063,7 +2098,7 @@ function App() {
           const ftpV = Number(profile.ftp)||ftpEstimated||null;
           const s = actStreams[act.id];
           const sOk = s && s !== 'error';
-          const tssData = calcTSS(act, sOk?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+          const tssData = calcTSS(act, sOk?s:null, ftpV, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
           const np = tssData?.np ?? (sOk&&s.pow ? calcNP(s.pow) : null);
           const ifVal = tssData?.ifVal ?? null;
           const tss = tssData?.tss ?? null;
@@ -2095,7 +2130,7 @@ function App() {
         { label:'Allure moy.', value: act.pace?fmtPace(act.pace/10):'Donnée manquante', unit: act.pace?'/100m':'' },
         ...(() => {
           const s = actStreams[act.id];
-          const tssData = calcTSS(act, s&&s!=='error'?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+          const tssData = calcTSS(act, s&&s!=='error'?s:null, null, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
           const tss = tssData?.tss ?? null;
           return [{ label:'TSS', value: tss?String(tss):'—', unit:'', color: tssColor(tss), bold: true,
             tooltip:{ main:'Le TSS te dit combien cette sortie a coûté à ton corps, en tenant compte de l’intensité et de la durée. En dessous de 50 : léger, une nuit suffit. Entre 50 et 100 : modéré. Au-delà de 150 : compte plusieurs jours de récup.', calc:'Méthode TRIMP (Banister), basée sur la durée et ta fréquence cardiaque relative.' } }];
@@ -2111,7 +2146,7 @@ function App() {
           const s = actStreams[act.id];
           const sOk = s && s !== 'error';
           const tPaceVal = Number(profile.thresholdPace)||thresholdPaceEstimated||null;
-          const tssData = calcTSS(act, sOk?s:null, tPaceVal, Number(profile.fcMax)||null, Number(profile.fcRest)||null);
+          const tssData = calcTSS(act, sOk?s:null, tPaceVal, Number(profile.fcMax)||null, Number(profile.fcRest)||null, Number(profile.lthr)||null);
           const tss = tssData?.tss ?? null;
           const ifVal = tssData?.ifVal ?? null;
           const avgVelMs = sOk&&s.vel ? s.vel.reduce((a,b)=>a+b,0)/s.vel.length : (act.dist&&act.time?(act.dist*1000)/(act.time*60):null);
@@ -2458,7 +2493,7 @@ function App() {
               h('div',null,
                 h('p',{style:{margin:'0 0 4px',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Comment c\'est calculé'),
                 h('p',{style:{margin:0,fontSize:'11px',color:'#605d5d',lineHeight:'1.6'}},
-                  'CTL (Condition physique) = moyenne exponentielle du TSS sur 42 jours. ATL (Fatigue) = moyenne exponentielle sur 7 jours. TSB (Forme) = CTL − ATL de la veille. Le TSS vélo est calculé depuis la puissance estimée / FTP. Le TSS course depuis l\'allure / seuil. Sinon, TRIMP depuis la FC.'
+                  'CTL (Condition physique) = moyenne exponentielle du TSS sur 42 jours. ATL (Fatigue) = moyenne exponentielle sur 7 jours. TSB (Forme) = CTL − ATL de la veille. TSS vélo : NP/FTP si capteur puissance, sinon HRSS. TSS course : rTSS si allure seuil renseignée, sinon HRSS. HRSS = TRIMP normalisé : 1h à la LTHR = 100 pts. Configure LTHR dans le Profil.'
                 )
               ),
               h('div',null,
@@ -3197,7 +3232,7 @@ function App() {
                   ['Femme','Homme','Non précisé'].map(g=>h('option',{key:g,value:g},g))
                 )
               ),
-              [{k:'age',label:'Âge (ans)',step:1},{k:'height',label:'Taille (cm)',step:1},{k:'weight',label:'Poids cycliste (kg)',step:0.1},{k:'bikeMass',label:'Poids vélo (kg)',step:0.1},{k:'fcMax',label:'FC max (bpm)',step:1},{k:'fcRest',label:'FC repos (bpm)',step:1},{k:'ftp',label:'FTP vélo (W)',step:1},{k:'thresholdPace',label:'Allure seuil course (min/km)',step:0.01}].map(f=>
+              [{k:'age',label:'Âge (ans)',step:1},{k:'height',label:'Taille (cm)',step:1},{k:'weight',label:'Poids cycliste (kg)',step:0.1},{k:'bikeMass',label:'Poids vélo (kg)',step:0.1},{k:'fcMax',label:'FC max (bpm)',step:1},{k:'fcRest',label:'FC repos (bpm)',step:1},{k:'lthr',label:'LTHR — FC seuil lactate (bpm)',step:1},{k:'ftp',label:'FTP vélo (W)',step:1},{k:'thresholdPace',label:'Allure seuil course (min/km)',step:0.01}].map(f=>
                 h('div',{key:f.k,style:{display:'flex',flexDirection:'column',gap:'7px'}},
                   h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px'}},
                     h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},f.label),
