@@ -1283,7 +1283,7 @@ function App() {
       { min: 20,        max: Infinity, color: 'rgba(234,179,8,0.9)',    label: 'Transition' },
       { min: 5,         max: 20,       color: 'rgba(59,130,246,0.85)',  label: 'Frais' },
       { min: -10,       max: 5,        color: 'rgba(150,145,145,0.72)', label: 'Zone grise' },
-      { min: -30,       max: -10,      color: 'rgba(34,197,94,0.85)',   label: 'Optimal' },
+          { min: -30,    max: -10,    color: 'rgba(34,197,94,0.10)' },
       { min: -Infinity, max: -30,      color: 'rgba(236,48,19,0.9)',    label: 'Surentraînement' },
     ];
     const tsbZoneColor = v => {
@@ -1338,7 +1338,7 @@ function App() {
           { min: 20,     max: tsbMax, color: 'rgba(234,179,8,0.09)' },
           { min: 5,      max: 20,     color: 'rgba(59,130,246,0.09)' },
           { min: -10,    max: 5,      color: 'rgba(150,145,145,0.06)' },
-          { min: -30,    max: -10,    color: 'rgba(34,197,94,0.09)' },
+          { min: -30,    max: -10,    color: 'rgba(34,197,94,0.10)' },
           { min: tsbMin, max: -30,    color: 'rgba(236,48,19,0.10)' },
         ];
         for (const z of bgZones) {
@@ -2102,12 +2102,12 @@ function App() {
     let detailKpis;
     if (isBike) {
       detailKpis = [
-        { label:'FC moyenne',    value: avgHr!==null?String(avgHr):(act.hr?String(act.hr):'Donnée manquante'), unit: avgHr!==null||act.hr?'bpm':'' },
-        { label:'FC max',        value: maxHr!==null?String(maxHr):act.maxHr?String(act.maxHr):'Donnée manquante', unit: maxHr!==null||act.maxHr?'bpm':'' },
-        { label:'D+ streams',    value: elevGain!==null?'+'+fmtNum(elevGain,0):'Donnée manquante', unit: elevGain!==null?'m':'' },
-        { label:'Vitesse moy.',  value: act.dist&&act.time?fmtNum(act.dist/(act.time/60),1):'Donnée manquante', unit: act.dist&&act.time?'km/h':'' },
-        { label:'W estimés moy.',value: avgEstPow!==null?String(avgEstPow):(act.power?String(act.power):'Donnée manquante'), unit: avgEstPow!==null?'W':'' },
-        { label:'W/kg estimés',  value: wPerKg!==null?String(wPerKg):(wkg?String(wkg):'Donnée manquante'), unit: wPerKg!==null||wkg?'W/kg':'' },
+        { label:'FC moy.', value: avgHr!==null?String(avgHr):(act.hr?String(act.hr):'Donnée manquante'), unit: avgHr!==null||act.hr?'bpm':'' },
+        { label:'FC max', value: maxHr!==null?String(maxHr):act.maxHr?String(act.maxHr):'Donnée manquante', unit: maxHr!==null||act.maxHr?'bpm':'' },
+        { label:'D+', value: elevGain!==null?'+'+fmtNum(elevGain,0):'Donnée manquante', unit: elevGain!==null?'m':'' },
+        { label:'Vitesse', value: act.dist&&act.time?fmtNum(act.dist/(act.time/60),1):'Donnée manquante', unit: act.dist&&act.time?'km/h':'' },
+        { label:'W moy.', value: avgEstPow!==null?String(avgEstPow):(act.power?String(act.power):'Donnée manquante'), unit: avgEstPow!==null?'W':'' },
+        { label:'W/kg', value: wPerKg!==null?String(wPerKg):(wkg?String(wkg):'Donnée manquante'), unit: wPerKg!==null||wkg?'W/kg':'' },
         ...(() => {
           const ftpV = Number(profile.ftp)||ftpEstimated||null;
           const s = actStreams[act.id];
@@ -2141,19 +2141,17 @@ function App() {
           const ef      = calcEF('Vélo', np, null, avgHr||(act.hr||null));
           const decoupl = sOk&&s.pow&&s.hr ? calcDecoupling('Vélo', s.pow, s.hr) : null;
           return [
-            { label:'NP', value: np?np+' W':'\u2014', unit:'', color: np?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Puissance normalis\u00e9e.', calc:'Fen\u00eatre 30 s, puissance 4, racine quatri\u00e8me.' }},
-            { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensit\u00e9 relative.', calc: tssData?.method==='TSS'?'NP / FTP.':'\u221a(TRIMP_par_min / y_LTHR).' }},
             chargeVal!==null&&{ label:'Charge', value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
-              tooltip:{ main: tssData?.method==='TSS'?'Charge puissance mesurée. 1h FTP = 100.':'Charge cardiaque HRSS. 1h LTHR = 100.', calc: tssData?.method==='TSS'?'(Durée × NP × IF) / (FTP × 3600) × 100.':'TRIMP normalisé s/s.' }},
+              tooltip:{ main: tssData?.method==='TSS'?'TSS : puissance mesurée. 1h FTP = 100.':'HRSS : charge cardiaque. 1h LTHR = 100.', calc: tssData?.method==='TSS'?'(Durée × NP × IF) / (FTP × 3600) × 100.':'TRIMP normalisé s/s.' }},
+            { label:'NP', value: np?np+' W':'—', unit:'', color: np?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Puissance normalisée.', calc:'Fenêtre 30 s, puissance 4, racine quatrième.' }},
+            { label:'VI', value: vi?String(vi):'—', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
+              tooltip:{ main:'Variabilité. Proche 1.0 = effort lisse.', calc:'NP / puissance moy.' }},
+            { label:'EF', value: ef?String(ef):'—', unit: ef?'W/bpm':'', color: '#201e1d',
+              tooltip:{ main:'Efficacité aérobie : watts par battement.', calc:'NP / FC moy.' }},
+            { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
+              tooltip:{ main:'Découplage aérobie. < 5 % = stable.', calc:'EF 2ème / EF 1ère - 1 × 100.' }},
             pmcRow,
-            { label:'VI', value: vi?String(vi):'\u2014', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
-              tooltip:{ main:'Variabilit\u00e9. 1.0 = lisse.', calc:'NP / puissance moy.' }},
-            { label:'EF', value: ef?String(ef):'\u2014', unit: ef?'W/bpm':'', color: '#201e1d',
-              tooltip:{ main:'Efficacit\u00e9 a\u00e9robie.', calc:'NP / FC moy.' }},
-            { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'\u2014', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'D\u00e9couplage a\u00e9robie. < 5 % = stable.', calc:'EF 2\u00e8me moiti\u00e9 / EF 1\u00e8re - 1 \u00d7 100.' }},
           ].filter(Boolean);
         })(),
       ];
@@ -2189,24 +2187,24 @@ function App() {
           const ef      = calcEF('Course', null, avgVelMs, avgHr||(act.hr||null));
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
-            { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensit\u00e9 relative.', calc: '\u221a(TRIMP_par_min / y_LTHR).' }},
             chargeVal!==null&&{ label:'Charge', value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
-              tooltip:{ main: 'Charge cardiaque HRSS. 1h LTHR = 100.', calc: 'TRIMP normalisé s/s.' }},
+              tooltip:{ main:'HRSS : charge cardiaque. 1h LTHR = 100.', calc:'TRIMP normalisé s/s.' }},
+            { label:ifLabel, value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Intensité relative cardiaque.', calc:'√(TRIMP_par_min / y_LTHR).' }},
+            { label:'EF', value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
+              tooltip:{ main:'Efficacité aérobie.', calc:'Vitesse (m/min) / FC moy.' }},
+            { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
+              tooltip:{ main:'Découplage aérobie. < 5 % = stable.', calc:'EF 2ème / EF 1ère - 1 × 100.' }},
             pmcRow,
-            { label:'EF', value: ef?String(ef):'\u2014', unit: ef?'m/min/bpm':'', color: '#201e1d',
-              tooltip:{ main:'Efficacit\u00e9 a\u00e9robie.', calc:'Vitesse (m/min) / FC moy.' }},
-            { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'\u2014', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'D\u00e9couplage a\u00e9robie. < 5 % = stable.', calc:'EF 2\u00e8me moiti\u00e9 / EF 1\u00e8re - 1 \u00d7 100.' }},
           ].filter(Boolean);
         })(),
       ];
     } else {
       detailKpis = [
-        { label:'FC moyenne',  value: avgHr!==null?String(avgHr):(act.hr?String(act.hr):'Donnée manquante'), unit: avgHr!==null||act.hr?'bpm':'' },
-        { label:'FC max',      value: maxHr!==null?String(maxHr):act.maxHr?String(act.maxHr):'Donnée manquante', unit: maxHr!==null||act.maxHr?'bpm':'' },
-        { label:'D+ streams',  value: elevGain!==null?'+'+fmtNum(elevGain,0):'Donnée manquante', unit: elevGain!==null?'m':'' },
-        { label:'Allure moy.', value: act.pace?fmtPace(act.pace):'Donnée manquante', unit: act.pace?'/km':'' },
+        { label:'FC moy.', value: avgHr!==null?String(avgHr):(act.hr?String(act.hr):'Donnée manquante'), unit: avgHr!==null||act.hr?'bpm':'' },
+        { label:'FC max', value: maxHr!==null?String(maxHr):act.maxHr?String(act.maxHr):'Donnée manquante', unit: maxHr!==null||act.maxHr?'bpm':'' },
+        { label:'D+', value: elevGain!==null?'+'+fmtNum(elevGain,0):'Donnée manquante', unit: elevGain!==null?'m':'' },
+        { label:'Allure', value: act.pace?fmtPace(act.pace):'Donnée manquante', unit: act.pace?'/km':'' },
         ...(() => {
           const s = actStreams[act.id];
           const sOk = s && s !== 'error';
@@ -2233,15 +2231,15 @@ function App() {
           const ef      = calcEF('Course', null, avgVelMs, avgHr||(act.hr||null));
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
-            { label:ifLabel, value: ifVal?String(ifVal):'\u2014', unit:'', color: ifVal?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Intensit\u00e9 relative.', calc: '\u221a(TRIMP_par_min / y_LTHR).' }},
             chargeVal!==null&&{ label:'Charge', value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
-              tooltip:{ main: 'Charge cardiaque HRSS. 1h LTHR = 100. '+(!tssData?'Aucune donnée FC disponible.':''), calc: 'TRIMP normalisé s/s.' }},
+              tooltip:{ main:'HRSS : charge cardiaque. 1h LTHR = 100.', calc:'TRIMP normalisé s/s.' }},
+            { label:ifLabel, value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
+              tooltip:{ main:'Intensité relative cardiaque.', calc:'√(TRIMP_par_min / y_LTHR).' }},
+            { label:'EF', value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
+              tooltip:{ main:'Efficacité aérobie.', calc:'Vitesse (m/min) / FC moy.' }},
+            { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
+              tooltip:{ main:'Découplage aérobie. < 5 % = stable.', calc:'EF 2ème / EF 1ère - 1 × 100.' }},
             pmcRow,
-            { label:'EF', value: ef?String(ef):'\u2014', unit: ef?'m/min/bpm':'', color: '#201e1d',
-              tooltip:{ main:'Efficacit\u00e9 a\u00e9robie.', calc:'Vitesse (m/min) / FC moy.' }},
-            { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'\u2014', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'D\u00e9couplage a\u00e9robie. < 5 % = stable.', calc:'EF 2\u00e8me / EF 1\u00e8re - 1 \u00d7 100.' }},
           ].filter(Boolean);
         })(),
       ];
