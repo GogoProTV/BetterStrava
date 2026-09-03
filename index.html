@@ -68,9 +68,9 @@ function deltaChip(pct, betterHigh) {
   const sign = pct > 0 ? '+' : '';
   return {
     text: flat ? '—' : sign + pct + '%',
-    style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ede9f8' : '#eae9e9', color: flat ? '#605d5d' : good ? '#5b21b6' : '#605d5d' },
+    style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ffe0d9' : '#eae9e9', color: flat ? '#605d5d' : good ? '#ae1800' : '#605d5d' },
     arrow: good ? '▲' : bad ? '▼' : '',
-    arrowStyle: { fontSize: '13px', lineHeight: '1', color: good ? '#7c4dbc' : bad ? '#605d5d' : 'transparent' },
+    arrowStyle: { fontSize: '13px', lineHeight: '1', color: good ? '#ec3013' : bad ? '#605d5d' : 'transparent' },
   };
 }
 
@@ -2714,23 +2714,72 @@ function App() {
               const ftpDelta=(ftpVal&&ftpBval&&ftpBval>0)?Math.round(((ftpVal-ftpBval)/ftpBval)*100):null;
               const wkgB=ftpBval&&profile.weight?Math.round(ftpBval/Number(profile.weight)*100)/100:null;
               const wkgDelta=(wkg&&wkgB&&wkgB>0)?Math.round(((wkg-wkgB)/wkgB)*100):null;
+              // Mode séance : si la courbe A est désactivée et qu'une séance est sélectionnée,
+              // les stats affichées sont celles de la séance 1 (violet/bleu)
+              // sinon : courbe période active (orange) vs comparaison (gris)
+              const isSeanceMode = !showCurveA && !!selActId1;
+              const selS1 = isSeanceMode ? actStreams[selActId1] : null;
+              const sel1Curve = (isSeanceMode && selS1 && selS1.pow && selS1.pow.length)
+                ? POWER_DURATIONS.map(({s:dur}) => bestAvgWindow(selS1.pow, dur))
+                : null;
+              // Stats séance 1 : Wmax, kJ20, CP depuis la courbe de la séance
+              const wmaxSel = sel1Curve ? Math.max(...sel1Curve.filter(Boolean)) : null;
+              const kjSelRaw = sel1Curve ? sel1Curve[POWER_DURATIONS.findIndex(d=>d.s===1200)] : null;
+              const kjSelVal = kjSelRaw ? Math.round(kjSelRaw * 1200 / 1000 * 10) / 10 : null;
+              const cpSelVal = (() => {
+                if (!sel1Curve) return null;
+                const v30 = sel1Curve[POWER_DURATIONS.findIndex(d=>d.s===1800)];
+                const v60 = sel1Curve[POWER_DURATIONS.findIndex(d=>d.s===3600)];
+                const b = Math.max(v30||0, v60||0);
+                return b > 0 ? Math.round(b * 0.92) : null;
+              })();
+              // Couleurs selon le mode
+              const mainColor = isSeanceMode ? '#7c4dbc' : '#ec3013';
+              function selChip(vCur, vRef, betterHigh) {
+                if (!vCur || !vRef || vRef === 0) return { arrow:'', arrowStyle:{color:'transparent'}, text:'—', style:{padding:'2px 7px',background:'#eae9e9',color:'#605d5d'} };
+                const pct = Math.round(((vCur - vRef) / vRef) * 100);
+                const good = betterHigh ? pct > 0 : pct < 0;
+                const bad = !good && pct !== 0;
+                const sign = pct > 0 ? '+' : '';
+                return {
+                  arrow: good ? '▲' : bad ? '▼' : '',
+                  arrowStyle: { fontSize:'13px', lineHeight:'1', color: isSeanceMode ? (good?'#7c4dbc':bad?'#2196f3':'transparent') : (good?'#ec3013':bad?'#605d5d':'transparent') },
+                  text: pct === 0 ? '—' : sign + pct + '%',
+                  style: { padding:'2px 7px', fontSize:'12px', fontWeight:'600', background: good?(isSeanceMode?'rgba(124,77,188,0.12)':'#ffe0d9'):'#eae9e9', color: good?(isSeanceMode?'#7c4dbc':'#ae1800'):'#605d5d' },
+                };
+              }
               const cells=[
-                {label:'FTP'+estTag,val:ftpVal?ftpVal+' W':null,delta:ftpDelta,sub:isEstimatedFtp?'estimée':'manuelle',betterHigh:true},
-                {label:'W/kg'+estTag,val:wkg?wkg+' W/kg':null,delta:wkgDelta,sub:profile.weight?'masse '+profile.weight+' kg':'renseigne le poids',betterHigh:true},
-                {label:'kJ·20 min',val:kjAval?kjAval+' kJ':null,delta:kjDelta,sub:kjAval?'= '+Math.round(kjAval*1000)+' J':'calcule la courbe',betterHigh:true},
-                {label:'Wmax'+estTag,val:wmaxA2?wmaxA2+' W':null,delta:wmaxDelta,sub:wmaxA2&&profile.weight?Math.round(wmaxA2/Number(profile.weight)*100)/100+' W/kg':'',betterHigh:true},
-                {label:'PC'+estTag,val:cpAval?cpAval+' W':null,delta:cpDelta,sub:'puissance critique',betterHigh:true},
+                {label:'FTP'+estTag,
+                  val:ftpVal?ftpVal+' W':null,
+                  chip: selChip(ftpVal, ftpBval, true),
+                  sub:isEstimatedFtp?'estimée':'manuelle'},
+                {label:'W/kg'+estTag,
+                  val:wkg?wkg+' W/kg':null,
+                  chip: selChip(wkg, wkgB, true),
+                  sub:profile.weight?'masse '+profile.weight+' kg':'renseigne le poids'},
+                {label:'kJ·20 min',
+                  val:(isSeanceMode?kjSelVal:kjAval)?(isSeanceMode?kjSelVal:kjAval)+' kJ':null,
+                  chip: selChip(isSeanceMode?kjSelVal:kjAval, kjBval, true),
+                  sub:(isSeanceMode?kjSelVal:kjAval)?'= '+Math.round((isSeanceMode?kjSelVal:kjAval)*1000)+' J':'calcule la courbe'},
+                {label:'Wmax'+estTag,
+                  val:(isSeanceMode?wmaxSel:wmaxA2)?(isSeanceMode?wmaxSel:wmaxA2)+' W':null,
+                  chip: selChip(isSeanceMode?wmaxSel:wmaxA2, wmaxB2, true),
+                  sub:(isSeanceMode?wmaxSel:wmaxA2)&&profile.weight?Math.round((isSeanceMode?wmaxSel:wmaxA2)/Number(profile.weight)*100)/100+' W/kg':''},
+                {label:'PC'+estTag,
+                  val:(isSeanceMode?cpSelVal:cpAval)?(isSeanceMode?cpSelVal:cpAval)+' W':null,
+                  chip: selChip(isSeanceMode?cpSelVal:cpAval, cpBval, true),
+                  sub:'puissance critique'},
               ];
               return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
                 cells.map((c,i)=>{
-                  const chip=deltaChip(c.delta,c.betterHigh);
+                  const chip = c.chip;
                   return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
                     h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
-                    h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:c.val?'#201e1d':'#bab6b6'}},c.val||'—')),
+                    h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:c.val?mainColor:'#bab6b6'}},c.val||'—')),
                     h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
                       chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
                       chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                      h('span',{style:{fontSize:'11px',color:'#bab6b6'}},compLabel)
+                      h('span',{style:{fontSize:'11px',color:'#bab6b6'}},isSeanceMode?'vs '+compLabel:compLabel)
                     ),
                     h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},c.sub)
                   );
@@ -2753,18 +2802,39 @@ function App() {
               const cur=statDefs.map(s=>paceStat(s.m,startA2,endA2));
               const prev=statDefs.map(s=>paceStat(s.m,startB2,endB2));
               const unit=isTrailPow?' VAP /km':' /km';
+              const isSeanceModeR = !showCurveA && !!selActId1;
+              const mainColorR = isSeanceModeR ? '#7c4dbc' : '#ec3013';
+              // Stats séance 1 pour course : best pace depuis la séance sélectionnée
+              const curSel = isSeanceModeR ? statDefs.map(s => {
+                const selS = actStreams[selActId1];
+                if (!selS || !selS.dist || !selS.vel) return null;
+                const v = bestPaceWindow(selS.dist, selS.vel, s.m);
+                return v && v <= MAX_PACE ? Math.round(v * 100) / 100 : null;
+              }) : cur;
+              function selChipR(vCur, vRef) {
+                if (!vCur || !vRef || vRef === 0) return { arrow:'', arrowStyle:{color:'transparent'}, text:'—', style:{padding:'2px 7px',background:'#eae9e9',color:'#605d5d'} };
+                const pct = Math.round(((vRef - vCur) / vRef) * 100); // course : baisse pace = bon
+                const good = pct > 0;
+                const bad = pct < 0;
+                const sign = pct > 0 ? '+' : '';
+                return {
+                  arrow: good ? '▲' : bad ? '▼' : '',
+                  arrowStyle: { fontSize:'13px', lineHeight:'1', color: isSeanceModeR ? (good?'#7c4dbc':bad?'#2196f3':'transparent') : (good?'#ec3013':bad?'#605d5d':'transparent') },
+                  text: pct === 0 ? '—' : sign + pct + '%',
+                  style: { padding:'2px 7px', fontSize:'12px', fontWeight:'600', background: good?(isSeanceModeR?'rgba(124,77,188,0.12)':'#ffe0d9'):'#eae9e9', color: good?(isSeanceModeR?'#7c4dbc':'#ae1800'):'#605d5d' },
+                };
+              }
               return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
                 statDefs.map((s,i)=>{
-                  const vCur=cur[i],vPrev=prev[i];
-                  const pct=(vCur&&vPrev&&vPrev>0)?Math.round(((vPrev-vCur)/vPrev)*100):null;
-                  const chip=deltaChip(pct,true);
+                  const vCur=curSel[i],vPrev=prev[i];
+                  const chip = selChipR(vCur, vPrev);
                   return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
                     h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},s.label),
-                    h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?'#201e1d':'#bab6b6'}},vCur?fmtPL(vCur)+unit:'—')),
+                    h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?mainColorR:'#bab6b6'}},vCur?fmtPL(vCur)+unit:'—')),
                     h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
                       chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
                       chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                      h('span',{style:{fontSize:'11px',color:'#bab6b6'}},compLabel)
+                      h('span',{style:{fontSize:'11px',color:'#bab6b6'}},isSeanceModeR?'vs '+compLabel:compLabel)
                     ),
                     h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},vPrev?fmtPL(vPrev)+unit+' préc.':'pas de données préc.')
                   );
@@ -2936,28 +3006,62 @@ function App() {
             });
             const zoneCur  = accumZone(0, hrRangeA);
             const zonePrev = accumZone(hrRangeA, hrRangeA + hrRangeB);
+            const isSeanceModeFC = !showCurveA && !!selActId1;
+            const mainColorFC = isSeanceModeFC ? '#7c4dbc' : '#ec3013';
+            // Stats séance 1 pour FC : accumulation bpm par zone sur la seule séance sélectionnée
+            const zoneSelArr = isSeanceModeFC ? (() => {
+              const selS = actStreams[selActId1];
+              if (!selS || !selS.hr) return zoneDefs.map(()=>null);
+              const metric = isBikeFC ? selS.pow : selS.vel;
+              if (!metric) return zoneDefs.map(()=>null);
+              return zoneDefs.map(z => {
+                let sumV2=0, cnt2=0;
+                for (let i=0; i<selS.hr.length; i++) {
+                  if (selS.hr[i]>=z.lo && selS.hr[i]<z.hi) {
+                    const v = metric[i];
+                    if (isBikeFC && v>0) { sumV2+=v; cnt2++; }
+                    else if (!isBikeFC && v>=0.3 && v<=8.33) { sumV2+=v; cnt2++; }
+                  }
+                }
+                if (!cnt2) return null;
+                const avg = sumV2/cnt2;
+                return isBikeFC ? Math.round(avg) : Math.round((1000/60/avg)*100)/100;
+              });
+            })() : null;
+            function selChipFC(vCur, vRef) {
+              if (!vCur || !vRef || vRef === 0) return { arrow:'', arrowStyle:{color:'transparent'}, text:'—', style:{padding:'2px 7px',background:'#eae9e9',color:'#605d5d'} };
+              const raw = Math.round(((vCur-vRef)/vRef)*100);
+              const pct = isBikeFC ? raw : -raw;
+              const good = pct > 0;
+              const bad = pct < 0;
+              const sign = pct > 0 ? '+' : '';
+              return {
+                arrow: good ? '▲' : bad ? '▼' : '',
+                arrowStyle: { fontSize:'13px', lineHeight:'1', color: isSeanceModeFC ? (good?'#7c4dbc':bad?'#2196f3':'transparent') : (good?'#ec3013':bad?'#605d5d':'transparent') },
+                text: pct === 0 ? '—' : sign + pct + '%',
+                style: { padding:'2px 7px', fontSize:'12px', fontWeight:'600', background: good?(isSeanceModeFC?'rgba(124,77,188,0.12)':'#ffe0d9'):'#eae9e9', color: good?(isSeanceModeFC?'#7c4dbc':'#ae1800'):'#605d5d' },
+              };
+            }
             return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
               zoneDefs.map((z,i) => {
-                const vCur = zoneCur[i], vPrev = zonePrev[i];
-                // Pour vélo : hausse = meilleur. Pour course : baisse allure = meilleur.
-                const raw = (vCur&&vPrev&&vPrev>0) ? Math.round(((vCur-vPrev)/vPrev)*100) : null;
-                const pct = isBikeFC ? raw : (raw !== null ? -raw : null);
-                const chip = deltaChip(pct, true);
+                const vCur = isSeanceModeFC ? zoneSelArr[i] : zoneCur[i];
+                const vPrev = zonePrev[i];
+                const chip = selChipFC(vCur, vPrev);
                 return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
                   h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},z.label),
                   h('span',{style:{display:'block',marginTop:'4px',fontSize:'10px',color:'#bab6b6',letterSpacing:'0.06em'}},z.lo+'–'+z.hi+' bpm'),
                   h('div',{style:{marginTop:'8px'}},
-                    h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?'#201e1d':'#bab6b6'}},
+                    h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?mainColorFC:'#bab6b6'}},
                       vCur ? (isBikeFC ? vCur+' W' : fmtPZ(vCur)+' /km') : '—'
                     )
                   ),
                   h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
                     chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
                     chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},(() => { const rl=d=>d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an'; return 'vs '+rl(hrRangeB)+' préc.'; })())
+                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},isSeanceModeFC?'vs '+(() => { const rl=d=>d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an'; return rl(hrRangeB)+' préc.'; })():(() => { const rl=d=>d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an'; return 'vs '+rl(hrRangeB)+' préc.'; })())
                   ),
                   h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    vPrev ? (isBikeFC ? vPrev+' W précédemment' : fmtPZ(vPrev)+' /km précédemment') : 'pas de données préc.'
+                    isSeanceModeFC ? (vPrev?(isBikeFC?vPrev+' W préc.':fmtPZ(vPrev)+' /km préc.'):'') : (vPrev ? (isBikeFC ? vPrev+' W précédemment' : fmtPZ(vPrev)+' /km précédemment') : 'pas de données préc.')
                   )
                 );
               })
