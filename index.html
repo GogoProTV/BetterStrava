@@ -2734,8 +2734,12 @@ function App() {
               const wkgB=ftpBval&&profile.weight?Math.round(ftpBval/Number(profile.weight)*100)/100:null;
               const wkgDelta=(wkg&&wkgB&&wkgB>0)?Math.round(((wkg-wkgB)/wkgB)*100):null;
               // ── Mode affichage des statistiques ──────────────────────────────
-              const seanceModeV = !showCurveA && !!selActId1;
-              const mainColorV = seanceModeV ? '#7c4dbc' : '#ec3013';
+              // Les chiffres du haut suivent ce qui est réellement tracé :
+              //  · courbe « Actuelle » activée  → période A (rouge)
+              //  · sinon séance 1 affichée      → séance 1 (violet)
+              const seanceModeV = !showCurveA && showCurveSel && !!selActId1;
+              const statActiveV = showCurveA || seanceModeV;
+              const mainColorV = seanceModeV ? '#7c4dbc' : statActiveV ? '#ec3013' : '#bab6b6';
               const s1 = seanceModeV ? actStreams[selActId1] : null;
               const s1Pow = s1 && s1.pow && s1.pow.length ? s1.pow : null;
               const s1Curve = s1Pow ? POWER_DURATIONS.map(({s:dur}) => bestAvgWindow(s1Pow, dur)) : null;
@@ -2807,8 +2811,9 @@ function App() {
               const prev=statDefs.map(s=>paceStat(s.m,startB2,endB2));
               const unit=isTrailPow?' VAP /km':' /km';
               // ── Mode séance course ───────────────────────────────────────────
-              const seanceModeR = !showCurveA && !!selActId1;
-              const mainColorR = seanceModeR ? '#7c4dbc' : '#ec3013';
+              const seanceModeR = !showCurveA && showCurveSel && !!selActId1;
+              const statActiveR = showCurveA || seanceModeR;
+              const mainColorR = seanceModeR ? '#7c4dbc' : statActiveR ? '#ec3013' : '#bab6b6';
               // Séance 1 : best pace par distance cible
               const curSel1R = seanceModeR ? statDefs.map(({m:targetM}) => {
                 const ss = actStreams[selActId1];
@@ -3023,8 +3028,10 @@ function App() {
             const zoneCur  = accumZone(0, hrRangeA);
             const zonePrev = accumZone(hrRangeA, hrRangeA + hrRangeB);
             // ── Mode séance FC ───────────────────────────────────────────────
-            const seanceModeFC = !showCurveA && !!selActId1;
-            const mainColorFC = seanceModeFC ? '#7c4dbc' : '#ec3013';
+            // Chiffres du haut = ce qui est tracé : Actuelle (rouge) sinon séance 1 (violet)
+            const seanceModeFC = !showCurveA && showCurveSel && !!selActId1;
+            const statActiveFC = showCurveA || seanceModeFC;
+            const mainColorFC = seanceModeFC ? '#7c4dbc' : statActiveFC ? '#ec3013' : '#bab6b6';
             // Accumulation bpm→perf par zone pour la séance 1
             const zoneSel1 = seanceModeFC ? (() => {
               const ss = actStreams[selActId1];
