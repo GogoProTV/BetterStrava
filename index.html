@@ -68,9 +68,9 @@ function deltaChip(pct, betterHigh) {
   const sign = pct > 0 ? '+' : '';
   return {
     text: flat ? '—' : sign + pct + '%',
-    style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ede9f8' : '#eae9e9', color: flat ? '#605d5d' : good ? '#5b21b6' : '#605d5d' },
+    style: { padding: '3px 8px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', background: flat ? '#eae9e9' : good ? '#ffe0d9' : '#eae9e9', color: flat ? '#605d5d' : good ? '#ae1800' : '#605d5d' },
     arrow: good ? '▲' : bad ? '▼' : '',
-    arrowStyle: { fontSize: '13px', lineHeight: '1', color: good ? '#7c4dbc' : bad ? '#605d5d' : 'transparent' },
+    arrowStyle: { fontSize: '13px', lineHeight: '1', color: good ? '#ec3013' : bad ? '#605d5d' : 'transparent' },
   };
 }
 
@@ -1335,11 +1335,11 @@ function App() {
         ctx.save();
         ctx.beginPath(); ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height); ctx.clip();
         const bgZones = [
-          { min: 20,     max: tsbMax, color: 'rgba(234,179,8,0.09)' },
-          { min: 5,      max: 20,     color: 'rgba(59,130,246,0.09)' },
-          { min: -10,    max: 5,      color: 'rgba(150,145,145,0.06)' },
-          { min: -30,    max: -10,    color: 'rgba(34,197,94,0.10)' },
-          { min: tsbMin, max: -30,    color: 'rgba(236,48,19,0.10)' },
+          { min: 20,     max: tsbMax, color: 'rgba(234,179,8,0.18)' },
+          { min: 5,      max: 20,     color: 'rgba(59,130,246,0.18)' },
+          { min: -10,    max: 5,      color: 'rgba(150,145,145,0.13)' },
+          { min: -30,    max: -10,    color: 'rgba(34,197,94,0.18)' },
+          { min: tsbMin, max: -30,    color: 'rgba(236,48,19,0.18)' },
         ];
         for (const z of bgZones) {
           const yT = Math.max(chartArea.top,    scales.y.getPixelForValue(z.max));
@@ -1348,11 +1348,12 @@ function App() {
           ctx.fillStyle = z.color;
           ctx.fillRect(chartArea.left, yT, chartArea.width, yB - yT);
         }
+        // Traits de démarcation aux frontières (pas à 0)
         for (const boundary of [20, 5, -10, -30]) {
           const py = scales.y.getPixelForValue(boundary);
           if (py < chartArea.top || py > chartArea.bottom) continue;
           ctx.beginPath(); ctx.moveTo(chartArea.left, py); ctx.lineTo(chartArea.right, py);
-          ctx.strokeStyle = 'rgba(32,30,29,0.15)'; ctx.lineWidth = 1; ctx.setLineDash([3,4]); ctx.stroke(); ctx.setLineDash([]);
+          ctx.strokeStyle = 'rgba(32,30,29,0.22)'; ctx.lineWidth = 1; ctx.setLineDash([3,4]); ctx.stroke(); ctx.setLineDash([]);
         }
         ctx.restore();
       }
@@ -1384,10 +1385,10 @@ function App() {
     upsert('fitness', fitRef, {
       type:'line', plugins:[crosshairPlugin, actPlugin],
       data:{ labels, datasets:[
-        { label:'Fatigue (ATL)', data: atlData, borderColor:'#201e1d', borderWidth:1.5,
+        { label:'Fatigue', data: atlData, borderColor:'#bab6b6', borderWidth:1.5,
           borderDash:[4,3], backgroundColor:'rgba(32,30,29,0.05)', fill:true,
           tension:0.3, pointRadius:0, yAxisID:'y' },
-        { label:'Condition physique (CTL)', data: ctlData, borderColor:'#ec3013', borderWidth:2.5,
+        { label:'Condition physique', data: ctlData, borderColor:'#ec3013', borderWidth:2.5,
           backgroundColor:'rgba(236,48,19,0.07)', fill:true, tension:0.3,
           pointRadius:0, yAxisID:'y' },
       ]},
@@ -1402,8 +1403,8 @@ function App() {
             callbacks:{
               title: items => items[0]?.label || '',
               label: item => {
-                if (item.dataset.label.startsWith('Fatigue'))   return '  Fatigue (ATL) : '+item.raw;
-                if (item.dataset.label.startsWith('Condition')) return '  Condition (CTL) : '+item.raw;
+                if (item.dataset.label.startsWith('Fatigue'))   return '  Fatigue : '+item.raw;
+                if (item.dataset.label.startsWith('Condition')) return '  Condition physique : '+item.raw;
                 return '';
               },
               afterBody: items => {
@@ -1471,7 +1472,22 @@ function App() {
           },
         },
         scales:{
-          x:{ grid:{display:false}, ticks:{maxTicksLimit:8,maxRotation:0,font:{size:10},color:'#bab6b6'}, border:{display:false} },
+          x:{ grid:{color:'rgba(32,30,29,0.10)',drawTicks:false}, border:{display:false},
+              ticks:{
+                maxRotation:0, font:{size:10}, color:'#bab6b6',
+                autoSkip:false, maxTicksLimit:9999,
+                callback(val, idx) {
+                  const lbl = this.getLabelForValue(val);
+                  if (!lbl) return null;
+                  const d = new Date(lbl);
+                  // Repère mois : 1er du mois → afficher "Jan", "Fév", etc.
+                  if (d.getDate() === 1) {
+                    return d.toLocaleDateString('fr-FR', { month: 'short' });
+                  }
+                  return null;
+                }
+              }
+            },
           y:{ position:'left', min:tsbMin, max:tsbMax, grid:{display:false}, border:{display:false},
               ticks:{font:{size:10},color:'#bab6b6',maxTicksLimit:5,callback:v=>(v>0?'+':'')+v} },
         },
@@ -2558,11 +2574,14 @@ function App() {
           h('div',{style:{flex:1,display:'flex',flexDirection:'column',padding:'12px 32px 0',minHeight:0}},
             // Titre + légende CTL/ATL en haut
             h('div',{style:{display:'flex',alignItems:'center',gap:'16px',marginBottom:'4px',flexShrink:0}},
-              h('span',{style:{fontSize:'11px',fontWeight:'700',color:'#201e1d'}},'Condition physique & fatigue'),
-              h('span',{style:{display:'flex',alignItems:'center',gap:'4px',fontSize:'10px',color:'#ec3013'}},
-                h('span',{style:{display:'inline-block',width:'16px',height:'2px',background:'#ec3013'}}), 'CTL'),
-              h('span',{style:{display:'flex',alignItems:'center',gap:'4px',fontSize:'10px',color:'#605d5d'}},
-                h('span',{style:{display:'inline-block',width:'16px',height:'0',borderTop:'2px dashed #201e1d'}}), 'ATL'),
+              h('span',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'11px',fontWeight:'700',color:'#ec3013'}},
+                h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:'#ec3013',flexShrink:0}}),
+                h('span',{style:{color:'#201e1d'}},'Condition physique')
+              ),
+              h('span',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'11px',fontWeight:'700',color:'#605d5d'}},
+                h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:'#bab6b6',flexShrink:0}}),
+                h('span',{},'Fatigue')
+              ),
               !pmcSeries.length&&h('span',{style:{marginLeft:'auto',fontSize:'11px',color:'#bab6b6'}},'Connecte Strava pour calculer CTL / ATL / TSB')
             ),
             // Graphique 1 : CTL/ATL — pas d'axe X
@@ -2714,23 +2733,57 @@ function App() {
               const ftpDelta=(ftpVal&&ftpBval&&ftpBval>0)?Math.round(((ftpVal-ftpBval)/ftpBval)*100):null;
               const wkgB=ftpBval&&profile.weight?Math.round(ftpBval/Number(profile.weight)*100)/100:null;
               const wkgDelta=(wkg&&wkgB&&wkgB>0)?Math.round(((wkg-wkgB)/wkgB)*100):null;
+              // ── Mode affichage des statistiques ──────────────────────────────
+              const seanceModeV = !showCurveA && !!selActId1;
+              const mainColorV = seanceModeV ? '#7c4dbc' : '#ec3013';
+              const s1 = seanceModeV ? actStreams[selActId1] : null;
+              const s1Pow = s1 && s1.pow && s1.pow.length ? s1.pow : null;
+              const s1Curve = s1Pow ? POWER_DURATIONS.map(({s:dur}) => bestAvgWindow(s1Pow, dur)) : null;
+              const s2 = (seanceModeV && showCurveSel && selActId2) ? actStreams[selActId2] : null;
+              const s2Pow = s2 && s2.pow && s2.pow.length ? s2.pow : null;
+              const s2Curve = s2Pow ? POWER_DURATIONS.map(({s:dur}) => bestAvgWindow(s2Pow, dur)) : null;
+              const wmaxS1 = s1Curve ? (Math.max(...s1Curve.filter(Boolean))||null) : null;
+              const kj20S1 = s1Curve ? (() => { const v=s1Curve[POWER_DURATIONS.findIndex(d=>d.s===1200)]; return v?Math.round(v*1200/1000*10)/10:null; })() : null;
+              const cpS1 = s1Curve ? (() => { const v30=s1Curve[POWER_DURATIONS.findIndex(d=>d.s===1800)],v60=s1Curve[POWER_DURATIONS.findIndex(d=>d.s===3600)]; const b=Math.max(v30||0,v60||0); return b>0?Math.round(b*0.92):null; })() : null;
+              const useS2ref = seanceModeV && !!s2Curve;
+              const usePeriodBref = !seanceModeV || (!s2Curve && showCurveB);
+              const wmaxRef = useS2ref?(Math.max(...s2Curve.filter(Boolean))||null):(usePeriodBref?wmaxB2:null);
+              const kj20Ref = useS2ref?(()=>{const v=s2Curve[POWER_DURATIONS.findIndex(d=>d.s===1200)];return v?Math.round(v*1200/1000*10)/10:null;})():(usePeriodBref?kjBval:null);
+              const cpRef   = useS2ref?(()=>{const v30=s2Curve[POWER_DURATIONS.findIndex(d=>d.s===1800)],v60=s2Curve[POWER_DURATIONS.findIndex(d=>d.s===3600)];const b=Math.max(v30||0,v60||0);return b>0?Math.round(b*0.92):null;})():(usePeriodBref?cpBval:null);
+              const ftpRef = usePeriodBref?ftpBval:null;
+              const wkgRef = usePeriodBref?wkgB:null;
+              const refLabelV = useS2ref
+                ?(()=>{const a=data.find(x=>String(x.id)===String(selActId2));return a?a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}):'Séance 2';})()
+                :(usePeriodBref?compLabel:null);
+              function mkChipV(vCur,vRef,betterHigh){
+                if(!vCur||!vRef||vRef===0||!refLabelV)return null;
+                const pct=Math.round(((vCur-vRef)/vRef)*100);
+                const good=betterHigh?pct>0:pct<0; const bad=!good&&pct!==0;
+                const sign=pct>0?'+':''; const txt=pct===0?'—':sign+pct+'%';
+                return{
+                  arrow:good?'▲':bad?'▼':'',
+                  arrowStyle:{fontSize:'13px',lineHeight:'1',color:seanceModeV?(good?'#7c4dbc':bad?'#2196f3':'transparent'):(good?'#ec3013':bad?'#605d5d':'transparent')},
+                  text:txt,
+                  style:{padding:'2px 7px',fontSize:'12px',fontWeight:'600',background:good?(seanceModeV?'rgba(124,77,188,0.12)':'#ffe0d9'):'#eae9e9',color:good?(seanceModeV?'#7c4dbc':'#ae1800'):'#605d5d'},
+                };
+              }
               const cells=[
-                {label:'FTP'+estTag,val:ftpVal?ftpVal+' W':null,delta:ftpDelta,sub:isEstimatedFtp?'estimée':'manuelle',betterHigh:true},
-                {label:'W/kg'+estTag,val:wkg?wkg+' W/kg':null,delta:wkgDelta,sub:profile.weight?'masse '+profile.weight+' kg':'renseigne le poids',betterHigh:true},
-                {label:'kJ·20 min',val:kjAval?kjAval+' kJ':null,delta:kjDelta,sub:kjAval?'= '+Math.round(kjAval*1000)+' J':'calcule la courbe',betterHigh:true},
-                {label:'Wmax'+estTag,val:wmaxA2?wmaxA2+' W':null,delta:wmaxDelta,sub:wmaxA2&&profile.weight?Math.round(wmaxA2/Number(profile.weight)*100)/100+' W/kg':'',betterHigh:true},
-                {label:'PC'+estTag,val:cpAval?cpAval+' W':null,delta:cpDelta,sub:'puissance critique',betterHigh:true},
+                {label:'FTP'+estTag,val:ftpVal?ftpVal+' W':null,chip:mkChipV(ftpVal,ftpRef,true),sub:isEstimatedFtp?'estimée':'manuelle'},
+                {label:'W/kg'+estTag,val:wkg?wkg+' W/kg':null,chip:mkChipV(wkg,wkgRef,true),sub:profile.weight?'masse '+profile.weight+' kg':'renseigne le poids'},
+                {label:'kJ·20 min',val:(seanceModeV?kj20S1:kjAval)?(seanceModeV?kj20S1:kjAval)+' kJ':null,chip:mkChipV(seanceModeV?kj20S1:kjAval,kj20Ref,true),sub:(seanceModeV?kj20S1:kjAval)?'= '+Math.round((seanceModeV?kj20S1:kjAval)*1000)+' J':'calcule la courbe'},
+                {label:'Wmax'+estTag,val:(seanceModeV?wmaxS1:wmaxA2)?(seanceModeV?wmaxS1:wmaxA2)+' W':null,chip:mkChipV(seanceModeV?wmaxS1:wmaxA2,wmaxRef,true),sub:(seanceModeV?wmaxS1:wmaxA2)&&profile.weight?Math.round((seanceModeV?wmaxS1:wmaxA2)/Number(profile.weight)*100)/100+' W/kg':''},
+                {label:'PC'+estTag,val:(seanceModeV?cpS1:cpAval)?(seanceModeV?cpS1:cpAval)+' W':null,chip:mkChipV(seanceModeV?cpS1:cpAval,cpRef,true),sub:'puissance critique'},
               ];
               return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
                 cells.map((c,i)=>{
-                  const chip=deltaChip(c.delta,c.betterHigh);
+                  const chip=c.chip;
                   return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
                     h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
-                    h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:c.val?'#201e1d':'#bab6b6'}},c.val||'—')),
+                    h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:c.val?mainColorV:'#bab6b6'}},c.val||'—')),
                     h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
-                      chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
-                      chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                      h('span',{style:{fontSize:'11px',color:'#bab6b6'}},compLabel)
+                      chip&&chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
+                      chip&&chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style}},chip.text),
+                      chip&&refLabelV&&h('span',{style:{fontSize:'11px',color:'#bab6b6'}},refLabelV)
                     ),
                     h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},c.sub)
                   );
@@ -2753,20 +2806,53 @@ function App() {
               const cur=statDefs.map(s=>paceStat(s.m,startA2,endA2));
               const prev=statDefs.map(s=>paceStat(s.m,startB2,endB2));
               const unit=isTrailPow?' VAP /km':' /km';
+              // ── Mode séance course ───────────────────────────────────────────
+              const seanceModeR = !showCurveA && !!selActId1;
+              const mainColorR = seanceModeR ? '#7c4dbc' : '#ec3013';
+              // Séance 1 : best pace par distance cible
+              const curSel1R = seanceModeR ? statDefs.map(({m:targetM}) => {
+                const ss = actStreams[selActId1];
+                if (!ss||!ss.dist||!ss.vel) return null;
+                const v = bestPaceWindow(ss.dist, ss.vel, targetM);
+                return v&&v<=MAX_PACE ? Math.round(v*100)/100 : null;
+              }) : cur;
+              // Référence : séance 2 si affichée, sinon période B si active, sinon null
+              const useS2R = seanceModeR && showCurveSel && !!selActId2;
+              const usePBR = !seanceModeR || (!useS2R && showCurveB);
+              const refR = useS2R ? statDefs.map(({m:targetM}) => {
+                const ss = actStreams[selActId2];
+                if (!ss||!ss.dist||!ss.vel) return null;
+                const v = bestPaceWindow(ss.dist, ss.vel, targetM);
+                return v&&v<=MAX_PACE ? Math.round(v*100)/100 : null;
+              }) : (usePBR ? prev : statDefs.map(()=>null));
+              const refLabelR = useS2R
+                ?(()=>{const a=data.find(x=>String(x.id)===String(selActId2));return a?a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}):'Séance 2';})()
+                :(usePBR?compLabel:null);
+              function mkChipR(vCur,vRef){
+                if(!vCur||!vRef||vRef===0||!refLabelR)return null;
+                const pct=Math.round(((vRef-vCur)/vRef)*100); // course : pace plus bas = meilleur
+                const good=pct>0; const bad=pct<0;
+                const sign=pct>0?'+':''; const txt=pct===0?'—':sign+pct+'%';
+                return{
+                  arrow:good?'▲':bad?'▼':'',
+                  arrowStyle:{fontSize:'13px',lineHeight:'1',color:seanceModeR?(good?'#7c4dbc':bad?'#2196f3':'transparent'):(good?'#ec3013':bad?'#605d5d':'transparent')},
+                  text:txt,
+                  style:{padding:'2px 7px',fontSize:'12px',fontWeight:'600',background:good?(seanceModeR?'rgba(124,77,188,0.12)':'#ffe0d9'):'#eae9e9',color:good?(seanceModeR?'#7c4dbc':'#ae1800'):'#605d5d'},
+                };
+              }
               return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
                 statDefs.map((s,i)=>{
-                  const vCur=cur[i],vPrev=prev[i];
-                  const pct=(vCur&&vPrev&&vPrev>0)?Math.round(((vPrev-vCur)/vPrev)*100):null;
-                  const chip=deltaChip(pct,true);
+                  const vCur=curSel1R[i], vRef=refR[i];
+                  const chip=mkChipR(vCur,vRef);
                   return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
                     h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},s.label),
-                    h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?'#201e1d':'#bab6b6'}},vCur?fmtPL(vCur)+unit:'—')),
+                    h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?mainColorR:'#bab6b6'}},vCur?fmtPL(vCur)+unit:'—')),
                     h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
-                      chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
-                      chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                      h('span',{style:{fontSize:'11px',color:'#bab6b6'}},compLabel)
+                      chip&&chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
+                      chip&&chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style}},chip.text),
+                      chip&&refLabelR&&h('span',{style:{fontSize:'11px',color:'#bab6b6'}},refLabelR)
                     ),
-                    h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},vPrev?fmtPL(vPrev)+unit+' préc.':'pas de données préc.')
+                    h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},vRef?fmtPL(vRef)+unit+' préc.':'pas de données préc.')
                   );
                 })
               );
@@ -2936,28 +3022,87 @@ function App() {
             });
             const zoneCur  = accumZone(0, hrRangeA);
             const zonePrev = accumZone(hrRangeA, hrRangeA + hrRangeB);
+            // ── Mode séance FC ───────────────────────────────────────────────
+            const seanceModeFC = !showCurveA && !!selActId1;
+            const mainColorFC = seanceModeFC ? '#7c4dbc' : '#ec3013';
+            // Accumulation bpm→perf par zone pour la séance 1
+            const zoneSel1 = seanceModeFC ? (() => {
+              const ss = actStreams[selActId1];
+              if (!ss||!ss.hr) return zoneDefs.map(()=>null);
+              const metric = isBikeFC ? ss.pow : ss.vel;
+              if (!metric) return zoneDefs.map(()=>null);
+              return zoneDefs.map(z => {
+                let sv=0,cnt=0;
+                for(let i=0;i<ss.hr.length;i++){
+                  if(ss.hr[i]>=z.lo&&ss.hr[i]<z.hi){
+                    const v=metric[i];
+                    if(isBikeFC&&v>0){sv+=v;cnt++;}
+                    else if(!isBikeFC&&v>=0.3&&v<=8.33){sv+=v;cnt++;}
+                  }
+                }
+                if(!cnt)return null;
+                const avg=sv/cnt;
+                return isBikeFC?Math.round(avg):Math.round((1000/60/avg)*100)/100;
+              });
+            })() : null;
+            // Accumulation par zone pour la séance 2 (référence possible)
+            const useS2FC = seanceModeFC && showCurveSel && !!selActId2;
+            const zoneSel2 = useS2FC ? (() => {
+              const ss = actStreams[selActId2];
+              if (!ss||!ss.hr) return zoneDefs.map(()=>null);
+              const metric = isBikeFC ? ss.pow : ss.vel;
+              if (!metric) return zoneDefs.map(()=>null);
+              return zoneDefs.map(z => {
+                let sv=0,cnt=0;
+                for(let i=0;i<ss.hr.length;i++){
+                  if(ss.hr[i]>=z.lo&&ss.hr[i]<z.hi){
+                    const v=metric[i];
+                    if(isBikeFC&&v>0){sv+=v;cnt++;}
+                    else if(!isBikeFC&&v>=0.3&&v<=8.33){sv+=v;cnt++;}
+                  }
+                }
+                if(!cnt)return null;
+                const avg=sv/cnt;
+                return isBikeFC?Math.round(avg):Math.round((1000/60/avg)*100)/100;
+              });
+            })() : null;
+            const usePBFC = !seanceModeFC || (!useS2FC && showCurveB);
+            const refLabelFC = useS2FC
+              ?(()=>{const a=data.find(x=>String(x.id)===String(selActId2));return a?a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}):'Séance 2';})()
+              :(usePBFC?(()=>{const rl=d=>d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an';return 'vs '+rl(hrRangeB)+' préc.';})():null);
+            function mkChipFC(vCur,vRef){
+              if(!vCur||!vRef||vRef===0||!refLabelFC)return null;
+              const raw=Math.round(((vCur-vRef)/vRef)*100);
+              const pct=isBikeFC?raw:-raw; // course: pace plus bas = meilleur
+              const good=pct>0; const bad=pct<0;
+              const sign=pct>0?'+':''; const txt=pct===0?'—':sign+pct+'%';
+              return{
+                arrow:good?'▲':bad?'▼':'',
+                arrowStyle:{fontSize:'13px',lineHeight:'1',color:seanceModeFC?(good?'#7c4dbc':bad?'#2196f3':'transparent'):(good?'#ec3013':bad?'#605d5d':'transparent')},
+                text:txt,
+                style:{padding:'2px 7px',fontSize:'12px',fontWeight:'600',background:good?(seanceModeFC?'rgba(124,77,188,0.12)':'#ffe0d9'):'#eae9e9',color:good?(seanceModeFC?'#7c4dbc':'#ae1800'):'#605d5d'},
+              };
+            }
             return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
               zoneDefs.map((z,i) => {
-                const vCur = zoneCur[i], vPrev = zonePrev[i];
-                // Pour vélo : hausse = meilleur. Pour course : baisse allure = meilleur.
-                const raw = (vCur&&vPrev&&vPrev>0) ? Math.round(((vCur-vPrev)/vPrev)*100) : null;
-                const pct = isBikeFC ? raw : (raw !== null ? -raw : null);
-                const chip = deltaChip(pct, true);
+                const vCur = seanceModeFC ? zoneSel1[i] : zoneCur[i];
+                const vRef = useS2FC ? zoneSel2[i] : (usePBFC ? zonePrev[i] : null);
+                const chip = mkChipFC(vCur,vRef);
                 return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
                   h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},z.label),
                   h('span',{style:{display:'block',marginTop:'4px',fontSize:'10px',color:'#bab6b6',letterSpacing:'0.06em'}},z.lo+'–'+z.hi+' bpm'),
                   h('div',{style:{marginTop:'8px'}},
-                    h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?'#201e1d':'#bab6b6'}},
+                    h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:vCur?mainColorFC:'#bab6b6'}},
                       vCur ? (isBikeFC ? vCur+' W' : fmtPZ(vCur)+' /km') : '—'
                     )
                   ),
                   h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
-                    chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
-                    chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style,padding:'2px 7px'}},chip.text),
-                    h('span',{style:{fontSize:'11px',color:'#bab6b6'}},(() => { const rl=d=>d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an'; return 'vs '+rl(hrRangeB)+' préc.'; })())
+                    chip&&chip.arrow&&h('span',{style:chip.arrowStyle},chip.arrow),
+                    chip&&chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style}},chip.text),
+                    chip&&refLabelFC&&h('span',{style:{fontSize:'11px',color:'#bab6b6'}},refLabelFC)
                   ),
                   h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    vPrev ? (isBikeFC ? vPrev+' W précédemment' : fmtPZ(vPrev)+' /km précédemment') : 'pas de données préc.'
+                    vRef ? (isBikeFC ? vRef+' W préc.' : fmtPZ(vRef)+' /km préc.') : 'pas de données préc.'
                   )
                 );
               })
