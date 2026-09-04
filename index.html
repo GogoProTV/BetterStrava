@@ -1468,10 +1468,16 @@ function App() {
       }
     };
 
-    // Plugin segments colorés TSB — chaque portion prend EXACTEMENT la couleur
-    // de sa zone : les segments qui traversent une frontière sont découpés au
-    // point de croisement.
-    const TSB_BOUNDS = [20, 5, -10, -30];
+    // Plugin segments colorés TSB — courbe LISSÉE (Catmull-Rom) où chaque petit
+    // tronçon échantillonné prend la couleur de sa zone (proche de la valeur
+    // réelle interpolée à cet endroit de la courbe).
+    const catmullRom = (p0, p1, p2, p3, t) => {
+      const t2 = t*t, t3 = t2*t;
+      return {
+        x: 0.5*((2*p1.x) + (-p0.x+p2.x)*t + (2*p0.x-5*p1.x+4*p2.x-p3.x)*t2 + (-p0.x+3*p1.x-3*p2.x+p3.x)*t3),
+        y: 0.5*((2*p1.y) + (-p0.y+p2.y)*t + (2*p0.y-5*p1.y+4*p2.y-p3.y)*t2 + (-p0.y+3*p1.y-3*p2.y+p3.y)*t3),
+      };
+    };
     const segmentColorPlugin = {
       id: 'tsbSegmentColor',
       beforeDatasetDraw(chart, args) {
@@ -1482,26 +1488,25 @@ function App() {
         if (!chartArea) return;
         ctx.save();
         ctx.beginPath(); ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height); ctx.clip();
-        ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-        for (let i = 1; i < meta.data.length; i++) {
-          const p0 = meta.data[i-1], p1 = meta.data[i];
-          const v0 = tsbData[i-1], v1 = tsbData[i];
-          if (v0 == null || v1 == null) continue;
-          const cuts = TSB_BOUNDS
-            .filter(b => (b - v0) * (b - v1) < 0)
-            .sort((a, b) => (v1 > v0 ? a - b : b - a));
-          let px = p0.x, py = p0.y, pv = v0;
-          const seg = (x, y, midV) => {
-            ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y);
-            ctx.strokeStyle = tsbZoneLine(midV); ctx.stroke();
-            px = x; py = y;
-          };
-          for (const b of cuts) {
-            const t = (b - v0) / (v1 - v0);
-            seg(p0.x + t * (p1.x - p0.x), p0.y + t * (p1.y - p0.y), (pv + b) / 2);
-            pv = b;
+        ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        const n = meta.data.length;
+        const STEPS = 12;
+        for (let i = 0; i < n - 1; i++) {
+          const v1 = tsbData[i], v2 = tsbData[i+1];
+          if (v1 == null || v2 == null) continue;
+          const q0 = i > 0 ? meta.data[i-1] : meta.data[i];
+          const q1 = meta.data[i];
+          const q2 = meta.data[i+1];
+          const q3 = i+2 < n ? meta.data[i+2] : meta.data[i+1];
+          let prev = q1;
+          for (let s = 1; s <= STEPS; s++) {
+            const t = s / STEPS;
+            const pt = catmullRom(q0, q1, q2, q3, t);
+            const v = v1 + (v2 - v1) * t;
+            ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(pt.x, pt.y);
+            ctx.strokeStyle = tsbZoneLine(v); ctx.stroke();
+            prev = pt;
           }
-          seg(p1.x, p1.y, (pv + v1) / 2);
         }
         ctx.restore();
         return false;
@@ -1947,8 +1952,37 @@ function App() {
       return Math.round((win.reduce((s,v)=>s+v,0)/win.length)*10)/10;
     });
     const vo2MonthMk = monthBoundaries(pts.map(p=>p.date.getTime()));
+    // Petit carré + valeur à côté de chaque point (dataset 0 = estimation par séance)
+    const vo2LabelsPlugin = {
+      id: 'vo2Labels',
+      afterDatasetsDraw(chart) {
+        const meta = chart.getDatasetMeta(0);
+        if (!meta || !meta.data.length) return;
+        const ds = chart.data.datasets[0];
+        const { ctx, chartArea } = chart;
+        ctx.save();
+        ctx.font = '700 10px Archivo, system-ui, sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        const SQ = 6;
+        let lastX = -Infinity;
+        meta.data.forEach((pt, i) => {
+          const v = ds.data[i];
+          if (v == null) return;
+          if (pt.x < chartArea.left || pt.x > chartArea.right) return;
+          if (pt.x - lastX < 34) return; // évite le chevauchement des étiquettes
+          const sx = pt.x + 7, sy = pt.y - SQ / 2;
+          ctx.fillStyle = '#f9a882';
+          ctx.fillRect(sx, sy, SQ, SQ);
+          ctx.fillStyle = '#605d5d';
+          ctx.fillText(String(v), sx + SQ + 4, pt.y);
+          lastX = pt.x;
+        });
+        ctx.restore();
+      }
+    };
     upsert('vo2', vo2Ref, {
-      type:'line', plugins:[crosshairPlugin, monthMarkersPlugin],
+      type:'line', plugins:[crosshairPlugin, monthMarkersPlugin, vo2LabelsPlugin],
       data:{ labels, datasets:[
         { label:'Estimation par séance', data:vals, borderColor:'transparent', backgroundColor:'#f9a882',
           fill:false, pointRadius:3.5, pointHoverRadius:5, pointBackgroundColor:'#f9a882',
@@ -2052,7 +2086,7 @@ function App() {
         return {
           label: sp, data: perSport[sp],
           borderColor: col, borderWidth: 2,
-          backgroundColor: hexA(col, 0.5),
+          backgroundColor: hexA(col, 0.15),
           fill: i === 0 ? 'origin' : '-1', tension: 0.25,
           pointRadius: 2, pointHoverRadius: 5, pointBackgroundColor: col,
           pointBorderColor: '#f3f2f2', pointBorderWidth: 1, yAxisID: 'y',
@@ -3452,16 +3486,18 @@ function App() {
             const runs = data.filter(a=>(a.sport==='Course'||a.sport==='Trail')&&a.date.getTime()>=cutoff);
             const pts = runs.map(a=>({date:a.date,act:a,v:estimateVo2maxFromRun(a,hrMax,hrRest)})).filter(p=>p.v!==null).sort((a,b)=>a.date-b.date);
             if (!pts.length) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Aucune séance de course exploitable sur cette période — il faut un effort sous-maximal stable, FC entre 50 et 95 % de la réserve cardiaque.');
-            const recent = pts.slice(-3);
-            const vo2Now = Math.round((recent.reduce((s,p)=>s+p.v,0)/recent.length)*10)/10;
+            // Moyenne sur TOUTES les séances exploitables de la période sélectionnée
+            // (le chiffre change bien quand on change de période dans la bande du haut).
+            const vo2Now = Math.round((pts.reduce((s,p)=>s+p.v,0)/pts.length)*10)/10;
             const vma = Math.round(((vo2Now-3.5)/0.2)*60/1000*100)/100; // km/h
             const vmaMs = vma*1000/3600;
             const t5k = vmaMs>0 ? 5000/(vmaMs*0.93) : null; // secondes, ~93 % VMA
             const fmtMinSec = s => { if(!s) return '—'; const m=Math.floor(s/60); const sec=Math.round(s%60); return m+"'"+String(sec).padStart(2,'0')+'"'; };
             const cat = vo2maxCategory(vo2Now, profile.gender);
             const trend = pts.length>1 ? Math.round((pts[pts.length-1].v-pts[0].v)*10)/10 : null;
+            const rlVo2 = d=>d===30?'1 mois':d===90?'3 mois':d===180?'6 mois':'1 an';
             const cells = [
-              {label:'VO2max estimé', value: vo2Now+' ml/kg/min', sub:'moyenne des 3 dernières séances exploitables'},
+              {label:'VO2max estimé', value: vo2Now+' ml/kg/min', sub:'moyenne sur '+pts.length+' séance'+(pts.length>1?'s':'')+' · '+rlVo2(vo2Range)},
               {label:'VMA estimée', value: fmtNum(vma,1)+' km/h', sub:'vitesse maximale aérobie'},
               {label:'5 km projeté', value: fmtMinSec(t5k), sub:'à ~93 % de la VMA'},
               {label:'Catégorie', value: cat||'—', sub: profile.gender==='Non précisé'?'renseigne le sexe dans le Profil pour affiner':'estimation indicative, non clinique'},
