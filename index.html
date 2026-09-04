@@ -384,6 +384,36 @@ function calcVI(np, avgPow) {
   return Math.round((np / avgPow) * 100) / 100;
 }
 
+// ── Efficiency Factor agrégé (période ou séance) ─────────────────────────────
+function avgStream(arr) {
+  if (!arr || !arr.length) return null;
+  let s = 0, c = 0;
+  for (let i = 0; i < arr.length; i++) { const v = arr[i]; if (v > 0) { s += v; c++; } }
+  return c ? s / c : null;
+}
+function actEF(sport, s) {
+  if (!s || s === 'error' || !s.hr) return null;
+  const hr = avgStream(s.hr);
+  if (!hr) return null;
+  if (sport === 'Vélo') {
+    if (!s.pow) return null;
+    const np = calcNP(s.pow) || avgStream(s.pow);
+    return calcEF('Vélo', np, null, hr);
+  }
+  if (!s.vel) return null;
+  return calcEF('Course', null, avgStream(s.vel), hr);
+}
+function periodEF(sport, list, actStreams, t0, t1) {
+  const pool = list.filter(a => a.sport === sport && a.date.getTime() >= t0 && a.date.getTime() < t1);
+  const efs = [];
+  for (const a of pool) {
+    const ef = actEF(sport, actStreams[a.id]);
+    if (ef) efs.push(ef);
+  }
+  if (!efs.length) return null;
+  return Math.round((efs.reduce((x, y) => x + y, 0) / efs.length) * 100) / 100;
+}
+
 // Pw:Hr (vélo) et Pa:Hr (course) — découplage aérobie sur les streams
 // Calcul sur 1ère vs 2ème moitié (méthode TrainingPeaks)
 // Pw:Hr = (EF_2nde / EF_1ère - 1) × 100  en %
@@ -2145,12 +2175,15 @@ function App() {
           const dCTL = pmcPrev&&pmcCur ? Math.round((pmcCur.ctl - pmcPrev.ctl)*10)/10 : null;
           const dATL = pmcPrev&&pmcCur ? Math.round((pmcCur.atl - pmcPrev.atl)*10)/10 : null;
           const dTSB = pmcPrev&&pmcCur ? Math.round((pmcCur.tsb - pmcPrev.tsb)*10)/10 : null;
-          const pmcChips = (dCTL!==null||dATL!==null) ? [
-            { label: (dCTL>=0?'+':'')+dCTL+' Cond. physique → '+(pmcCur?pmcCur.ctl:''), color:'#22c55e' },
-            { label: (dATL>=0?'+':'')+dATL+' Fatigue → '+(pmcCur?pmcCur.atl:''), color:'#f97316' },
-            dTSB!==null&&{ label: (dTSB>=0?'+':'')+dTSB+' Forme', color:'#969191' },
-          ].filter(Boolean) : [];
-          const pmcRow = pmcChips.length ? { label:'Gains', value:'', unit:'', color:'#201e1d', chips: pmcChips, last:true } : null;
+          const dSign = v => v==null ? '—' : (v>=0?'+':'')+v;
+          const pmcCells = (dCTL!=null||dATL!=null) ? [
+            { label:'+ Cond. physique', value:dSign(dCTL), unit:'', color:'#22c55e',
+              tooltip:{ main:'Variation de CTL (condition physique) apportée par cette séance.', calc:'CTL du jour − CTL de la veille.' }},
+            { label:'+ Fatigue', value:dSign(dATL), unit:'', color:'#f97316',
+              tooltip:{ main:'Variation d’ATL (fatigue) apportée par cette séance.', calc:'ATL du jour − ATL de la veille.' }},
+            { label:'- Forme', value:dSign(dTSB), unit:'', color:'#969191',
+              tooltip:{ main:'Variation de TSB (forme) apportée par cette séance.', calc:'TSB du jour − TSB de la veille.' }},
+          ] : [];
           const avgPowArr  = sOk&&s.pow ? s.pow : null;
           const avgPowMean = avgPowArr ? Math.round(avgPowArr.reduce((a,b)=>a+b,0)/avgPowArr.length) : (act.power||null);
           const vi      = calcVI(np, avgPowMean);
@@ -2167,7 +2200,7 @@ function App() {
               tooltip:{ main:'Efficacité aérobie : watts par battement.', calc:'NP / FC moy.' }},
             { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
               tooltip:{ main:'Découplage aérobie. < 5 % = stable.', calc:'EF 2ème / EF 1ère - 1 × 100.' }},
-            pmcRow,
+            ...pmcCells,
           ].filter(Boolean);
         })(),
       ];
@@ -2193,12 +2226,15 @@ function App() {
           const dCTL = pmcPrev&&pmcCur ? Math.round((pmcCur.ctl - pmcPrev.ctl)*10)/10 : null;
           const dATL = pmcPrev&&pmcCur ? Math.round((pmcCur.atl - pmcPrev.atl)*10)/10 : null;
           const dTSB = pmcPrev&&pmcCur ? Math.round((pmcCur.tsb - pmcPrev.tsb)*10)/10 : null;
-          const pmcChips = (dCTL!==null||dATL!==null) ? [
-            { label: (dCTL>=0?'+':'')+dCTL+' Cond. physique \u2192 '+(pmcCur?pmcCur.ctl:''), color:'#22c55e' },
-            { label: (dATL>=0?'+':'')+dATL+' Fatigue \u2192 '+(pmcCur?pmcCur.atl:''), color:'#f97316' },
-            dTSB!==null&&{ label: (dTSB>=0?'+':'')+dTSB+' Forme', color:'#969191' },
-          ].filter(Boolean) : [];
-          const pmcRow = pmcChips.length ? { label:'Gains', value:'', unit:'', color:'#201e1d', chips: pmcChips, last:true } : null;
+          const dSign = v => v==null ? '\u2014' : (v>=0?'+':'')+v;
+          const pmcCells = (dCTL!=null||dATL!=null) ? [
+            { label:'+ Cond. physique', value:dSign(dCTL), unit:'', color:'#22c55e',
+              tooltip:{ main:'Variation de CTL (condition physique) apport\u00e9e par cette s\u00e9ance.', calc:'CTL du jour \u2212 CTL de la veille.' }},
+            { label:'+ Fatigue', value:dSign(dATL), unit:'', color:'#f97316',
+              tooltip:{ main:'Variation d\u2019ATL (fatigue) apport\u00e9e par cette s\u00e9ance.', calc:'ATL du jour \u2212 ATL de la veille.' }},
+            { label:'- Forme', value:dSign(dTSB), unit:'', color:'#969191',
+              tooltip:{ main:'Variation de TSB (forme) apport\u00e9e par cette s\u00e9ance.', calc:'TSB du jour \u2212 TSB de la veille.' }},
+          ] : [];
           const avgVelMs = sOk&&s.vel ? s.vel.reduce((a,b)=>a+b,0)/s.vel.length : (act.dist&&act.time?(act.dist*1000)/(act.time*60):null);
           const ef      = calcEF('Course', null, avgVelMs, avgHr||(act.hr||null));
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
@@ -2211,7 +2247,7 @@ function App() {
               tooltip:{ main:'Efficacité aérobie.', calc:'Vitesse (m/min) / FC moy.' }},
             { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
               tooltip:{ main:'Découplage aérobie. < 5 % = stable.', calc:'EF 2ème / EF 1ère - 1 × 100.' }},
-            pmcRow,
+            ...pmcCells,
           ].filter(Boolean);
         })(),
       ];
@@ -2237,12 +2273,15 @@ function App() {
           const dCTL = pmcPrev&&pmcCur ? Math.round((pmcCur.ctl - pmcPrev.ctl)*10)/10 : null;
           const dATL = pmcPrev&&pmcCur ? Math.round((pmcCur.atl - pmcPrev.atl)*10)/10 : null;
           const dTSB = pmcPrev&&pmcCur ? Math.round((pmcCur.tsb - pmcPrev.tsb)*10)/10 : null;
-          const pmcChips = (dCTL!==null||dATL!==null) ? [
-            { label: (dCTL>=0?'+':'')+dCTL+' Cond. physique \u2192 '+(pmcCur?pmcCur.ctl:''), color:'#22c55e' },
-            { label: (dATL>=0?'+':'')+dATL+' Fatigue \u2192 '+(pmcCur?pmcCur.atl:''), color:'#f97316' },
-            dTSB!==null&&{ label: (dTSB>=0?'+':'')+dTSB+' Forme', color:'#969191' },
-          ].filter(Boolean) : [];
-          const pmcRow = pmcChips.length ? { label:'Gains', value:'', unit:'', color:'#201e1d', chips: pmcChips, last:true } : null;
+          const dSign = v => v==null ? '\u2014' : (v>=0?'+':'')+v;
+          const pmcCells = (dCTL!=null||dATL!=null) ? [
+            { label:'+ Cond. physique', value:dSign(dCTL), unit:'', color:'#22c55e',
+              tooltip:{ main:'Variation de CTL (condition physique) apport\u00e9e par cette s\u00e9ance.', calc:'CTL du jour \u2212 CTL de la veille.' }},
+            { label:'+ Fatigue', value:dSign(dATL), unit:'', color:'#f97316',
+              tooltip:{ main:'Variation d\u2019ATL (fatigue) apport\u00e9e par cette s\u00e9ance.', calc:'ATL du jour \u2212 ATL de la veille.' }},
+            { label:'- Forme', value:dSign(dTSB), unit:'', color:'#969191',
+              tooltip:{ main:'Variation de TSB (forme) apport\u00e9e par cette s\u00e9ance.', calc:'TSB du jour \u2212 TSB de la veille.' }},
+          ] : [];
           const avgVelMs = sOk&&s.vel ? s.vel.reduce((a,b)=>a+b,0)/s.vel.length : (act.dist&&act.time?(act.dist*1000)/(act.time*60):null);
           const ef      = calcEF('Course', null, avgVelMs, avgHr||(act.hr||null));
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
@@ -2255,10 +2294,12 @@ function App() {
               tooltip:{ main:'Efficacité aérobie.', calc:'Vitesse (m/min) / FC moy.' }},
             { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
               tooltip:{ main:'Découplage aérobie. < 5 % = stable.', calc:'EF 2ème / EF 1ère - 1 × 100.' }},
-            pmcRow,
+            ...pmcCells,
           ].filter(Boolean);
         })(),
       ];
+      // Course : masquer les colonnes vides (pas de donnée)
+      detailKpis = detailKpis.filter(k => k && k.value!=='—' && k.value!=='Donnée manquante' && k.value!=='' && k.value!=null);
     }
     const nCols = detailKpis.length;
     const serieBtns = [
@@ -2290,14 +2331,6 @@ function App() {
           h('div', { style:{ display:'grid', gridTemplateColumns:'repeat('+nCols+',1fr)', gap:'0', borderBottom:'1px solid #d7d3d3', marginBottom:'20px' } },
             detailKpis.map((kpi,i) => {
               const [showTip, setShowTip] = React.useState(false);
-              // Rendu spécial pour Gains (chips colorés) — toujours en dernière position
-              if (kpi.chips) return h('div', { key:i,
-                style:{ padding:'10px 14px 12px', marginLeft:'auto', borderLeft:'1px solid #d7d3d3' } },
-                h('span', { style:{ display:'block', fontSize:'10px', fontWeight:'600', letterSpacing:'0.1em', textTransform:'uppercase', color:'#605d5d' } }, kpi.label),
-                h('div', { style:{ display:'flex', flexDirection:'column', gap:'2px', marginTop:'6px' } },
-                  kpi.chips.map((c,ci) => h('span', { key:ci, style:{ fontSize:'10px', fontWeight:'700', color: c.color, letterSpacing:'0.02em' } }, c.label))
-                )
-              );
               return h('div', { key:i,
                 style:{ padding:'10px 14px 12px', borderRight: i<nCols-1 ? '1px solid #d7d3d3' : undefined, position:'relative', cursor: kpi.tooltip?'help':'default' },
                 onMouseEnter: () => { if(kpi.tooltip) setShowTip(true); },
@@ -2728,11 +2761,10 @@ function App() {
               const cpAval=(()=>{const v30=curA2[b30],v60=curA2[b60];const b=Math.max(v30?v30.w:0,v60?v60.w:0);return b>0?Math.round(b*0.92):null;})();
               const cpBval=(()=>{const v30=curB2[b30],v60=curB2[b60];const b=Math.max(v30?v30.w:0,v60?v60.w:0);return b>0?Math.round(b*0.92):null;})();
               const cpDelta=(cpAval&&cpBval&&cpBval>0)?Math.round(((cpAval-cpBval)/cpBval)*100):null;
-              const wkg=ftpVal&&profile.weight?Math.round(ftpVal/Number(profile.weight)*100)/100:null;
+              // FTP-équivalent de la période A (meilleur 20 min × 0.95) — sert au W/kg
+              const ftpAval=(()=>{const best=curA2[POWER_DURATIONS.findIndex(d=>d.s===1200)];return best?Math.round(best.w*0.95):null;})();
               const ftpBval=(()=>{const best=curB2[POWER_DURATIONS.findIndex(d=>d.s===1200)];return best?Math.round(best.w*0.95):null;})();
-              const ftpDelta=(ftpVal&&ftpBval&&ftpBval>0)?Math.round(((ftpVal-ftpBval)/ftpBval)*100):null;
               const wkgB=ftpBval&&profile.weight?Math.round(ftpBval/Number(profile.weight)*100)/100:null;
-              const wkgDelta=(wkg&&wkgB&&wkgB>0)?Math.round(((wkg-wkgB)/wkgB)*100):null;
               // ── Mode affichage des statistiques ──────────────────────────────
               // Les chiffres du haut suivent ce qui est réellement tracé :
               //  · courbe « Actuelle » activée  → période A (rouge)
@@ -2749,6 +2781,10 @@ function App() {
               const wmaxS1 = s1Curve ? (Math.max(...s1Curve.filter(Boolean))||null) : null;
               const kj20S1 = s1Curve ? (() => { const v=s1Curve[POWER_DURATIONS.findIndex(d=>d.s===1200)]; return v?Math.round(v*1200/1000*10)/10:null; })() : null;
               const cpS1 = s1Curve ? (() => { const v30=s1Curve[POWER_DURATIONS.findIndex(d=>d.s===1800)],v60=s1Curve[POWER_DURATIONS.findIndex(d=>d.s===3600)]; const b=Math.max(v30||0,v60||0); return b>0?Math.round(b*0.92):null; })() : null;
+              // W/kg lié à la source affichée : séance 1 si mode séance, sinon période A
+              const ftpS1 = s1Curve ? (()=>{const v=s1Curve[POWER_DURATIONS.findIndex(d=>d.s===1200)];return v?Math.round(v*0.95):null;})() : null;
+              const wkgSrc = seanceModeV ? ftpS1 : ftpAval;
+              const wkg = wkgSrc && profile.weight ? Math.round(wkgSrc/Number(profile.weight)*100)/100 : null;
               const useS2ref = seanceModeV && !!s2Curve;
               const usePeriodBref = !seanceModeV || (!s2Curve && showCurveB);
               const wmaxRef = useS2ref?(Math.max(...s2Curve.filter(Boolean))||null):(usePeriodBref?wmaxB2:null);
@@ -2772,16 +2808,15 @@ function App() {
                 };
               }
               const cells=[
-                {label:'FTP'+estTag,val:ftpVal?ftpVal+' W':null,chip:mkChipV(ftpVal,ftpRef,true),sub:isEstimatedFtp?'estimée':'manuelle'},
-                {label:'W/kg'+estTag,val:wkg?wkg+' W/kg':null,chip:mkChipV(wkg,wkgRef,true),sub:profile.weight?'masse '+profile.weight+' kg':'renseigne le poids'},
+                {label:'W/kg'+estTag,val:wkg?wkg+' W/kg':null,chip:mkChipV(wkg,wkgRef,true),sub:!profile.weight?'renseigne le poids':(seanceModeV?'séance · '+profile.weight+' kg':'période · '+profile.weight+' kg')},
                 {label:'kJ·20 min',val:(seanceModeV?kj20S1:kjAval)?(seanceModeV?kj20S1:kjAval)+' kJ':null,chip:mkChipV(seanceModeV?kj20S1:kjAval,kj20Ref,true),sub:(seanceModeV?kj20S1:kjAval)?'= '+Math.round((seanceModeV?kj20S1:kjAval)*1000)+' J':'calcule la courbe'},
                 {label:'Wmax'+estTag,val:(seanceModeV?wmaxS1:wmaxA2)?(seanceModeV?wmaxS1:wmaxA2)+' W':null,chip:mkChipV(seanceModeV?wmaxS1:wmaxA2,wmaxRef,true),sub:(seanceModeV?wmaxS1:wmaxA2)&&profile.weight?Math.round((seanceModeV?wmaxS1:wmaxA2)/Number(profile.weight)*100)/100+' W/kg':''},
                 {label:'PC'+estTag,val:(seanceModeV?cpS1:cpAval)?(seanceModeV?cpS1:cpAval)+' W':null,chip:mkChipV(seanceModeV?cpS1:cpAval,cpRef,true),sub:'puissance critique'},
               ];
-              return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',borderBottom:'2px solid #201e1d'}},
+              return h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',borderBottom:'2px solid #201e1d'}},
                 cells.map((c,i)=>{
                   const chip=c.chip;
-                  return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<4?'2px solid #201e1d':undefined}},
+                  return h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<3?'2px solid #201e1d':undefined}},
                     h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
                     h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:c.val?mainColorV:'#bab6b6'}},c.val||'—')),
                     h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'8px'}},
@@ -2885,7 +2920,19 @@ function App() {
             })(),
             h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
               h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},powSport==='Vélo'?'Courbe de puissance':powSport==='Trail'?'Allure VAP — Trail':'Meilleure allure — Course'),
-              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'fenêtre glissante s/s')
+              h('div',{style:{display:'flex',alignItems:'baseline',gap:'14px'}},
+                (()=>{
+                  const efSeance = !showCurveA && showCurveSel && !!selActId1;
+                  const efEnd = Date.now(), efStart = efEnd - powRangeA*86400000;
+                  const efVal = efSeance ? actEF(powSport, actStreams[selActId1]) : periodEF(powSport, data, actStreams, efStart, efEnd);
+                  const efUnit = powSport==='Vélo' ? 'W/bpm' : 'm/min/bpm';
+                  const efCol = efSeance ? '#7c4dbc' : '#ec3013';
+                  return h('span',{style:{fontSize:'11px',letterSpacing:'0.08em',textTransform:'uppercase',fontWeight:'700',color:efVal?efCol:'#bab6b6'}},
+                    'EF '+(efVal!=null?efVal+' '+efUnit:'—')+(efSeance?' · séance':' · période')
+                  );
+                })(),
+                h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'fenêtre glissante s/s')
+              )
             ),
             h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
               powSport==='Vélo'?'Puissance estimée par fenêtre glissante (modèle physique Crr/CdA).':'Meilleure allure par fenêtre glissante seconde par seconde, de 200 m à 42,2 km tous les 100 m.'
