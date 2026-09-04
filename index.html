@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -1589,8 +1589,9 @@ function App() {
           },
         },
         scales:{
-          // Axe X masque sur graphique 1 — partagé visuellement avec le graphique 2
-          x:{ grid:{display:false}, ticks:{display:false}, border:{display:false} },
+          // Axe X entièrement masqué (display:false) sur graphique 1 — pas de hauteur
+          // réservée pour l'axe, pour coller directement au graphique 2 en dessous.
+          x:{ display:false },
           y:{ position:'left', min:0, max:yMax1, grid:{color:'rgba(32,30,29,0.07)',drawTicks:false}, border:{display:false},
               ticks:{font:{size:10},color:'#bab6b6',maxTicksLimit:5} },
         },
@@ -1964,18 +1965,14 @@ function App() {
         ctx.font = '700 10px Archivo, system-ui, sans-serif';
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
-        const SQ = 6;
         let lastX = -Infinity;
         meta.data.forEach((pt, i) => {
           const v = ds.data[i];
           if (v == null) return;
           if (pt.x < chartArea.left || pt.x > chartArea.right) return;
           if (pt.x - lastX < 34) return; // évite le chevauchement des étiquettes
-          const sx = pt.x + 7, sy = pt.y - SQ / 2;
-          ctx.fillStyle = '#f9a882';
-          ctx.fillRect(sx, sy, SQ, SQ);
           ctx.fillStyle = '#605d5d';
-          ctx.fillText(String(v), sx + SQ + 4, pt.y);
+          ctx.fillText(String(v), pt.x + 7, pt.y);
           lastX = pt.x;
         });
         ctx.restore();
@@ -2685,15 +2682,9 @@ function App() {
         h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.14em',textTransform:'uppercase',color:'#ec3013'}},'Data explorer'),
         h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.05'}},'Analyse',h('br'),"d'entraînement")
       ),
-      h('nav',{style:{display:'flex',flexDirection:'column',borderBottom:'2px solid #201e1d'}},
+      h('nav',{style:{display:'flex',flexDirection:'column',borderBottom:'1px solid #201e1d'}},
         h('button',{type:'button',onClick:()=>setTab('programme'),style:navStyle(tab==='programme'),onMouseEnter:e=>{if(tab!=='programme')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='programme')e.currentTarget.style.background='transparent';}},'Programme'),
-        h('button',{type:'button',onClick:()=>{setAthleteOpen(true);setTab('athlete');},style:navStyle(tab==='athlete'),onMouseEnter:e=>{if(tab!=='athlete')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='athlete')e.currentTarget.style.background='transparent';}},
-          h('span',{style:{flex:'1'}},'Athlète'),
-          h('span',{style:{fontSize:'12px',lineHeight:'1',transform:(athleteOpen||tab==='athlete')?'rotate(180deg)':'rotate(0deg)',transition:'transform 0.2s'}},'\u25be')
-        ),
-        (athleteOpen||tab==='athlete')&&h('div',{style:{display:'flex',flexDirection:'column',background:'#eae9e9',borderBottom:'2px solid #201e1d'}},
-          athleteSections.map(s=>h('button',{key:s,type:'button',onClick:()=>{setAthleteSection(s);setTab('athlete');},style:navStyle(tab==='athlete'&&athleteSection===s,true),onMouseEnter:e=>{if(athleteSection!==s)e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(athleteSection!==s)e.currentTarget.style.background='transparent';}},s))
-        ),
+        athleteSections.map(s=>h('button',{key:s,type:'button',onClick:()=>{setAthleteSection(s);setTab('athlete');},style:navStyle(tab==='athlete'&&athleteSection===s),onMouseEnter:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='transparent';}},s)),
         h('button',{type:'button',onClick:()=>setTab('activites'),style:navStyle(tab==='activites'),onMouseEnter:e=>{if(tab!=='activites')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='activites')e.currentTarget.style.background='transparent';}},'Activités')
       ),
       h('div',{style:{marginTop:'auto',padding:'20px 24px 8px'}},
