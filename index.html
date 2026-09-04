@@ -455,6 +455,45 @@ function periodEF(sport, list, actStreams, t0, t1) {
   return Math.round((efs.reduce((x, y) => x + y, 0) / efs.length) * 100) / 100;
 }
 
+// ── VO2max estimé — méthode sous-maximale allure + FC (façon Firstbeat/Garmin/Polar) ──
+// Principe : sur un effort aérobie sous-maximal et stable, le coût en oxygène de la
+// course (formule ACSM) et la fraction de réserve cardiaque utilisée (%FCR) sont
+// supposés proportionnels à la fraction de VO2max réserve utilisée. On extrapole donc
+// le VO2 de l'allure jusqu'à 100 % de la FC de réserve pour obtenir le VO2max.
+//   VO2 course (ml/kg/min) ≈ 0.2·v(m/min) + 0.9·v·pente + 3.5      (ACSM, terrain + D+)
+//   %FCR = (FC − FCrepos) / (FCmax − FCrepos)
+//   VO2max ≈ 3.5 + (VO2course − 3.5) / %FCR
+function runVo2Submax(vMinPerMin, gradePct) {
+  const grade = Math.max(-0.05, Math.min(0.15, gradePct || 0));
+  return 0.2 * vMinPerMin + 0.9 * vMinPerMin * grade + 3.5;
+}
+function estimateVo2maxFromRun(act, hrMax, hrRest) {
+  if (!hrMax || !hrRest || hrMax <= hrRest) return null;
+  if (act.sport !== 'Course' && act.sport !== 'Trail') return null;
+  const hr = act.avgHr || act.hr;
+  if (!hr || !act.dist || !act.time || act.time < 9) return null;
+  const hrr = (hr - hrRest) / (hrMax - hrRest);
+  // Effort exploitable seulement dans une plage sous-maximale (endurance → seuil) :
+  // trop bas = pas assez fiable, trop haut = plus vraiment sous-maximal.
+  if (hrr < 0.5 || hrr > 0.95) return null;
+  const vMin = (act.dist * 1000) / act.time; // m/min
+  if (vMin < 100 || vMin > 350) return null; // filtre allures aberrantes (marche / sprint isolé)
+  const grade = act.elev && act.dist ? act.elev / (act.dist * 1000) : 0;
+  const vo2sub = runVo2Submax(vMin, grade);
+  const vo2max = 3.5 + (vo2sub - 3.5) / hrr;
+  if (vo2max < 25 || vo2max > 85) return null;
+  return Math.round(vo2max * 10) / 10;
+}
+// Catégorie indicative (non clinique) — homme/femme, tous âges confondus.
+function vo2maxCategory(vo2, gender) {
+  if (vo2 == null) return null;
+  const isF = gender === 'Femme';
+  const bounds = isF ? [28, 34, 41, 48] : [35, 42, 49, 56];
+  const labels = ['Faible', 'Moyen', 'Bon', 'Très bon', 'Excellent'];
+  let i = 0; while (i < bounds.length && vo2 >= bounds[i]) i++;
+  return labels[i];
+}
+
 // Pw:Hr (vélo) et Pa:Hr (course) — découplage aérobie sur les streams
 // Calcul sur 1ère vs 2ème moitié (méthode TrainingPeaks)
 // Pw:Hr = (EF_2nde / EF_1ère - 1) × 100  en %
@@ -635,6 +674,7 @@ function App() {
   const [hrRange, setHrRange] = useState(90);
   const [hrCompare, setHrCompare] = useState(365);
   const [fitRange, setFitRange] = useState(90);
+  const [vo2Range, setVo2Range] = useState(180);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const [data, setData] = useState([]);
@@ -695,6 +735,7 @@ function App() {
   const lineRef = useRef(null); const barRef = useRef(null); const dailyRef = useRef(null);
   const zoneRef = useRef(null); const powerRef = useRef(null); const paceRef = useRef(null);
   const hrRef = useRef(null); const fitRef = useRef(null); const fitRef2 = useRef(null);
+  const vo2Ref = useRef(null);
   const charts = useRef({});
 
   function destroyChart(key) { if (charts.current[key]) { charts.current[key].destroy(); charts.current[key] = null; } }
@@ -1346,8 +1387,10 @@ function App() {
     const rawTsbMin = Math.min(...allTSB);
     const rawTsbMax = Math.max(...allTSB);
     const tsbPad = Math.max(5, Math.ceil(Math.abs(rawTsbMax - rawTsbMin) * 0.08));
-    const tsbMin = Math.floor((rawTsbMin - tsbPad) / 5) * 5;
-    const tsbMax = Math.ceil( (rawTsbMax + tsbPad) / 5) * 5;
+    // On garde toujours de la marge au-delà de ±20 pour voir les zones
+    // Transition (> +20) et Surentraînement (< -30).
+    const tsbMin = Math.min(-35, Math.floor((rawTsbMin - tsbPad) / 5) * 5);
+    const tsbMax = Math.max( 30, Math.ceil( (rawTsbMax + tsbPad) / 5) * 5);
 
     // Zones TSB (forme) — fond translucide + couleur pleine pour le trait
     const TSB_ZONES = [
@@ -1425,7 +1468,10 @@ function App() {
       }
     };
 
-    // Plugin segments colores TSB
+    // Plugin segments colorés TSB — chaque portion prend EXACTEMENT la couleur
+    // de sa zone : les segments qui traversent une frontière sont découpés au
+    // point de croisement.
+    const TSB_BOUNDS = [20, 5, -10, -30];
     const segmentColorPlugin = {
       id: 'tsbSegmentColor',
       beforeDatasetDraw(chart, args) {
@@ -1436,11 +1482,26 @@ function App() {
         if (!chartArea) return;
         ctx.save();
         ctx.beginPath(); ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height); ctx.clip();
+        ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
         for (let i = 1; i < meta.data.length; i++) {
           const p0 = meta.data[i-1], p1 = meta.data[i];
-          ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y);
-          ctx.strokeStyle = tsbZoneLine((tsbData[i-1]+tsbData[i])/2);
-          ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.stroke();
+          const v0 = tsbData[i-1], v1 = tsbData[i];
+          if (v0 == null || v1 == null) continue;
+          const cuts = TSB_BOUNDS
+            .filter(b => (b - v0) * (b - v1) < 0)
+            .sort((a, b) => (v1 > v0 ? a - b : b - a));
+          let px = p0.x, py = p0.y, pv = v0;
+          const seg = (x, y, midV) => {
+            ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y);
+            ctx.strokeStyle = tsbZoneLine(midV); ctx.stroke();
+            px = x; py = y;
+          };
+          for (const b of cuts) {
+            const t = (b - v0) / (v1 - v0);
+            seg(p0.x + t * (p1.x - p0.x), p0.y + t * (p1.y - p0.y), (pv + b) / 2);
+            pv = b;
+          }
+          seg(p1.x, p1.y, (pv + v1) / 2);
         }
         ctx.restore();
         return false;
@@ -1463,7 +1524,7 @@ function App() {
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(px, chartArea.top); ctx.lineTo(px, chartArea.bottom);
-        ctx.lineWidth = 3; ctx.strokeStyle = '#201e1d'; ctx.stroke();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = '#201e1d'; ctx.stroke();
         ctx.restore();
       }
     };
@@ -1476,9 +1537,9 @@ function App() {
       type:'line', plugins:[crosshairPlugin, actPlugin, todayLinePlugin],
       data:{ labels, datasets:[
         { label:'Fatigue', data: atlData, borderColor:'#bab6b6', borderWidth:1.5,
-          borderDash:[4,3], backgroundColor:'rgba(32,30,29,0.05)', fill:true,
+          borderDash:[4,3], backgroundColor:'transparent', fill:false,
           tension:0.3, pointRadius:0, yAxisID:'y' },
-        { label:'Condition physique', data: ctlData, borderColor:'#ec3013', borderWidth:2.5,
+        { label:'Condition physique', data: ctlData, borderColor:'#ec3013', borderWidth:1.5,
           backgroundColor:'rgba(236,48,19,0.07)', fill:true, tension:0.3,
           pointRadius:0, yAxisID:'y' },
       ]},
@@ -1538,9 +1599,6 @@ function App() {
         { label:'Forme (TSB)', data: tsbData,
           borderColor:'rgba(0,0,0,0)', borderWidth:3, backgroundColor:'transparent',
           fill:false, tension:0.3, pointRadius:0, yAxisID:'y' },
-        { label:'', data: labels.map(()=>0),
-          borderColor:'rgba(32,30,29,0.2)', borderWidth:1, borderDash:[2,3],
-          backgroundColor:'transparent', fill:false, pointRadius:0, yAxisID:'y' },
       ]},
       options:{
         responsive:true, maintainAspectRatio:false, animation:{duration:0},
@@ -1868,6 +1926,58 @@ function App() {
     return () => destroyChart('hr');
   }, [tab, athleteSection, data, actStreams, hrSport, hrRangeA, hrRangeB, selActId1, selActId2, showCurveA, showCurveB, showCurveSel]);
 
+  useEffect(() => {
+    if (tab!=='athlete'||athleteSection!=='VO2 max') return;
+    chartDefaults();
+    const hrMax = Number(profile.fcMax)||null;
+    const hrRest = Number(profile.fcRest)||null;
+    const cutoff = Date.now() - vo2Range*86400000;
+    const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.date.getTime()>=cutoff);
+    const pts = runs
+      .map(a => ({ date:a.date, act:a, v:estimateVo2maxFromRun(a, hrMax, hrRest) }))
+      .filter(p => p.v!==null)
+      .sort((a,b)=>a.date-b.date);
+    if (!pts.length) { destroyChart('vo2'); return; }
+    const labels = pts.map(p=>p.date.toISOString().slice(0,10));
+    const vals = pts.map(p=>p.v);
+    // Moyenne glissante sur 5 séances pour lisser le bruit d'une séance à l'autre
+    const ROLL = 5;
+    const rolled = vals.map((_,i) => {
+      const win = vals.slice(Math.max(0,i-ROLL+1), i+1);
+      return Math.round((win.reduce((s,v)=>s+v,0)/win.length)*10)/10;
+    });
+    const vo2MonthMk = monthBoundaries(pts.map(p=>p.date.getTime()));
+    upsert('vo2', vo2Ref, {
+      type:'line', plugins:[crosshairPlugin, monthMarkersPlugin],
+      data:{ labels, datasets:[
+        { label:'Estimation par séance', data:vals, borderColor:'transparent', backgroundColor:'#f9a882',
+          fill:false, pointRadius:3.5, pointHoverRadius:5, pointBackgroundColor:'#f9a882',
+          pointBorderColor:'#f3f2f2', pointBorderWidth:1, showLine:false, yAxisID:'y' },
+        { label:'Tendance (moy. 5 séances)', data:rolled, borderColor:'#ec3013', borderWidth:2.5,
+          backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:0, yAxisID:'y' },
+      ]},
+      options:{
+        responsive:true, maintainAspectRatio:false, animation:{duration:240},
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          monthMarkers:{ boundaries: vo2MonthMk },
+          legend:{display:true,position:'top',align:'end',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:true,font:{size:12,weight:'600'}}},
+          tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
+            callbacks:{
+              title: items => new Date(labels[items[0].dataIndex]).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}),
+              label: c => c.dataset.label+' · '+c.parsed.y+' ml/kg/min',
+              afterBody: items => { const p = pts[items[0].dataIndex]; if(!p) return []; const hr=p.act.avgHr||p.act.hr; return ['  '+(p.act.name||p.act.sport)+' · '+fmtNum(p.act.dist,1)+' km'+(hr?' · '+hr+' bpm':'')]; }
+            }
+          }
+        },
+        scales:{
+          x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:20},title:{display:true,text:'Séances (Course / Trail)',color:'#605d5d'}},
+          y:{grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},title:{display:true,text:'VO2max estimé (ml/kg/min)',color:'#605d5d'}},
+        },
+      },
+    });
+    return () => destroyChart('vo2');
+  }, [tab, athleteSection, data, profile.fcMax, profile.fcRest, vo2Range]);
 
   useEffect(() => {
     if (tab!=='activites') return;
@@ -1934,14 +2044,20 @@ function App() {
         .filter(e => e[1] > 0)
         .sort((a,b) => b[1] - a[1])
         .map(e => e[0]);
-      datasets = ordered.map((sp,i) => ({
-        label: sp, data: perSport[sp],
-        borderColor: sportShades[sp], borderWidth: 2,
-        backgroundColor: hexA(sportShades[sp], 0.45),
-        fill: i === 0 ? 'origin' : '-1', tension: 0.25,
-        pointRadius: 2, pointHoverRadius: 5, pointBackgroundColor: sportShades[sp],
-        pointBorderColor: '#f3f2f2', pointBorderWidth: 1, yAxisID: 'y',
-      }));
+      // Toutes les courbes en nuances d'orange (comme le remplissage) :
+      // la plus grosse (en bas) la plus soutenue, puis de plus en plus clair.
+      const ORANGE_RAMP = ['#c62a10', '#ec3013', '#f5744a', '#f9a882', '#fbccb6'];
+      datasets = ordered.map((sp,i) => {
+        const col = ORANGE_RAMP[Math.min(i, ORANGE_RAMP.length - 1)];
+        return {
+          label: sp, data: perSport[sp],
+          borderColor: col, borderWidth: 2,
+          backgroundColor: hexA(col, 0.5),
+          fill: i === 0 ? 'origin' : '-1', tension: 0.25,
+          pointRadius: 2, pointHoverRadius: 5, pointBackgroundColor: col,
+          pointBorderColor: '#f3f2f2', pointBorderWidth: 1, yAxisID: 'y',
+        };
+      });
       const yMaxHStack = Math.ceil(Math.max(1, ...bucketKeys.map((k,i)=>ordered.reduce((s,sp)=>s+perSport[sp][i],0))) / 2) * 2;
       lineScales = {
         x:{stacked:true,grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:xTitleTxt,color:'#605d5d'}},
@@ -2009,7 +2125,7 @@ function App() {
             return { charge: td.charge ?? null, method: td.method ?? null };
           })();
           const { charge, method } = chargeData;
-          const sessBg = charge===null?'#eae9e9':charge<50?'#eae9e9':charge<100?'#fff0eb':charge<150?'#ffd5c8':'#ffc0a8';
+          const sessBg = charge===null?'#eae9e9':charge<50?'#fff5f0':charge<100?'#ffe4d8':charge<150?'#ffd5c8':'#ffc0a8';
           // Navigation vers l'onglet Activités et ouverture du déroulant
           const navToAct = () => {
             setTab('activites');
@@ -2169,7 +2285,7 @@ function App() {
   const stravaBtnLabel=status==='ready'?'Déconnecter':status==='loading'?'Chargement…':'Connecter Strava';
   const noData=!data.length;
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
-  const athleteSections=['Condition physique','Puissance','Fréquence cardiaque'];
+  const athleteSections=['Condition physique','Puissance','Fréquence cardiaque','VO2 max'];
 
   function RowDetail({ act, id }) {
     const canvasRef = useRef(null);
@@ -3322,6 +3438,59 @@ function App() {
               )
             )
           )
+        ),
+        athleteSection==='VO2 max'&&h('div',null,
+          h('section',{style:{display:'flex',alignItems:'center',gap:'24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
+            h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
+            h(BtnRow,{options:mkOptions(powPeriods,vo2Range,setVo2Range)}),
+          ),
+          (()=>{
+            const hrMax = Number(profile.fcMax)||null;
+            const hrRest = Number(profile.fcRest)||null;
+            if (!hrMax||!hrRest) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Renseigne FC max et FC repos dans le Profil pour activer l’estimation du VO2max.');
+            const cutoff = Date.now()-vo2Range*86400000;
+            const runs = data.filter(a=>(a.sport==='Course'||a.sport==='Trail')&&a.date.getTime()>=cutoff);
+            const pts = runs.map(a=>({date:a.date,act:a,v:estimateVo2maxFromRun(a,hrMax,hrRest)})).filter(p=>p.v!==null).sort((a,b)=>a.date-b.date);
+            if (!pts.length) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Aucune séance de course exploitable sur cette période — il faut un effort sous-maximal stable, FC entre 50 et 95 % de la réserve cardiaque.');
+            const recent = pts.slice(-3);
+            const vo2Now = Math.round((recent.reduce((s,p)=>s+p.v,0)/recent.length)*10)/10;
+            const vma = Math.round(((vo2Now-3.5)/0.2)*60/1000*100)/100; // km/h
+            const vmaMs = vma*1000/3600;
+            const t5k = vmaMs>0 ? 5000/(vmaMs*0.93) : null; // secondes, ~93 % VMA
+            const fmtMinSec = s => { if(!s) return '—'; const m=Math.floor(s/60); const sec=Math.round(s%60); return m+"'"+String(sec).padStart(2,'0')+'"'; };
+            const cat = vo2maxCategory(vo2Now, profile.gender);
+            const trend = pts.length>1 ? Math.round((pts[pts.length-1].v-pts[0].v)*10)/10 : null;
+            const cells = [
+              {label:'VO2max estimé', value: vo2Now+' ml/kg/min', sub:'moyenne des 3 dernières séances exploitables'},
+              {label:'VMA estimée', value: fmtNum(vma,1)+' km/h', sub:'vitesse maximale aérobie'},
+              {label:'5 km projeté', value: fmtMinSec(t5k), sub:'à ~93 % de la VMA'},
+              {label:'Catégorie', value: cat||'—', sub: profile.gender==='Non précisé'?'renseigne le sexe dans le Profil pour affiner':'estimation indicative, non clinique'},
+            ];
+            return h('div',null,
+              h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',borderBottom:'2px solid #201e1d'}},
+                cells.map((c,i)=>h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<3?'2px solid #201e1d':undefined}},
+                  h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
+                  h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:'#ec3013'}},c.value)),
+                  h('span',{style:{display:'block',marginTop:'8px',fontSize:'11px',color:'#605d5d'}},c.sub)
+                ))
+              ),
+              h('section',{style:{padding:'28px 32px 32px'}},
+                h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
+                  h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Évolution du VO2max estimé'),
+                  h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}}, trend!==null?(trend>=0?'+':'')+trend+' ml/kg/min sur la période':'')
+                ),
+                h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
+                  'Une estimation par séance de course/trail (points), et une tendance lissée sur 5 séances (trait).'
+                ),
+                h('div',{style:{height:'calc(100vh - 480px)',minHeight:'320px'}},h('canvas',{ref:vo2Ref})),
+                h('div',{style:{marginTop:'14px',padding:'12px 16px',borderTop:'1px solid #d7d3d3'}},
+                  h('p',{style:{margin:0,fontSize:'11px',color:'#bab6b6',lineHeight:'1.6',maxWidth:'90ch'}},
+                    '⚠ Estimation indicative — même principe que les montres GPS Garmin/Polar (moteur Firstbeat) : le coût en oxygène de la course (formule ACSM, corrigée du dénivelé) mesuré à une allure sous-maximale est extrapolé à 100 % de la réserve cardiaque via le %FCR (FC − FC repos) / (FC max − FC repos) de la séance. Nécessite FC max et FC repos renseignées dans le Profil. Précision réduite sans ceinture cardio, par forte chaleur, en fatigue, sur terrain très technique ou sur des séances trop courtes/intenses. Catégorie fournie à titre indicatif, non clinique.'
+                  )
+                )
+              )
+            );
+          })()
         )
       ),
 
