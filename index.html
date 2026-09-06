@@ -454,6 +454,21 @@ function periodEF(sport, list, actStreams, t0, t1) {
   if (!efs.length) return null;
   return Math.round((efs.reduce((x, y) => x + y, 0) / efs.length) * 100) / 100;
 }
+// EF d'une activité : streams si disponibles, sinon retombe sur les moyennes de la
+// séance (puissance moyenne / FC moy pour le vélo, vitesse moy / FC moy pour la course).
+function activityEF(act, s) {
+  const isBike = act.sport === 'Vélo';
+  const fromStream = actEF(isBike ? 'Vélo' : 'Course', s);
+  if (fromStream != null) return fromStream;
+  const hr = act.avgHr || act.hr;
+  if (!hr) return null;
+  if (isBike) {
+    if (!act.power) return null;
+    return calcEF('Vélo', act.power, null, hr);
+  }
+  if (!act.dist || !act.time) return null;
+  return calcEF('Course', null, (act.dist * 1000) / (act.time * 60), hr);
+}
 
 // ── VO2max estimé — méthode sous-maximale allure + FC (façon Firstbeat/Garmin/Polar) ──
 // Principe : sur un effort aérobie sous-maximal et stable, le coût en oxygène de la
@@ -675,6 +690,8 @@ function App() {
   const [hrCompare, setHrCompare] = useState(365);
   const [fitRange, setFitRange] = useState(90);
   const [vo2Range, setVo2Range] = useState(180);
+  const [effRange, setEffRange] = useState(180);
+  const [effSport, setEffSport] = useState('Vélo');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const [data, setData] = useState([]);
@@ -736,6 +753,7 @@ function App() {
   const zoneRef = useRef(null); const powerRef = useRef(null); const paceRef = useRef(null);
   const hrRef = useRef(null); const fitRef = useRef(null); const fitRef2 = useRef(null);
   const vo2Ref = useRef(null);
+  const effRef = useRef(null);
   const charts = useRef({});
 
   function destroyChart(key) { if (charts.current[key]) { charts.current[key].destroy(); charts.current[key] = null; } }
@@ -1298,12 +1316,11 @@ function App() {
       if (tss && tss > 0) tssPerDay[key] = (tssPerDay[key] || 0) + tss;
     }
 
-    // Trouver la plage de dates (du plus ancien au aujourd'hui)
+    // Trouver la plage de dates (du plus ancien jusqu'à aujourd'hui inclus)
     const sorted = data.map(a => a.date.toISOString().slice(0, 10)).sort();
     if (!sorted.length) return [];
     const startDate = new Date(sorted[0]);
-    const endDate   = new Date();
-    endDate.setHours(0, 0, 0, 0);
+    const todayKey  = new Date().toISOString().slice(0, 10);
 
     // Constantes de décroissance
     const kCTL = Math.exp(-1 / 42);
@@ -1315,8 +1332,9 @@ function App() {
     const series = [];
     const cur = new Date(startDate);
 
-    while (cur <= endDate) {
+    while (true) {
       const key = cur.toISOString().slice(0, 10);
+      if (key > todayKey) break;
       const tss = tssPerDay[key] || 0;
       // TSB = différence entre CTL et ATL de la VEILLE (avant application du TSS du jour)
       const tsb = Math.round((ctl - atl) * 10) / 10;
@@ -1370,9 +1388,13 @@ function App() {
       acc.push({...pt, ctl:Math.round(ctl*10)/10, atl:Math.round(atl*10)/10, tsb, tss:0});
       return acc;
     }, []) : [];
-    const visible = [...pmcSeries.filter(p => new Date(p.date) >= cutoff), ...futurePts];
+    const pastPts = pmcSeries.filter(p => new Date(p.date) >= cutoff);
+    const visible = [...pastPts, ...futurePts];
     const step = Math.max(1, Math.ceil(visible.length / 600));
-    const thin = visible.filter((_, i) => i % step === 0 || i === visible.length - 1);
+    // On garde toujours : le 1er point, le dernier, et le point d'aujourd'hui
+    // (dernier point réel, à la frontière avec la projection).
+    const todayIdxRaw = pastPts.length - 1;
+    const thin = visible.filter((_, i) => i % step === 0 || i === visible.length - 1 || i === todayIdxRaw);
     const labels  = thin.map(p => p.date);
     const ctlData = thin.map(p => p.ctl);
     const atlData = thin.map(p => p.atl);
@@ -1513,17 +1535,31 @@ function App() {
       }
     };
 
-    // Index du jour dans la série affichée (les 7 derniers points sont dans le futur)
-    const _todayStr = new Date().toISOString().slice(0,10);
-    let todayIdx = thin.findIndex(p => p.date === _todayStr);
-    if (todayIdx < 0) { for (let i = thin.length - 1; i >= 0; i--) { if (!thin[i]._future) { todayIdx = i; break; } } }
+    // Position fractionnaire de l'instant présent sur l'axe (interpolée entre les
+    // deux jours qui l'encadrent) — le trait tombe donc exactement sur "maintenant",
+    // pas sur le point de données le plus proche.
+    const _nowMs = Date.now();
+    const _labelMs = thin.map(p => new Date(p.date + 'T00:00:00').getTime());
+    let todayPos = null;
+    for (let i = 0; i < _labelMs.length - 1; i++) {
+      if (_nowMs >= _labelMs[i] && _nowMs < _labelMs[i + 1]) {
+        todayPos = i + (_nowMs - _labelMs[i]) / (_labelMs[i + 1] - _labelMs[i]);
+        break;
+      }
+    }
+    if (todayPos === null && _labelMs.length) {
+      todayPos = _nowMs <= _labelMs[0] ? 0 : _labelMs.length - 1;
+    }
 
-    // Plugin : gros trait vertical sur la date du jour
+    // Plugin : trait vertical fin sur l'instant présent
     const todayLinePlugin = {
       id: 'todayLine',
       afterDatasetsDraw(chart) {
-        if (todayIdx < 0 || !chart.scales.x) return;
-        const px = chart.scales.x.getPixelForValue(todayIdx);
+        if (todayPos === null || !chart.scales.x) return;
+        const sx = chart.scales.x;
+        const i0 = Math.floor(todayPos), i1 = Math.min(i0 + 1, thin.length - 1);
+        const x0 = sx.getPixelForValue(i0), x1 = sx.getPixelForValue(i1);
+        const px = x0 + (x1 - x0) * (todayPos - i0);
         if (!isFinite(px)) return;
         const { ctx, chartArea } = chart;
         ctx.save();
@@ -2011,6 +2047,58 @@ function App() {
   }, [tab, athleteSection, data, profile.fcMax, profile.fcRest, vo2Range]);
 
   useEffect(() => {
+    if (tab!=='athlete'||athleteSection!=='Efficacité') return;
+    chartDefaults();
+    const isBike = effSport==='Vélo';
+    const cutoff = Date.now() - effRange*86400000;
+    const acts = data.filter(a => (isBike ? a.sport==='Vélo' : (a.sport==='Course'||a.sport==='Trail')) && a.date.getTime()>=cutoff);
+    const pts = acts
+      .map(a => ({ date:a.date, act:a, v:activityEF(a, actStreams[a.id]) }))
+      .filter(p => p.v!==null)
+      .sort((a,b)=>a.date-b.date);
+    if (!pts.length) { destroyChart('eff'); return; }
+    const labels = pts.map(p=>p.date.toISOString().slice(0,10));
+    const vals = pts.map(p=>Math.round(p.v*100)/100);
+    const ROLL = 5;
+    const rolled = vals.map((_,i) => {
+      const win = vals.slice(Math.max(0,i-ROLL+1), i+1);
+      return Math.round((win.reduce((s,v)=>s+v,0)/win.length)*100)/100;
+    });
+    const effMonthMk = monthBoundaries(pts.map(p=>p.date.getTime()));
+    const unit = isBike ? 'W/bpm' : 'm/min/bpm';
+    upsert('eff', effRef, {
+      type:'line', plugins:[crosshairPlugin, monthMarkersPlugin],
+      data:{ labels, datasets:[
+        { label:'EF par séance', data:vals, borderColor:'transparent', backgroundColor:'#f9a882',
+          fill:false, pointRadius:3.5, pointHoverRadius:5, pointBackgroundColor:'#f9a882',
+          pointBorderColor:'#f3f2f2', pointBorderWidth:1, showLine:false, yAxisID:'y' },
+        { label:'Tendance (moy. 5 séances)', data:rolled, borderColor:'#ec3013', borderWidth:2.5,
+          backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:0, yAxisID:'y' },
+      ]},
+      options:{
+        responsive:true, maintainAspectRatio:false, animation:{duration:240},
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          monthMarkers:{ boundaries: effMonthMk },
+          legend:{display:true,position:'top',align:'end',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:true,font:{size:12,weight:'600'}}},
+          tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
+            callbacks:{
+              title: items => new Date(labels[items[0].dataIndex]).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}),
+              label: c => c.dataset.label+' · '+c.parsed.y+' '+unit,
+              afterBody: items => { const p = pts[items[0].dataIndex]; if(!p) return []; const hr=p.act.avgHr||p.act.hr; return ['  '+(p.act.name||p.act.sport)+' · '+fmtNum(p.act.dist,1)+' km'+(hr?' · '+hr+' bpm':'')]; }
+            }
+          }
+        },
+        scales:{
+          x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:20},title:{display:true,text:isBike?'Séances (Vélo)':'Séances (Course / Trail)',color:'#605d5d'}},
+          y:{grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},title:{display:true,text:'Facteur d’efficacité ('+unit+')',color:'#605d5d'}},
+        },
+      },
+    });
+    return () => destroyChart('eff');
+  }, [tab, athleteSection, data, actStreams, effSport, effRange]);
+
+  useEffect(() => {
     if (tab!=='activites') return;
     chartDefaults();
     const grid = { color:'rgba(32,30,29,0.12)', drawTicks:false };
@@ -2316,7 +2404,7 @@ function App() {
   const stravaBtnLabel=status==='ready'?'Déconnecter':status==='loading'?'Chargement…':'Connecter Strava';
   const noData=!data.length;
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
-  const athleteSections=['Condition physique','Puissance','Fréquence cardiaque','VO2 max'];
+  const athleteSections=['Condition physique','Puissance','Fréquence cardiaque','VO2 max','Efficacité'];
 
   function RowDetail({ act, id }) {
     const canvasRef = useRef(null);
@@ -3513,6 +3601,64 @@ function App() {
                 h('div',{style:{marginTop:'14px',padding:'12px 16px',borderTop:'1px solid #d7d3d3'}},
                   h('p',{style:{margin:0,fontSize:'11px',color:'#bab6b6',lineHeight:'1.6',maxWidth:'90ch'}},
                     '⚠ Estimation indicative — même principe que les montres GPS Garmin/Polar (moteur Firstbeat) : le coût en oxygène de la course (formule ACSM, corrigée du dénivelé) mesuré à une allure sous-maximale est extrapolé à 100 % de la réserve cardiaque via le %FCR (FC − FC repos) / (FC max − FC repos) de la séance. Nécessite FC max et FC repos renseignées dans le Profil. Précision réduite sans ceinture cardio, par forte chaleur, en fatigue, sur terrain très technique ou sur des séances trop courtes/intenses. Catégorie fournie à titre indicatif, non clinique.'
+                  )
+                )
+              )
+            );
+          })()
+        ),
+        athleteSection==='Efficacité'&&h('div',null,
+          h('section',{style:{display:'flex',alignItems:'center',gap:'24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
+            h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
+            h(BtnRow,{options:mkOptions(powPeriods,effRange,setEffRange)}),
+            h('div',{style:{marginLeft:'auto',display:'flex',flexDirection:'column',gap:'8px'}},
+              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
+              h('div',{style:{display:'flex',gap:'6px'}},
+                ['Vélo','Course'].map(sp=>h('button',{key:sp,type:'button',onClick:()=>setEffSport(sp),
+                  style:{padding:'5px 12px',border:'2px solid '+(effSport===sp?'#ec3013':'#d7d3d3'),background:effSport===sp?'#ec3013':'transparent',color:effSport===sp?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
+                  onMouseEnter:e=>{if(effSport!==sp){e.currentTarget.style.borderColor='#ec3013';e.currentTarget.style.color='#ec3013';}},
+                  onMouseLeave:e=>{if(effSport!==sp){e.currentTarget.style.borderColor='#d7d3d3';e.currentTarget.style.color='#605d5d';}}
+                },sp))
+              )
+            )
+          ),
+          (()=>{
+            const isBike = effSport==='Vélo';
+            const unit = isBike ? 'W/bpm' : 'm/min/bpm';
+            const cutoff = Date.now()-effRange*86400000;
+            const acts = data.filter(a=>(isBike?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&a.date.getTime()>=cutoff);
+            const pts = acts.map(a=>({date:a.date,act:a,v:activityEF(a,actStreams[a.id])})).filter(p=>p.v!==null).sort((a,b)=>a.date-b.date);
+            if (!pts.length) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Aucune séance '+(isBike?'vélo':'course')+' exploitable sur cette période — il faut la FC moyenne et la puissance (vélo) ou l’allure (course) de la séance.');
+            const avg = Math.round((pts.reduce((s,p)=>s+p.v,0)/pts.length)*100)/100;
+            const best = pts.reduce((m,p)=>p.v>m.v?p:m, pts[0]);
+            const trend = pts.length>1 ? Math.round((pts[pts.length-1].v-pts[0].v)*100)/100 : null;
+            const rlEff = d=>d===30?'1 mois':d===90?'3 mois':d===180?'6 mois':'1 an';
+            const cells = [
+              {label:'EF moyen', value: avg+' '+unit, sub:'moyenne sur '+pts.length+' séance'+(pts.length>1?'s':'')+' · '+rlEff(effRange)},
+              {label:'Meilleure séance', value: (Math.round(best.v*100)/100)+' '+unit, sub: best.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'})},
+              {label:'Évolution', value: trend!==null?((trend>=0?'+':'')+trend+' '+unit):'—', sub:'1re → dernière séance de la période'},
+              {label:'Séances exploitables', value: String(pts.length), sub: isBike?'vélo avec FC + puissance':'course avec FC + allure'},
+            ];
+            return h('div',null,
+              h('section',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',borderBottom:'2px solid #201e1d'}},
+                cells.map((c,i)=>h('div',{key:i,style:{padding:'20px 24px 22px',borderRight:i<3?'2px solid #201e1d':undefined}},
+                  h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},c.label),
+                  h('div',{style:{marginTop:'10px'}},h('span',{style:{fontSize:'22px',fontWeight:'800',letterSpacing:'-0.03em',lineHeight:'1',color:'#ec3013'}},c.value)),
+                  h('span',{style:{display:'block',marginTop:'8px',fontSize:'11px',color:'#605d5d'}},c.sub)
+                ))
+              ),
+              h('section',{style:{padding:'28px 32px 32px'}},
+                h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
+                  h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Évolution du facteur d’efficacité · '+(isBike?'Vélo':'Course')),
+                  h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}}, trend!==null?(trend>=0?'+':'')+trend+' '+unit+' sur la période':'')
+                ),
+                h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
+                  'Un point par séance (facteur d’efficacité brut), et une tendance lissée sur 5 séances.'
+                ),
+                h('div',{style:{height:'calc(100vh - 480px)',minHeight:'320px'}},h('canvas',{ref:effRef})),
+                h('div',{style:{marginTop:'14px',padding:'12px 16px',borderTop:'1px solid #d7d3d3'}},
+                  h('p',{style:{margin:0,fontSize:'11px',color:'#bab6b6',lineHeight:'1.6',maxWidth:'90ch'}},
+                    'Le facteur d’efficacité (EF) rapporte l’intensité produite à l’effort cardiaque : NP / FC moyenne pour le vélo (W/bpm), vitesse moyenne / FC moyenne pour la course ((m/min)/bpm). Calculé sur les streams seconde par seconde quand ils sont chargés, sinon sur les moyennes de la séance. À conditions comparables (chaleur, dénivelé, fatigue, terrain), une valeur qui monte dans le temps traduit un gain d’efficacité aérobie.'
                   )
                 )
               )
