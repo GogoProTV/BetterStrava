@@ -218,6 +218,69 @@ function chartDefaults() {
   Chart.defaults.color = '#605d5d';
 }
 
+// Fenêtre { offset, length } (en mois) → bornes de dates [start, end).
+// offset = 0 → la période se termine au mois en cours (borne haute = maintenant).
+function winRange(win) {
+  const now = new Date();
+  const o = Math.max(0, Math.min(11, win.offset | 0));
+  const l = Math.max(1, Math.min(12 - o, win.length | 0));
+  const start = new Date(now.getFullYear(), now.getMonth() - o - l + 1, 1).getTime();
+  const endMonth = new Date(now.getFullYear(), now.getMonth() - o + 1, 1).getTime();
+  return { start, end: Math.min(endMonth, Date.now()), months: l, offset: o };
+}
+// Libellé court d'un mois situé `back` mois avant le mois en cours (0 = mois en cours).
+function monthAgoLabel(back) {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth() - back, 1);
+  return d.toLocaleDateString('fr-FR', { month: 'short' }).replace('.', '');
+}
+
+// Sélecteur de fenêtre de calcul : 12 carrés = les 12 derniers mois
+// (le carré de droite = mois en cours). Clic sur un mois puis un autre pour
+// définir la période (1 à 12 mois) ; on peut ainsi la décaler et l'agrandir.
+function MonthWindow({ win, setWin }) {
+  const [anchor, setAnchor] = useState(null);
+  // carré i (0..11) : i = 11 → mois en cours, i = 0 → 11 mois avant
+  const backOf = i => 11 - i;
+  const selEndIdx = 11 - win.offset;
+  const selStartIdx = 12 - win.offset - win.length;
+  const click = i => {
+    if (anchor === null) { setAnchor(i); return; }
+    const lo = Math.min(anchor, i), hi = Math.max(anchor, i);
+    setWin({ offset: 11 - hi, length: hi - lo + 1 });
+    setAnchor(null);
+  };
+  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+    h('div', { style: { display: 'flex', gap: '3px' } },
+      Array.from({ length: 12 }, (_, i) => {
+        const inSel = anchor === null && i >= selStartIdx && i <= selEndIdx;
+        const isAnchor = anchor === i;
+        const isCurrent = i === 11;
+        return h('button', { key: i, type: 'button', onClick: () => click(i), title: monthAgoLabel(backOf(i)),
+          style: {
+            width: '32px', height: '32px', padding: 0, flexShrink: 0,
+            border: '2px solid ' + (isAnchor ? '#201e1d' : inSel ? '#ec3013' : '#d7d3d3'),
+            background: isAnchor ? '#ffe0d9' : inSel ? '#ec3013' : 'transparent',
+            color: inSel ? '#ffffff' : isCurrent ? '#201e1d' : '#605d5d',
+            fontFamily: 'inherit', fontSize: '9px', fontWeight: '700', letterSpacing: '0.02em',
+            textTransform: 'uppercase', cursor: 'pointer', position: 'relative', lineHeight: '1',
+          },
+          onMouseEnter: e => { if (!inSel && !isAnchor) e.currentTarget.style.borderColor = '#ec3013'; },
+          onMouseLeave: e => { if (!inSel && !isAnchor) e.currentTarget.style.borderColor = '#d7d3d3'; },
+        },
+          monthAgoLabel(backOf(i)),
+          isCurrent && h('span', { style: { position: 'absolute', top: '2px', right: '2px', width: '4px', height: '4px', background: inSel ? '#ffffff' : '#ec3013' } })
+        );
+      })
+    ),
+    h('span', { style: { fontSize: '10px', color: '#bab6b6', letterSpacing: '0.04em' } },
+      anchor !== null
+        ? 'Clique un 2ᵉ mois pour fermer la période'
+        : win.length + ' mois · ' + monthAgoLabel(win.offset + win.length - 1) + (win.length > 1 ? ' → ' + monthAgoLabel(win.offset) : '')
+    )
+  );
+}
+
 // ── zone minutes ─────────────────────────────────────────────────────────────
 function zoneMinutes(list, fcMax) {
   const max = Number(fcMax) || 190;
@@ -688,9 +751,11 @@ function App() {
   const [paceCompare, setPaceCompare] = useState(365);
   const [hrRange, setHrRange] = useState(90);
   const [hrCompare, setHrCompare] = useState(365);
-  const [fitRange, setFitRange] = useState(90);
-  const [vo2Range, setVo2Range] = useState(180);
-  const [effRange, setEffRange] = useState(180);
+  // Fenêtre de calcul en mois : { offset = mois écoulés depuis le mois en cours
+  // jusqu'à la fin de la période, length = nombre de mois (1 à 12), offset+length ≤ 12 }
+  const [fitWin, setFitWin] = useState({ offset: 0, length: 3 });
+  const [vo2Win, setVo2Win] = useState({ offset: 0, length: 6 });
+  const [effWin, setEffWin] = useState({ offset: 0, length: 6 });
   const [effSport, setEffSport] = useState('Vélo');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
@@ -1358,6 +1423,21 @@ function App() {
     ? Math.round((pmcToday.ctl - pmcSeries[pmcSeries.length - 8].ctl) * 10) / 10
     : null;
 
+  // Valeurs PMC à la FIN de la fenêtre de calcul sélectionnée (bande du haut de
+  // l'onglet Condition physique) — pour que les chiffres suivent la période.
+  const pmcRefIdx = (() => {
+    if (!pmcSeries.length) return -1;
+    const { end } = winRange(fitWin);
+    for (let i = pmcSeries.length - 1; i >= 0; i--) {
+      if (new Date(pmcSeries[i].date + 'T00:00:00').getTime() < end) return i;
+    }
+    return 0;
+  })();
+  const pmcRef = pmcRefIdx >= 0 ? pmcSeries[pmcRefIdx] : null;
+  const pmcRefRamp = pmcRefIdx >= 7
+    ? Math.round((pmcRef.ctl - pmcSeries[pmcRefIdx - 7].ctl) * 10) / 10
+    : null;
+
   const fitStats = pmcToday ? [
     { label: 'Condition physique', value: String(pmcToday.ctl), valueStyle: { ...smallStat, fontSize: '26px', fontWeight: '800', letterSpacing: '-0.02em', color: '#ec3013' }, sub: 'CTL · charge chronique 42 j' },
     { label: 'Fatigue',            value: String(pmcToday.atl), valueStyle: { ...smallStat, fontSize: '26px', fontWeight: '800', letterSpacing: '-0.02em', color: '#201e1d' }, sub: 'ATL · charge aiguë 7 j' },
@@ -1369,10 +1449,9 @@ function App() {
     if (tab!=='athlete'||athleteSection!=='Condition physique') return;
     chartDefaults();
 
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - fitRange);
-    // Étendre d'1 semaine dans le futur pour visualiser la redescente
-    const futureEnd = new Date(); futureEnd.setDate(futureEnd.getDate() + 7);
+    const { start:winStart, end:winEnd, offset:winOffset } = winRange(fitWin);
+    // Projection future (7 j) seulement si la fenêtre se termine au mois en cours
+    const showFuture = winOffset === 0;
     // Générer les 7 jours futurs (TSS=0, CTL/ATL continuent de décroître)
     const lastPmc = pmcSeries.length ? pmcSeries[pmcSeries.length-1] : null;
     const kCTLf = Math.exp(-1/42), kATLf = Math.exp(-1/7);
@@ -1388,8 +1467,11 @@ function App() {
       acc.push({...pt, ctl:Math.round(ctl*10)/10, atl:Math.round(atl*10)/10, tsb, tss:0});
       return acc;
     }, []) : [];
-    const pastPts = pmcSeries.filter(p => new Date(p.date) >= cutoff);
-    const visible = [...pastPts, ...futurePts];
+    const pastPts = pmcSeries.filter(p => {
+      const t = new Date(p.date + 'T00:00:00').getTime();
+      return t >= winStart && t < winEnd;
+    });
+    const visible = [...pastPts, ...(showFuture ? futurePts : [])];
     const step = Math.max(1, Math.ceil(visible.length / 600));
     // On garde toujours : le 1er point, le dernier, et le point d'aujourd'hui
     // (dernier point réel, à la frontière avec la projection).
@@ -1400,7 +1482,7 @@ function App() {
     const atlData = thin.map(p => p.atl);
     const tsbData = thin.map(p => p.tsb);
 
-    // Echelles Y fixes sur toute la carriere (independant de fitRange)
+    // Echelles Y fixes sur toute la carriere (independant de la fenêtre affichée)
     const allCTL = pmcSeries.map(p => p.ctl);
     const allATL = pmcSeries.map(p => p.atl);
     const allTSB = pmcSeries.map(p => p.tsb);
@@ -1547,9 +1629,7 @@ function App() {
         break;
       }
     }
-    if (todayPos === null && _labelMs.length) {
-      todayPos = _nowMs <= _labelMs[0] ? 0 : _labelMs.length - 1;
-    }
+    // Si "maintenant" tombe hors de la fenêtre affichée (période passée), pas de trait.
 
     // Plugin : trait vertical fin sur l'instant présent
     const todayLinePlugin = {
@@ -1682,7 +1762,7 @@ function App() {
 
 
     return () => { destroyChart('fitness'); destroyChart('fitness2'); };
-  }, [tab, athleteSection, pmcSeries, fitRange]);
+  }, [tab, athleteSection, pmcSeries, fitWin]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Puissance') return;
@@ -1973,8 +2053,8 @@ function App() {
     chartDefaults();
     const hrMax = Number(profile.fcMax)||null;
     const hrRest = Number(profile.fcRest)||null;
-    const cutoff = Date.now() - vo2Range*86400000;
-    const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.date.getTime()>=cutoff);
+    const { start:winStart, end:winEnd } = winRange(vo2Win);
+    const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.date.getTime()>=winStart && a.date.getTime()<winEnd);
     const pts = runs
       .map(a => ({ date:a.date, act:a, v:estimateVo2maxFromRun(a, hrMax, hrRest) }))
       .filter(p => p.v!==null)
@@ -2044,14 +2124,14 @@ function App() {
       },
     });
     return () => destroyChart('vo2');
-  }, [tab, athleteSection, data, profile.fcMax, profile.fcRest, vo2Range]);
+  }, [tab, athleteSection, data, profile.fcMax, profile.fcRest, vo2Win]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Efficacité') return;
     chartDefaults();
     const isBike = effSport==='Vélo';
-    const cutoff = Date.now() - effRange*86400000;
-    const acts = data.filter(a => (isBike ? a.sport==='Vélo' : (a.sport==='Course'||a.sport==='Trail')) && a.date.getTime()>=cutoff);
+    const { start:winStart, end:winEnd } = winRange(effWin);
+    const acts = data.filter(a => (isBike ? a.sport==='Vélo' : (a.sport==='Course'||a.sport==='Trail')) && a.date.getTime()>=winStart && a.date.getTime()<winEnd);
     const pts = acts
       .map(a => ({ date:a.date, act:a, v:activityEF(a, actStreams[a.id]) }))
       .filter(p => p.v!==null)
@@ -2096,7 +2176,7 @@ function App() {
       },
     });
     return () => destroyChart('eff');
-  }, [tab, athleteSection, data, actStreams, effSport, effRange]);
+  }, [tab, athleteSection, data, actStreams, effSport, effWin]);
 
   useEffect(() => {
     if (tab!=='activites') return;
@@ -2912,16 +2992,16 @@ function App() {
         ),
         athleteSection==='Condition physique'&&h('div',{style:{display:'flex',flexDirection:'column',height:'calc(100vh - 0px)',boxSizing:'border-box',overflow:'auto'}},
           // ── Bande de contrôle période ──────────────────────────────────────
-          h('section',{style:{display:'flex',alignItems:'center',gap:'24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexShrink:0}},
+          h('section',{style:{display:'flex',alignItems:'center',gap:'16px 24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexShrink:0,flexWrap:'wrap'}},
             h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-            h(BtnRow,{options:mkOptions(powPeriods,fitRange,setFitRange)}),
-            pmcToday&&h('div',{style:{marginLeft:'auto',display:'flex',gap:'20px'}},
+            h(MonthWindow,{win:fitWin,setWin:setFitWin}),
+            pmcRef&&h('div',{style:{marginLeft:'auto',display:'flex',gap:'20px'}},
               [
-                {name:'Condition physique',abbr:'CTL',value:pmcToday.ctl,color:'#ec3013'},
-                {name:'Fatigue',abbr:'ATL',value:pmcToday.atl,color:'#201e1d'},
-                {name:'Forme',abbr:'TSB',value:(pmcToday.tsb>0?'+':'')+pmcToday.tsb,
-                  color:pmcToday.tsb>=5&&pmcToday.tsb<=20?'#3b82f6':pmcToday.tsb>20?'#ca8a04':pmcToday.tsb>=-10?'#969191':pmcToday.tsb>=-30?'#22c55e':'#ec3013'},
-                {name:'Ramp',abbr:null,value:(pmcRampRate!==null?(pmcRampRate>0?'+':'')+pmcRampRate:'—'),color:pmcRampRate!==null&&Math.abs(pmcRampRate)>7?'#ec3013':'#201e1d'},
+                {name:'Condition physique',abbr:'CTL',value:pmcRef.ctl,color:'#ec3013'},
+                {name:'Fatigue',abbr:'ATL',value:pmcRef.atl,color:'#201e1d'},
+                {name:'Forme',abbr:'TSB',value:(pmcRef.tsb>0?'+':'')+pmcRef.tsb,
+                  color:pmcRef.tsb>=5&&pmcRef.tsb<=20?'#3b82f6':pmcRef.tsb>20?'#ca8a04':pmcRef.tsb>=-10?'#969191':pmcRef.tsb>=-30?'#22c55e':'#ec3013'},
+                {name:'Ramp',abbr:null,value:(pmcRefRamp!==null?(pmcRefRamp>0?'+':'')+pmcRefRamp:'—'),color:pmcRefRamp!==null&&Math.abs(pmcRefRamp)>7?'#ec3013':'#201e1d'},
               ].map(s=>h('div',{key:s.name,style:{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:'1px'}},
                 h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.02em',textAlign:'right',whiteSpace:'nowrap'}},
                   h('span',{style:{color:'#201e1d'}},s.name),
@@ -3555,14 +3635,14 @@ function App() {
         athleteSection==='VO2 max'&&h('div',null,
           h('section',{style:{display:'flex',alignItems:'center',gap:'24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
             h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-            h(BtnRow,{options:mkOptions(powPeriods,vo2Range,setVo2Range)}),
+            h(MonthWindow,{win:vo2Win,setWin:setVo2Win}),
           ),
           (()=>{
             const hrMax = Number(profile.fcMax)||null;
             const hrRest = Number(profile.fcRest)||null;
             if (!hrMax||!hrRest) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Renseigne FC max et FC repos dans le Profil pour activer l’estimation du VO2max.');
-            const cutoff = Date.now()-vo2Range*86400000;
-            const runs = data.filter(a=>(a.sport==='Course'||a.sport==='Trail')&&a.date.getTime()>=cutoff);
+            const { start:winStart, end:winEnd, months:winMonths } = winRange(vo2Win);
+            const runs = data.filter(a=>(a.sport==='Course'||a.sport==='Trail')&&a.date.getTime()>=winStart&&a.date.getTime()<winEnd);
             const pts = runs.map(a=>({date:a.date,act:a,v:estimateVo2maxFromRun(a,hrMax,hrRest)})).filter(p=>p.v!==null).sort((a,b)=>a.date-b.date);
             if (!pts.length) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Aucune séance de course exploitable sur cette période — il faut un effort sous-maximal stable, FC entre 50 et 95 % de la réserve cardiaque.');
             // Moyenne sur TOUTES les séances exploitables de la période sélectionnée
@@ -3574,9 +3654,8 @@ function App() {
             const fmtMinSec = s => { if(!s) return '—'; const m=Math.floor(s/60); const sec=Math.round(s%60); return m+"'"+String(sec).padStart(2,'0')+'"'; };
             const cat = vo2maxCategory(vo2Now, profile.gender);
             const trend = pts.length>1 ? Math.round((pts[pts.length-1].v-pts[0].v)*10)/10 : null;
-            const rlVo2 = d=>d===30?'1 mois':d===90?'3 mois':d===180?'6 mois':'1 an';
             const cells = [
-              {label:'VO2max estimé', value: vo2Now+' ml/kg/min', sub:'moyenne sur '+pts.length+' séance'+(pts.length>1?'s':'')+' · '+rlVo2(vo2Range)},
+              {label:'VO2max estimé', value: vo2Now+' ml/kg/min', sub:'moyenne sur '+pts.length+' séance'+(pts.length>1?'s':'')+' · '+winMonths+' mois'},
               {label:'VMA estimée', value: fmtNum(vma,1)+' km/h', sub:'vitesse maximale aérobie'},
               {label:'5 km projeté', value: fmtMinSec(t5k), sub:'à ~93 % de la VMA'},
               {label:'Catégorie', value: cat||'—', sub: profile.gender==='Non précisé'?'renseigne le sexe dans le Profil pour affiner':'estimation indicative, non clinique'},
@@ -3610,7 +3689,7 @@ function App() {
         athleteSection==='Efficacité'&&h('div',null,
           h('section',{style:{display:'flex',alignItems:'center',gap:'24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
             h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-            h(BtnRow,{options:mkOptions(powPeriods,effRange,setEffRange)}),
+            h(MonthWindow,{win:effWin,setWin:setEffWin}),
             h('div',{style:{marginLeft:'auto',display:'flex',flexDirection:'column',gap:'8px'}},
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
               h('div',{style:{display:'flex',gap:'6px'}},
@@ -3625,16 +3704,15 @@ function App() {
           (()=>{
             const isBike = effSport==='Vélo';
             const unit = isBike ? 'W/bpm' : 'm/min/bpm';
-            const cutoff = Date.now()-effRange*86400000;
-            const acts = data.filter(a=>(isBike?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&a.date.getTime()>=cutoff);
+            const { start:winStart, end:winEnd, months:winMonths } = winRange(effWin);
+            const acts = data.filter(a=>(isBike?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&a.date.getTime()>=winStart&&a.date.getTime()<winEnd);
             const pts = acts.map(a=>({date:a.date,act:a,v:activityEF(a,actStreams[a.id])})).filter(p=>p.v!==null).sort((a,b)=>a.date-b.date);
             if (!pts.length) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Aucune séance '+(isBike?'vélo':'course')+' exploitable sur cette période — il faut la FC moyenne et la puissance (vélo) ou l’allure (course) de la séance.');
             const avg = Math.round((pts.reduce((s,p)=>s+p.v,0)/pts.length)*100)/100;
             const best = pts.reduce((m,p)=>p.v>m.v?p:m, pts[0]);
             const trend = pts.length>1 ? Math.round((pts[pts.length-1].v-pts[0].v)*100)/100 : null;
-            const rlEff = d=>d===30?'1 mois':d===90?'3 mois':d===180?'6 mois':'1 an';
             const cells = [
-              {label:'EF moyen', value: avg+' '+unit, sub:'moyenne sur '+pts.length+' séance'+(pts.length>1?'s':'')+' · '+rlEff(effRange)},
+              {label:'EF moyen', value: avg+' '+unit, sub:'moyenne sur '+pts.length+' séance'+(pts.length>1?'s':'')+' · '+winMonths+' mois'},
               {label:'Meilleure séance', value: (Math.round(best.v*100)/100)+' '+unit, sub: best.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'})},
               {label:'Évolution', value: trend!==null?((trend>=0?'+':'')+trend+' '+unit):'—', sub:'1re → dernière séance de la période'},
               {label:'Séances exploitables', value: String(pts.length), sub: isBike?'vélo avec FC + puissance':'course avec FC + allure'},
