@@ -236,47 +236,91 @@ function monthAgoLabel(back) {
 }
 
 // Sélecteur de fenêtre de calcul : 12 carrés = les 12 derniers mois
-// (le carré de droite = mois en cours). Clic sur un mois puis un autre pour
-// définir la période (1 à 12 mois) ; on peut ainsi la décaler et l'agrandir.
+// (le carré de droite = mois en cours).
+//  · clic sur un carré OFF  → il passe ON, la période s'étend jusqu'à lui
+//  · clic sur un carré ON    → il repasse OFF (la période se réduit de ce côté)
+//  · survol d'un carré ON     → double flèche ↔, glisser pour décaler la période
 function MonthWindow({ win, setWin }) {
-  const [anchor, setAnchor] = useState(null);
-  // carré i (0..11) : i = 11 → mois en cours, i = 0 → 11 mois avant
-  const backOf = i => 11 - i;
-  const selEndIdx = 11 - win.offset;
-  const selStartIdx = 12 - win.offset - win.length;
-  const click = i => {
-    if (anchor === null) { setAnchor(i); return; }
-    const lo = Math.min(anchor, i), hi = Math.max(anchor, i);
-    setWin({ offset: 11 - hi, length: hi - lo + 1 });
-    setAnchor(null);
+  const [hover, setHover] = useState(-1);
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef(null);
+  const CELL = 32, GAP = 3;
+
+  const off = Math.max(0, Math.min(11, win.offset | 0));
+  const len = Math.max(1, Math.min(12 - off, win.length | 0));
+  const endIdx = 11 - off;
+  const startIdx = 12 - off - len;
+  const isOnIdx = i => i >= startIdx && i <= endIdx;
+
+  const toggle = i => {
+    if (!isOnIdx(i)) {
+      const s = Math.min(startIdx, i), e = Math.max(endIdx, i);
+      setWin({ offset: 11 - e, length: e - s + 1 });
+      return;
+    }
+    if (len === 1) return;
+    if (i - startIdx <= endIdx - i) {
+      const s = Math.min(i + 1, endIdx);
+      setWin({ offset: off, length: endIdx - s + 1 });
+    } else {
+      const e = Math.max(i - 1, startIdx);
+      setWin({ offset: 11 - e, length: e - startIdx + 1 });
+    }
   };
-  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-    h('div', { style: { display: 'flex', gap: '3px' } },
+
+  const startDrag = (i, ev) => {
+    ev.preventDefault();
+    dragRef.current = { x0: ev.clientX, off0: off, moved: false };
+    setDragging(true);
+    const move = e => {
+      const d = dragRef.current;
+      if (!d) return;
+      const delta = Math.round((e.clientX - d.x0) / (CELL + GAP));
+      if (delta !== 0) d.moved = true;
+      const no = Math.max(0, Math.min(12 - len, d.off0 - delta));
+      setWin({ offset: no, length: len });
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      const d = dragRef.current;
+      dragRef.current = null;
+      setDragging(false);
+      if (d && !d.moved) toggle(i);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  };
+
+  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', userSelect: 'none' } },
+    h('div', { style: { display: 'flex', gap: GAP + 'px' }, onMouseLeave: () => setHover(-1) },
       Array.from({ length: 12 }, (_, i) => {
-        const inSel = anchor === null && i >= selStartIdx && i <= selEndIdx;
-        const isAnchor = anchor === i;
+        const on = isOnIdx(i);
         const isCurrent = i === 11;
-        return h('button', { key: i, type: 'button', onClick: () => click(i), title: monthAgoLabel(backOf(i)),
+        const showArrow = on && hover === i;
+        return h('button', { key: i, type: 'button', title: monthAgoLabel(11 - i),
+          onClick: on ? undefined : () => toggle(i),
+          onMouseDown: on ? (ev => startDrag(i, ev)) : undefined,
+          onMouseEnter: () => setHover(i),
           style: {
-            width: '32px', height: '32px', padding: 0, flexShrink: 0,
-            border: '2px solid ' + (isAnchor ? '#201e1d' : inSel ? '#ec3013' : '#d7d3d3'),
-            background: isAnchor ? '#ffe0d9' : inSel ? '#ec3013' : 'transparent',
-            color: inSel ? '#ffffff' : isCurrent ? '#201e1d' : '#605d5d',
-            fontFamily: 'inherit', fontSize: '9px', fontWeight: '700', letterSpacing: '0.02em',
-            textTransform: 'uppercase', cursor: 'pointer', position: 'relative', lineHeight: '1',
+            width: CELL + 'px', height: CELL + 'px', padding: 0, flexShrink: 0,
+            border: '2px solid ' + (on || hover === i ? '#ec3013' : '#d7d3d3'),
+            background: on ? '#ec3013' : hover === i ? '#ffe0d9' : 'transparent',
+            color: on ? '#ffffff' : isCurrent ? '#201e1d' : '#605d5d',
+            fontFamily: 'inherit', fontSize: showArrow ? '13px' : '9px', fontWeight: '700',
+            letterSpacing: '0.02em', textTransform: 'uppercase', lineHeight: '1', position: 'relative',
+            cursor: on ? 'ew-resize' : 'pointer',
           },
-          onMouseEnter: e => { if (!inSel && !isAnchor) e.currentTarget.style.borderColor = '#ec3013'; },
-          onMouseLeave: e => { if (!inSel && !isAnchor) e.currentTarget.style.borderColor = '#d7d3d3'; },
         },
-          monthAgoLabel(backOf(i)),
-          isCurrent && h('span', { style: { position: 'absolute', top: '2px', right: '2px', width: '4px', height: '4px', background: inSel ? '#ffffff' : '#ec3013' } })
+          showArrow ? '↔' : monthAgoLabel(11 - i),
+          isCurrent && !showArrow && h('span', { style: { position: 'absolute', top: '2px', right: '2px', width: '4px', height: '4px', background: on ? '#ffffff' : '#ec3013' } })
         );
       })
     ),
     h('span', { style: { fontSize: '10px', color: '#bab6b6', letterSpacing: '0.04em' } },
-      anchor !== null
-        ? 'Clique un 2ᵉ mois pour fermer la période'
-        : win.length + ' mois · ' + monthAgoLabel(win.offset + win.length - 1) + (win.length > 1 ? ' → ' + monthAgoLabel(win.offset) : '')
+      dragging
+        ? 'Glisse pour décaler la période'
+        : len + ' mois · ' + monthAgoLabel(off + len - 1) + (len > 1 ? ' → ' + monthAgoLabel(off) : '')
     )
   );
 }
