@@ -173,6 +173,64 @@ const crosshairPlugin = {
     ctx.lineWidth = 1; ctx.strokeStyle = '#201e1d'; ctx.stroke(); ctx.restore();
   },
 };
+// ── aura de survol : met en surbrillance la portion de courbe cliquable ──────
+// Options : options.plugins.clickAura = { srcByLabel } (map label -> tableau d'ids source).
+// Au survol, on éclaire le segment contigu de la courbe la plus proche qui partage
+// la même activité source (celle qui sera chargée dans « Séance 1 » au clic).
+const clickAuraPlugin = {
+  id: 'clickAura',
+  afterEvent(chart, args) {
+    const e = args.event;
+    const ca = chart.chartArea;
+    if (!ca) { return; }
+    let x = null, y = null;
+    if (e.type === 'mousemove' && e.x >= ca.left && e.x <= ca.right && e.y >= ca.top && e.y <= ca.bottom) {
+      x = e.x; y = e.y;
+    }
+    if (x !== chart._auraX || y !== chart._auraY) { chart._auraX = x; chart._auraY = y; args.changed = true; }
+  },
+  afterDatasetsDraw(chart, args, opts) {
+    const clk = opts && opts.srcByLabel;
+    if (!clk || chart._auraX == null || !chart.chartArea) return;
+    const mx = chart._auraX, my = chart._auraY;
+    let best = null, bestDy = Infinity;
+    chart.data.datasets.forEach((ds, di) => {
+      const src = clk[ds.label];
+      if (!src) return;
+      const meta = chart.getDatasetMeta(di);
+      if (!meta || meta.hidden || !meta.data || !meta.data.length) return;
+      let ni = -1, nd = Infinity;
+      for (let i = 0; i < meta.data.length; i++) {
+        if (src[i] == null || meta.data[i].skip) continue;
+        const d = Math.abs(meta.data[i].x - mx);
+        if (d < nd) { nd = d; ni = i; }
+      }
+      if (ni < 0) return;
+      const dy = Math.abs(meta.data[ni].y - my);
+      if (dy < bestDy) { bestDy = dy; best = { ni, src, pts: meta.data, color: ds.borderColor }; }
+    });
+    if (!best || bestDy > 44) return;
+    const sid = best.src[best.ni];
+    let a = best.ni, b = best.ni;
+    while (a > 0 && best.src[a - 1] === sid) a--;
+    while (b < best.src.length - 1 && best.src[b + 1] === sid) b++;
+    const { ctx } = chart;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(best.pts[a].x, best.pts[a].y);
+    for (let i = a + 1; i <= b; i++) ctx.lineTo(best.pts[i].x, best.pts[i].y);
+    ctx.lineWidth = 8;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = best.color || '#7c4dbc';
+    ctx.shadowColor = best.color || '#7c4dbc';
+    ctx.shadowBlur = 16;
+    ctx.globalAlpha = 0.3;
+    ctx.stroke();
+    ctx.restore();
+    chart.canvas.style.cursor = 'pointer';
+  },
+};
 // ── repères de mois sur l'axe des abscisses (charts hebdo/quotidiens) ────────
 // Trait vertical fin + abréviation du mois à chaque changement de mois.
 // Les bornes sont passées via options.plugins.monthMarkers.boundaries = [{idx,label}].
@@ -758,6 +816,7 @@ function projectRaceTime(activities, raceType, raceDist, raceElev, raceElevNeg) 
 
   return {
     minutes: Math.round(projMinutes),
+    refId: ref.id,
     refName: ref.name || ref.sport,
     refDist: ref.dist,
     refPace: ref.pace,
@@ -1785,7 +1844,7 @@ function App() {
       ]},
       options:{
         responsive:true, maintainAspectRatio:false, animation:{duration:0},
-        layout:{ padding:{ top:16 } },
+        layout:{ padding:{ top:16, left:0, right:10 } },
         interaction:{ mode:'index', intersect:false },
         plugins:{
           legend:{ display:false },
@@ -1828,6 +1887,7 @@ function App() {
           // réservée pour l'axe, pour coller directement au graphique 2 en dessous.
           x:{ display:false },
           y:{ position:'left', min:0, max:yMax1, grid:{color:'rgba(32,30,29,0.07)',drawTicks:false}, border:{display:false},
+              afterFit:s=>{ s.width=40; },
               ticks:{font:{size:10},color:'#bab6b6',maxTicksLimit:5} },
         },
       },
@@ -1843,6 +1903,7 @@ function App() {
       ]},
       options:{
         responsive:true, maintainAspectRatio:false, animation:{duration:0},
+        layout:{ padding:{ left:0, right:10 } },
         interaction:{ mode:'index', intersect:false },
         plugins:{
           monthMarkers:{ boundaries: pmcMonthMk },
@@ -1874,6 +1935,7 @@ function App() {
               }
             },
           y:{ position:'left', min:tsbMin, max:tsbMax, grid:{display:false}, border:{display:false},
+              afterFit:s=>{ s.width=40; },
               ticks:{font:{size:10},color:'#bab6b6',maxTicksLimit:5,callback:v=>(v>0?'+':'')+v} },
         },
       },
@@ -1934,7 +1996,7 @@ function App() {
         });
       }
       upsert('power', powerRef, {
-        type:'line', plugins:[crosshairPlugin],
+        type:'line', plugins:[crosshairPlugin, clickAuraPlugin],
         data:{ labels, datasets },
         options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
           interaction:{mode:'index',intersect:false,axis:'x'}, hover:{animationDuration:0},
@@ -1953,13 +2015,14 @@ function App() {
             if (bestId) { setSelActId1(String(bestId)); setShowCurveSel(true); }
           },
           plugins:{
+            clickAura:{ srcByLabel },
             legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
             tooltip:{enabled:true,animation:false,backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:12,displayColors:true,
+              filter: item => !item.dataset.label.startsWith('FTP'),
               callbacks:{
                 title: items => 'Effort : ' + PD[items[0].dataIndex].l,
                 label: c => {
                   const v = c.parsed.y; if (v===null) return null;
-                  if (c.dataset.label.startsWith('FTP')) return '─── ' + c.dataset.label;
                   const jArr = jByLabel[c.dataset.label];
                   const jVal = jArr ? jArr[c.dataIndex] : null;
                   const jStr = jVal ? ' · ' + (jVal>=1000 ? Math.round(jVal/100)/10+' kJ' : jVal+' J') : '';
@@ -1973,7 +2036,6 @@ function App() {
                 },
                 afterBody: () => {
                   const ls = ['clic sur une courbe → Séance 1'];
-                  if (wmaxA) ls.push('Wmax : ' + wmaxA + ' W');
                   if (!hasRealPower && hasEstPower) ls.push('⚠ Puissance estimée (modèle physique)');
                   return ls;
                 }
@@ -1990,12 +2052,12 @@ function App() {
       // ── Courbe d'Allure (Course / Trail) ──────────────────────────────
       const fmtP = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
       const PACE_DISTS_FINE = [];
-      for (let m = 200; m <= 42200; m += 100) PACE_DISTS_FINE.push(m);
+      for (let m = 200; m <= 42200; m += 200) PACE_DISTS_FINE.push(m);
       const paceLabels = PACE_DISTS_FINE.map(m => {
         if (m < 1000) return m % 500 === 0 ? m + ' m' : '';
         if (m === 1000) return '1 km'; if (m === 2000) return '2 km'; if (m === 3000) return '3 km';
         if (m === 5000) return '5 km'; if (m === 10000) return '10 km'; if (m === 15000) return '15 km';
-        if (m === 21100) return 'Semi'; if (m === 30000) return '30 km'; if (m === 42200) return 'Marathon';
+        if (m === 21000) return 'Semi'; if (m === 30000) return '30 km'; if (m === 42200) return 'Marathon';
         if (m > 5000 && m <= 30000 && m % 5000 === 0) return (m/1000) + ' km';
         return '';
       });
@@ -2063,7 +2125,7 @@ function App() {
       });
       const yLabel = isTrail ? 'Allure VAP (min/km)' : 'Allure (min/km)';
       upsert('power', powerRef, {
-        type:'line', plugins:[crosshairPlugin],
+        type:'line', plugins:[crosshairPlugin, clickAuraPlugin],
         data:{ labels: paceLabelsSlice, datasets: paceDatasetsNew },
         options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
           onHover:(e,els,chart)=>{ chart.canvas.style.cursor = els.length ? 'pointer' : 'default'; },
@@ -2081,6 +2143,7 @@ function App() {
             if (bestId) { setSelActId1(String(bestId)); setShowCurveSel(true); }
           },
           plugins:{
+            clickAura:{ srcByLabel },
             legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
             tooltip:{backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:10,displayColors:true,
               callbacks:{
@@ -2637,9 +2700,11 @@ function App() {
     return h > 0 ? h+'h'+String(m).padStart(2,'0') : m+' min';
   }
   const projDisplay = projResult ? fmtProjected(projResult.minutes) : 'Donnée manquante';
+  const projRefDateStr = projResult && projResult.refDate ? projResult.refDate.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}) : '';
   const projNote = projResult
-    ? (projResult.segments ? 'Triathlon estimé segment par segment' : 'D\'après ' + (projResult.refName||'sortie') + ' · ' + fmtNum(projResult.refDist,1) + ' km · ' + fmtPace(projResult.refPace) + '/km')
+    ? (projResult.segments ? 'Triathlon estimé segment par segment' : 'D\'après ' + (projResult.refName||'sortie') + ' · ' + fmtNum(projResult.refDist,1) + ' km · ' + fmtPace(projResult.refPace) + '/km' + (projRefDateStr ? ' · ' + projRefDateStr : ''))
     : (data.length ? 'Pas assez de données' : 'à calculer');
+  const projRefClick = projResult && projResult.refId != null ? () => openActivity(projResult.refId) : null;
   const acts=actsWin(data);
   const curW=actsWin(data);
   const prevW=actsPrev(data);
@@ -3111,7 +3176,7 @@ function App() {
         ),
         h('section',{style:{display:'flex',flexWrap:'wrap',alignItems:'flex-start',justifyContent:'space-between',gap:'20px 44px',padding:'18px 32px',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{display:'flex',flex:'1 1 520px',flexWrap:'wrap',gap:'20px 44px',minWidth:0}},
-            [{label:'Objectif',value:race.type,unit:'',delta:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}):'—',note:daysToRace===null?'':'J\u2212'+daysToRace,good:null,segNote:null},{label:'Temps projeté',value:projDisplay,unit:'',delta:projResult?'Riegel + Minetti':'—',note:projNote,good:projResult?true:null,segNote:projResult&&projResult.segments?projResult.segments:null},{label:'Prêt · Readiness',value:data.length?String(ready):'Donnée manquante',unit:data.length?'%':'',delta:data.length?(ready>=75?'En bonne voie':'À consolider'):'—',note:race.type,good:data.length?ready>=75:null,segNote:null},{label:'Semaines restantes',value:raceDateObj?String(weeksLeft):'Donnée manquante',unit:raceDateObj?'sem.':'',delta:raceDateObj?"jusqu'à la course":'—',note:'',good:null,segNote:null}].map((k,i)=>
+            [{label:'Objectif',value:race.type,unit:'',delta:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}):'—',note:daysToRace===null?'':'J\u2212'+daysToRace,good:null,segNote:null},{label:'Temps projeté',value:projDisplay,unit:'',delta:projResult?'Riegel + Minetti':'—',note:projNote,good:projResult?true:null,segNote:projResult&&projResult.segments?projResult.segments:null,noteClick:projRefClick},{label:'Prêt · Readiness',value:data.length?String(ready):'Donnée manquante',unit:data.length?'%':'',delta:data.length?(ready>=75?'En bonne voie':'À consolider'):'—',note:race.type,good:data.length?ready>=75:null,segNote:null},{label:'Semaines restantes',value:raceDateObj?String(weeksLeft):'Donnée manquante',unit:raceDateObj?'sem.':'',delta:raceDateObj?"jusqu'à la course":'—',note:'',good:null,segNote:null}].map((k,i)=>
               h('div',{key:i,style:{display:'flex',flexDirection:'column',gap:'6px',minWidth:0}},
                 h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},k.label),
                 h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px'}},
@@ -3120,7 +3185,7 @@ function App() {
                 ),
                 h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'8px'}},
                   h('span',{style:{padding:'3px 8px',fontSize:'12px',fontWeight:'600',letterSpacing:'0.04em',background:k.good?'#ffe0d9':'#eae9e9',color:k.good?'#ae1800':'#605d5d'}},k.delta),
-                  !k.segNote&&h('span',{style:{fontSize:'12px',color:'#605d5d'}},k.note)
+                  !k.segNote&&h('span',{style:{fontSize:'12px',color:k.noteClick?'#ec3013':'#605d5d',cursor:k.noteClick?'pointer':'default',textDecoration:k.noteClick?'underline':'none'},onClick:k.noteClick||undefined,title:k.noteClick?'Analyser cette activité':undefined},k.note)
                 ),
                 k.segNote&&h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginTop:'2px'}},
                   [k.segNote.swim&&{label:'Nat.',res:k.segNote.swim},k.segNote.bike&&{label:'Vélo',res:k.segNote.bike},k.segNote.run&&{label:'Course',res:k.segNote.run}].filter(Boolean).map(({label,res})=>
@@ -4330,7 +4395,7 @@ function App() {
                       ),
                       h('div',{style:{marginTop:'4px',paddingTop:'4px',borderTop:'1px solid #d7d3d3',fontSize:'11px',color:'#605d5d'}},'Riegel + Minetti · total ' + fmtProjected(projResult.minutes))
                     )
-                  : projResult&&h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},projNote)
+                  : projResult&&h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:projRefClick?'#ec3013':'#605d5d',cursor:projRefClick?'pointer':'default',textDecoration:projRefClick?'underline':'none'},onClick:projRefClick||undefined,title:projRefClick?'Analyser cette activité':undefined},projNote)
               )
             )
           )
