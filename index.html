@@ -295,8 +295,8 @@ function PeriodBtns({ value, onChange, curves }) {
       const on = value === p.d;
       return h('button', { key: p.d, type: 'button', onClick: () => onChange(p.d),
         style: {
-          padding: '5px 10px', border: '2px solid ' + (on ? p.color : '#d7d3d3'),
-          background: on ? p.color : 'transparent', color: on ? '#ffffff' : '#605d5d',
+          padding: '5px 10px', border: '2px solid ' + (on ? '#ec3013' : '#d7d3d3'),
+          background: on ? '#ec3013' : 'transparent', color: on ? '#ffffff' : '#605d5d',
           fontFamily: 'inherit', fontSize: '11px', fontWeight: '700', letterSpacing: '0.06em',
           textTransform: 'uppercase', cursor: 'pointer',
         },
@@ -605,6 +605,27 @@ function estimateVo2maxFromRun(act, hrMax, hrRest) {
   if (vo2max < 25 || vo2max > 85) return null;
   return Math.round(vo2max * 10) / 10;
 }
+// VO2max estimé depuis une sortie VÉLO — même principe (sous-maximal + %FCR),
+// coût en O2 du pédalage par la formule ACSM : VO2 = 10.8·W/kg + 7.
+function estimateVo2maxFromRide(act, streamPow, hrMax, hrRest, weightKg) {
+  if (!hrMax || !hrRest || hrMax <= hrRest || !weightKg) return null;
+  if (act.sport !== 'Vélo') return null;
+  const hr = act.avgHr || act.hr;
+  if (!hr || !act.time || act.time < 9) return null;
+  let watts = act.power || null;
+  if (!watts && streamPow && streamPow.length) {
+    let s = 0, c = 0;
+    for (let i = 0; i < streamPow.length; i++) { const v = streamPow[i]; if (v > 0) { s += v; c++; } }
+    watts = c ? s / c : null;
+  }
+  if (!watts || watts < 50 || watts > 400) return null;
+  const hrr = (hr - hrRest) / (hrMax - hrRest);
+  if (hrr < 0.5 || hrr > 0.95) return null;
+  const vo2sub = 10.8 * (watts / weightKg) + 7;
+  const vo2max = 3.5 + (vo2sub - 3.5) / hrr;
+  if (vo2max < 25 || vo2max > 90) return null;
+  return Math.round(vo2max * 10) / 10;
+}
 // Catégorie indicative (non clinique) — homme/femme, tous âges confondus.
 function vo2maxCategory(vo2, gender) {
   if (vo2 == null) return null;
@@ -798,6 +819,7 @@ function App() {
   // jusqu'à la fin de la période, length = nombre de mois (1 à 12), offset+length ≤ 12 }
   const [fitRange, setFitRange] = useState(180);
   const [vo2Range, setVo2Range] = useState(180);
+  const [vo2Sport, setVo2Sport] = useState('Course');
   const [effRange, setEffRange] = useState(180);
   const [effSport, setEffSport] = useState('Vélo');
   const [status, setStatus] = useState('idle');
@@ -1836,13 +1858,16 @@ function App() {
       const hasRealPower = data.some(a => a.sport==='Vélo' && a.power);
       const hasEstPower  = data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow);
       const estSuffix = !hasRealPower && hasEstPower ? ' (est.)' : '';
-      const labels = POWER_DURATIONS.map(d => d.l);
+      // Le graphique de puissance démarre à 1 min
+      const P0 = POWER_DURATIONS.findIndex(d => d.s >= 60);
+      const PD = POWER_DURATIONS.slice(P0);
+      const labels = PD.map(d => d.l);
       // Une courbe par période sélectionnée (30 j / 3 m / 6 m / 1 an)
       const jByLabel = {};
       let wmaxA = null;
       const datasets = [];
       powSel.forEach((p, idx) => {
-        const cur = powerCurveByDate(d2s(nowMs - p.d * 86400000), d2s(nowMs));
+        const cur = powerCurveByDate(d2s(nowMs - p.d * 86400000), d2s(nowMs)).slice(P0);
         const w = cur.map(v => v ? v.w : null);
         jByLabel[p.label + estSuffix] = cur.map(v => v ? v.j : null);
         const wmax = w.filter(Boolean).length ? Math.max(...w.filter(Boolean)) : null;
@@ -1860,7 +1885,7 @@ function App() {
           if (s && s.pow && s.pow.length) {
             const act = data.find(a => String(a.id) === String(sid));
             const lbl = act ? act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(act.dist,1)+'km' : defLbl;
-            const actPowCurve = POWER_DURATIONS.map(({s:dur}) => bestAvgWindow(s.pow, dur));
+            const actPowCurve = PD.map(({s:dur}) => bestAvgWindow(s.pow, dur));
             datasets.push({ label:lbl, data:actPowCurve, borderColor:col, borderWidth:1.5, borderDash:[], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:2, pointBackgroundColor:col, pointBorderColor:'#f3f2f2', pointBorderWidth:1, spanGaps:true, yAxisID:'yW' });
           }
         });
@@ -1874,7 +1899,7 @@ function App() {
             legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
             tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:12,displayColors:true,
               callbacks:{
-                title: items => 'Effort : ' + POWER_DURATIONS[items[0].dataIndex].l,
+                title: items => 'Effort : ' + PD[items[0].dataIndex].l,
                 label: c => {
                   const v = c.parsed.y; if (v===null) return null;
                   if (c.dataset.label.startsWith('FTP')) return '─── ' + c.dataset.label;
@@ -1952,6 +1977,10 @@ function App() {
       let paceIdxMin = PACE_DISTS_FINE.length - 1, paceIdxMax = 0;
       allCurves.forEach(c => c.vals.forEach((v,i) => { if (v!==null) { paceIdxMin=Math.min(paceIdxMin,i); paceIdxMax=Math.max(paceIdxMax,i); }}));
       if (paceIdxMin > paceIdxMax) { paceIdxMin=0; paceIdxMax=PACE_DISTS_FINE.length-1; }
+      // Le graphique d'allure démarre à 1 km
+      const km1 = PACE_DISTS_FINE.indexOf(1000);
+      if (km1 >= 0) paceIdxMin = Math.max(paceIdxMin, km1);
+      if (paceIdxMin > paceIdxMax) paceIdxMax = paceIdxMin;
       const paceLabelsSlice = paceLabels.slice(paceIdxMin, paceIdxMax+1);
       const paceDatasetsNew = allCurves.map(c => ({
         label: c.label, data: c.vals.slice(paceIdxMin, paceIdxMax+1),
@@ -2112,10 +2141,14 @@ function App() {
     chartDefaults();
     const hrMax = Number(profile.fcMax)||null;
     const hrRest = Number(profile.fcRest)||null;
+    const wKg = Number(profile.weight)||null;
+    const isVeloVo2 = vo2Sport === 'Vélo';
     const winEnd = Date.now(), winStart = winEnd - vo2Range * 86400000;
-    const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.date.getTime()>=winStart && a.date.getTime()<winEnd);
+    const runs = data.filter(a => (isVeloVo2 ? a.sport==='Vélo' : (a.sport==='Course'||a.sport==='Trail')) && a.date.getTime()>=winStart && a.date.getTime()<winEnd);
     const pts = runs
-      .map(a => ({ date:a.date, act:a, v:estimateVo2maxFromRun(a, hrMax, hrRest) }))
+      .map(a => ({ date:a.date, act:a, v: isVeloVo2
+        ? estimateVo2maxFromRide(a, actStreams[a.id] && actStreams[a.id]!=='error' ? actStreams[a.id].pow : null, hrMax, hrRest, wKg)
+        : estimateVo2maxFromRun(a, hrMax, hrRest) }))
       .filter(p => p.v!==null)
       .sort((a,b)=>a.date-b.date);
     if (!pts.length) { destroyChart('vo2'); return; }
@@ -2177,13 +2210,13 @@ function App() {
           }
         },
         scales:{
-          x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:20},title:{display:true,text:'Séances (Course / Trail)',color:'#605d5d'}},
+          x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:20},title:{display:true,text:isVeloVo2?'Sorties vélo':'Séances (Course / Trail)',color:'#605d5d'}},
           y:{grid:{color:'rgba(32,30,29,0.12)',drawTicks:false},border:{display:false},title:{display:true,text:'VO2max estimé (ml/kg/min)',color:'#605d5d'}},
         },
       },
     });
     return () => destroyChart('vo2');
-  }, [tab, athleteSection, data, profile.fcMax, profile.fcRest, vo2Range]);
+  }, [tab, athleteSection, data, actStreams, profile.fcMax, profile.fcRest, profile.weight, vo2Range, vo2Sport]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Efficacité') return;
@@ -3007,8 +3040,7 @@ function App() {
                         h('span',{style:st.deltaStyle},st.delta)
                       ),
                       h('div',{style:{display:'flex',alignItems:'baseline',gap:'6px',marginTop:'3px'}},
-                        h('span',{style:{fontSize:'10px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},'S\u22121 : '+st.prevVal),
-                        st.delta&&st.delta!=='—'&&h('span',{style:{fontSize:'10px',color:'#605d5d'}},st.delta+' vs S\u22121')
+                        h('span',{style:{fontSize:'10px',color:'#3d3a3a',fontVariantNumeric:'tabular-nums'}},'S\u22121 : '+st.prevVal)
                       )
                     ))
                   )
@@ -3062,7 +3094,7 @@ function App() {
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
               h(PeriodBtns,{value:fitRange,onChange:setFitRange,curves:PERIOD_CURVE})
             ),
-            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(fitRange)})),
+            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(fitRange), showCmp:false})),
             pmcRef&&h('div',{style:{display:'flex',gap:'20px'}},
               [
                 {name:'Condition physique',abbr:'CTL',value:pmcRef.ctl,color:'#ec3013'},
@@ -3193,8 +3225,9 @@ function App() {
             const endA2=nowMs2, startA2=endA2-powRangeA*86400000;
             const endB2=startA2, startB2=endB2-powRangeB*86400000;
             const d2s=t=>new Date(t).toISOString().slice(0,10);
-            const rl=d=>d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an';
+            const rl=d=>d===30?'30 j':d===90?'3 mois':d===180?'6 mois':'1 an';
             const compLabel='vs '+rl(powRangeB)+' préc.';
+            const periodLbl='sur '+rl(powRangeA);
             if (isVeloPow) {
               const ftpVal=Number(profile.ftp)||ftpEstimated||null;
               const isEstimatedFtp=!Number(profile.ftp)&&!!ftpEstimated;
@@ -3259,7 +3292,7 @@ function App() {
                 };
               }
               const cells=[
-                {label:'W/kg'+estTag,val:wkg?wkg+' W/kg':null,chip:mkChipV(wkg,wkgRef,true),sub:!profile.weight?'renseigne le poids':(seanceModeV?'séance · '+profile.weight+' kg':'période · '+profile.weight+' kg')},
+                {label:'W/kg'+estTag,val:wkg?wkg+' W/kg':null,chip:mkChipV(wkg,wkgRef,true),sub:!profile.weight?'renseigne le poids':(seanceModeV?'séance 1':periodLbl+(profile.weight?' · '+profile.weight+' kg':''))},
                 {label:'kJ·20 min',val:(seanceModeV?kj20S1:kjAval)?(seanceModeV?kj20S1:kjAval)+' kJ':null,chip:mkChipV(seanceModeV?kj20S1:kjAval,kj20Ref,true),sub:(seanceModeV?kj20S1:kjAval)?'= '+Math.round((seanceModeV?kj20S1:kjAval)*1000)+' J':'calcule la courbe'},
                 {label:'Wmax'+estTag,val:(seanceModeV?wmaxS1:wmaxA2)?(seanceModeV?wmaxS1:wmaxA2)+' W':null,chip:mkChipV(seanceModeV?wmaxS1:wmaxA2,wmaxRef,true),sub:(seanceModeV?wmaxS1:wmaxA2)&&profile.weight?Math.round((seanceModeV?wmaxS1:wmaxA2)/Number(profile.weight)*100)/100+' W/kg':''},
                 {label:'PC'+estTag,val:(seanceModeV?cpS1:cpAval)?(seanceModeV?cpS1:cpAval)+' W':null,chip:mkChipV(seanceModeV?cpS1:cpAval,cpRef,true),sub:'puissance critique'},
@@ -3343,7 +3376,7 @@ function App() {
                       chip&&chip.text&&chip.text!=='—'&&h('span',{style:{...chip.style}},chip.text),
                       chip&&refLabelR&&h('span',{style:{fontSize:'11px',color:'#bab6b6'}},refLabelR)
                     ),
-                    h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},vRef?fmtPL(vRef)+unit+' préc.':'pas de données préc.')
+                    h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},seanceModeR?'séance 1':periodLbl)
                   );
                 })
               );
@@ -3499,6 +3532,7 @@ function App() {
             });
             const zoneCur  = accumZone(0, hrRangeA);
             const zonePrev = accumZone(hrRangeA, hrRangeA + hrRangeB);
+            const periodLbl='sur '+(hrRangeA===30?'30 j':hrRangeA===90?'3 mois':hrRangeA===180?'6 mois':'1 an');
             // ── Mode séance FC ───────────────────────────────────────────────
             // Chiffres du haut = ce qui est tracé : Actuelle (rouge) sinon séance 1 (violet)
             const seanceModeFC = !showCurveA && showCurveSel && !!selActId1;
@@ -3581,7 +3615,7 @@ function App() {
                     chip&&refLabelFC&&h('span',{style:{fontSize:'11px',color:'#bab6b6'}},refLabelFC)
                   ),
                   h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:'#605d5d'}},
-                    vRef ? (isBikeFC ? vRef+' W préc.' : fmtPZ(vRef)+' /km préc.') : 'pas de données préc.'
+                    seanceModeFC ? 'séance 1' : periodLbl
                   )
                 );
               })
@@ -3656,27 +3690,43 @@ function App() {
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
               h(PeriodBtns,{value:vo2Range,onChange:setVo2Range,curves:PERIOD_CURVE})
             ),
-            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(vo2Range)}))
+            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(vo2Range), showCmp:false})),
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
+              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
+              h('div',{style:{display:'flex',gap:'6px'}},
+                ['Course','Vélo'].map(sp=>h('button',{key:sp,type:'button',onClick:()=>setVo2Sport(sp),
+                  style:{padding:'5px 12px',border:'2px solid '+(vo2Sport===sp?'#ec3013':'#d7d3d3'),background:vo2Sport===sp?'#ec3013':'transparent',color:vo2Sport===sp?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'}},sp))
+              )
+            )
           ),
           (()=>{
             const hrMax = Number(profile.fcMax)||null;
             const hrRest = Number(profile.fcRest)||null;
+            const wKg = Number(profile.weight)||null;
+            const isVeloVo2 = vo2Sport==='Vélo';
             if (!hrMax||!hrRest) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Renseigne FC max et FC repos dans le Profil pour activer l’estimation du VO2max.');
+            if (isVeloVo2 && !wKg) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Renseigne le poids dans le Profil pour l’estimation VO2max vélo.');
             const winEnd = Date.now(), winStart = winEnd - vo2Range * 86400000;
             const winMonths = Math.round(vo2Range / 30);
-            const runs = data.filter(a=>(a.sport==='Course'||a.sport==='Trail')&&a.date.getTime()>=winStart&&a.date.getTime()<winEnd);
-            const pts = runs.map(a=>({date:a.date,act:a,v:estimateVo2maxFromRun(a,hrMax,hrRest)})).filter(p=>p.v!==null).sort((a,b)=>a.date-b.date);
-            if (!pts.length) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Aucune séance de course exploitable sur cette période — il faut un effort sous-maximal stable, FC entre 50 et 95 % de la réserve cardiaque.');
-            // Moyenne sur TOUTES les séances exploitables de la période sélectionnée
-            // (le chiffre change bien quand on change de période dans la bande du haut).
+            const runs = data.filter(a=>(isVeloVo2?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&a.date.getTime()>=winStart&&a.date.getTime()<winEnd);
+            const pts = runs.map(a=>({date:a.date,act:a,v: isVeloVo2
+              ? estimateVo2maxFromRide(a, actStreams[a.id]&&actStreams[a.id]!=='error'?actStreams[a.id].pow:null, hrMax, hrRest, wKg)
+              : estimateVo2maxFromRun(a,hrMax,hrRest)})).filter(p=>p.v!==null).sort((a,b)=>a.date-b.date);
+            if (!pts.length) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Aucune '+(isVeloVo2?'sortie vélo':'séance de course')+' exploitable sur cette période — il faut un effort sous-maximal stable (FC entre 50 et 95 % de la réserve) '+(isVeloVo2?'et une mesure de puissance.':'.'));
             const vo2Now = Math.round((pts.reduce((s,p)=>s+p.v,0)/pts.length)*10)/10;
-            const vma = Math.round(((vo2Now-3.5)/0.2)*60/1000*100)/100; // km/h
+            const vma = Math.round(((vo2Now-3.5)/0.2)*60/1000*100)/100; // km/h (course)
             const vmaMs = vma*1000/3600;
-            const t5k = vmaMs>0 ? 5000/(vmaMs*0.93) : null; // secondes, ~93 % VMA
+            const t5k = vmaMs>0 ? 5000/(vmaMs*0.93) : null;
+            const pma = wKg ? Math.round(((vo2Now-7)/10.8)*10)/10 : null; // W/kg (vélo)
             const fmtMinSec = s => { if(!s) return '—'; const m=Math.floor(s/60); const sec=Math.round(s%60); return m+"'"+String(sec).padStart(2,'0')+'"'; };
             const cat = vo2maxCategory(vo2Now, profile.gender);
             const trend = pts.length>1 ? Math.round((pts[pts.length-1].v-pts[0].v)*10)/10 : null;
-            const cells = [
+            const cells = isVeloVo2 ? [
+              {label:'VO2max estimé', value: vo2Now+' ml/kg/min', sub:'moyenne sur '+pts.length+' sortie'+(pts.length>1?'s':'')+' · '+winMonths+' mois'},
+              {label:'PMA estimée', value: (pma!=null?pma+' W/kg':'—'), sub:'puissance maximale aérobie'},
+              {label:'PMA absolue', value: (pma!=null&&wKg?Math.round(pma*wKg)+' W':'—'), sub:'à '+(wKg||'?')+' kg'},
+              {label:'Catégorie', value: cat||'—', sub: profile.gender==='Non précisé'?'renseigne le sexe dans le Profil':'estimation indicative, non clinique'},
+            ] : [
               {label:'VO2max estimé', value: vo2Now+' ml/kg/min', sub:'moyenne sur '+pts.length+' séance'+(pts.length>1?'s':'')+' · '+winMonths+' mois'},
               {label:'VMA estimée', value: fmtNum(vma,1)+' km/h', sub:'vitesse maximale aérobie'},
               {label:'5 km projeté', value: fmtMinSec(t5k), sub:'à ~93 % de la VMA'},
@@ -3696,12 +3746,15 @@ function App() {
                   h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}}, trend!==null?(trend>=0?'+':'')+trend+' ml/kg/min sur la période':'')
                 ),
                 h('p',{style:{margin:'0 0 18px',fontSize:'12px',color:'#605d5d',maxWidth:'90ch'}},
-                  'Une estimation par séance de course/trail (points), et une tendance lissée sur 5 séances (trait).'
+                  isVeloVo2 ? 'Une estimation par sortie vélo avec puissance (points), et une tendance lissée sur 5 sorties (trait).'
+                            : 'Une estimation par séance de course/trail (points), et une tendance lissée sur 5 séances (trait).'
                 ),
                 h('div',{style:{height:'calc(100vh - 480px)',minHeight:'320px'}},h('canvas',{ref:vo2Ref})),
                 h('div',{style:{marginTop:'14px',padding:'12px 16px',borderTop:'1px solid #d7d3d3'}},
                   h('p',{style:{margin:0,fontSize:'11px',color:'#bab6b6',lineHeight:'1.6',maxWidth:'90ch'}},
-                    '⚠ Estimation indicative — même principe que les montres GPS Garmin/Polar (moteur Firstbeat) : le coût en oxygène de la course (formule ACSM, corrigée du dénivelé) mesuré à une allure sous-maximale est extrapolé à 100 % de la réserve cardiaque via le %FCR (FC − FC repos) / (FC max − FC repos) de la séance. Nécessite FC max et FC repos renseignées dans le Profil. Précision réduite sans ceinture cardio, par forte chaleur, en fatigue, sur terrain très technique ou sur des séances trop courtes/intenses. Catégorie fournie à titre indicatif, non clinique.'
+                    isVeloVo2
+                      ? '⚠ Estimation indicative — coût en oxygène du pédalage par la formule ACSM (VO2 = 10.8·W/kg + 7) mesuré à effort sous-maximal, extrapolé à 100 % de la réserve cardiaque via le %FCR de la sortie. Nécessite FC max, FC repos et poids renseignés, et une mesure de puissance (capteur ou estimation). Précision réduite sans ceinture cardio, par forte chaleur ou en fatigue. Catégorie à titre indicatif, non clinique.'
+                      : '⚠ Estimation indicative — même principe que les montres GPS Garmin/Polar (moteur Firstbeat) : le coût en oxygène de la course (formule ACSM, corrigée du dénivelé) mesuré à une allure sous-maximale est extrapolé à 100 % de la réserve cardiaque via le %FCR (FC − FC repos) / (FC max − FC repos) de la séance. Nécessite FC max et FC repos renseignées dans le Profil. Précision réduite sans ceinture cardio, par forte chaleur, en fatigue, sur terrain très technique ou sur des séances trop courtes/intenses. Catégorie fournie à titre indicatif, non clinique.'
                   )
                 )
               )
@@ -3714,7 +3767,7 @@ function App() {
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
               h(PeriodBtns,{value:effRange,onChange:setEffRange,curves:PERIOD_CURVE})
             ),
-            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(effRange)})),
+            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(effRange), showCmp:false})),
             h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
               h('div',{style:{display:'flex',gap:'6px'}},
