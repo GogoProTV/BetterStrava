@@ -2245,9 +2245,13 @@ function App() {
     const acts = actsWin(data);
     const keyOf = d => weekStart(d).getTime();
     const buckets = new Map();
-    const wkFrom = weekStart(new Date(winStart)).getTime();
-    const wkTo = weekStart(new Date(winEnd - 1)).getTime();
-    for (let t = wkFrom; t <= wkTo; t += 7 * 86400000) buckets.set(t, {km:0, h:0, elev:0});
+    // Itérer semaine par semaine en re-calant sur le lundi via weekStart() :
+    // un simple « t += 7 jours » dérive d'1 h au changement d'heure et fait rater
+    // les activités (les clés de bucket ne correspondent plus).
+    const _wkEnd = weekStart(new Date(winEnd - 1)).getTime();
+    for (let wc = weekStart(new Date(winStart)); wc.getTime() <= _wkEnd; wc.setDate(wc.getDate() + 7)) {
+      buckets.set(wc.getTime(), {km:0, h:0, elev:0});
+    }
     acts.forEach(a => { const w = buckets.get(keyOf(a.date)); if (w) { w.km += a.dist; w.h += a.time/60; w.elev += a.elev; } });
     const labels = [...buckets.keys()].map(k => {
       const d = new Date(k);
@@ -2343,9 +2347,9 @@ function App() {
       scales: lineScales
     } });
     const days=[];
-    const _d0=new Date(winStart); _d0.setHours(0,0,0,0);
-    const _dN=new Date(winEnd-1); _dN.setHours(0,0,0,0);
-    for(let t=_d0.getTime(); t<=_dN.getTime(); t+=86400000) days.push(new Date(t));
+    const _dc=new Date(winStart); _dc.setHours(0,0,0,0);
+    const _dN=new Date(winEnd); _dN.setHours(0,0,0,0);
+    while(_dc.getTime()<=_dN.getTime()){ days.push(new Date(_dc)); _dc.setDate(_dc.getDate()+1); }
     const perDay=new Map();
     data.forEach(a=>{if(sport!=='Tous'&&a.sport!==sport)return;const k=a.date.toDateString();perDay.set(k,(perDay.get(k)||0)+a.time);});
     const dayMk = monthBoundaries(days.map(d=>d.getTime()));
@@ -3823,24 +3827,31 @@ function App() {
         ),
         h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),h(SportSelector)),
-          h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},
             h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période · Range'),
-            h(BtnRow,{options:mkOptions([{label:'1 mois',value:30},{label:'3 mois',value:90},{label:'6 mois',value:180},{label:'1 an',value:365}],range,setRange)}),
-            // Bande décorative : les 12 mois de l'année (mois en cours à droite).
-            // Orange = période affichée · orange clair = période de comparaison.
-            h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',marginTop:'2px',minWidth:'240px'}},
-              h('div',{style:{display:'flex',gap:'2px'}},
-                Array.from({length:12},(_,i)=>{
-                  const _n=new Date();
-                  const ms=new Date(_n.getFullYear(),_n.getMonth()-(11-i),1).getTime();
-                  const me=new Date(_n.getFullYear(),_n.getMonth()-(11-i)+1,1).getTime();
-                  const inSel = ms < winEnd && me > winStart;
-                  const inCmp = ms < prevEnd && me > prevStart;
-                  return h('div',{key:i,title:monthAgoLabel(11-i),style:{flex:1,height:'9px',background:inSel?'#ec3013':inCmp?'#f9a882':'#eae9e9'}});
-                })
-              ),
-              h('div',{style:{display:'flex',gap:'2px'}},
-                Array.from({length:12},(_,i)=>h('span',{key:i,style:{flex:1,textAlign:'center',fontSize:'8px',fontWeight:'700',letterSpacing:'0',color:'#bab6b6',textTransform:'uppercase'}},monthAgoLabel(11-i).charAt(0)))
+            h('div',{style:{display:'flex',alignItems:'center',gap:'20px',flexWrap:'wrap'}},
+              h(BtnRow,{options:mkOptions([{label:'1 mois',value:30},{label:'3 mois',value:90},{label:'6 mois',value:180},{label:'1 an',value:365}],range,setRange)}),
+              // Bande décorative — 12 mois (mois en cours à droite). Chaque barre est
+              // remplie au prorata de la part du mois réellement dans la période :
+              // orange = période affichée · orange clair = période de comparaison.
+              h('div',{style:{display:'flex',flexDirection:'column',gap:'3px'}},
+                h('div',{style:{display:'flex',gap:'2px',width:'264px'}},
+                  Array.from({length:12},(_,i)=>{
+                    const _n=new Date();
+                    const ms=new Date(_n.getFullYear(),_n.getMonth()-(11-i),1).getTime();
+                    const me=new Date(_n.getFullYear(),_n.getMonth()-(11-i)+1,1).getTime();
+                    const L=me-ms;
+                    const cl=Math.max(0,Math.min(1,(prevStart-ms)/L)), cr=Math.max(0,Math.min(1,(prevEnd-ms)/L));
+                    const sl=Math.max(0,Math.min(1,(winStart-ms)/L)), sr=Math.max(0,Math.min(1,(winEnd-ms)/L));
+                    return h('div',{key:i,title:monthAgoLabel(11-i),style:{flex:1,height:'16px',background:'#eae9e9',position:'relative',overflow:'hidden'}},
+                      cr>cl&&h('span',{style:{position:'absolute',top:0,bottom:0,left:(cl*100)+'%',width:((cr-cl)*100)+'%',background:'#f9a882'}}),
+                      sr>sl&&h('span',{style:{position:'absolute',top:0,bottom:0,left:(sl*100)+'%',width:((sr-sl)*100)+'%',background:'#ec3013'}})
+                    );
+                  })
+                ),
+                h('div',{style:{display:'flex',gap:'2px',width:'264px'}},
+                  Array.from({length:12},(_,i)=>h('span',{key:i,style:{flex:1,textAlign:'center',fontSize:'8px',fontWeight:'700',color:'#bab6b6',textTransform:'uppercase'}},monthAgoLabel(11-i).charAt(0)))
+                )
               )
             )
           )
