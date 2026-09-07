@@ -237,9 +237,9 @@ function monthAgoLabel(back) {
 
 // Sélecteur de fenêtre de calcul : 12 carrés = les 12 derniers mois
 // (le carré de droite = mois en cours).
-//  · clic sur un carré OFF  → il passe ON, la période s'étend jusqu'à lui
-//  · clic sur un carré ON    → il repasse OFF (la période se réduit de ce côté)
-//  · survol d'un carré ON     → double flèche ↔, glisser pour décaler la période
+//  · clic sur un carré OFF → il passe ON, la période s'étend jusqu'à lui
+//  · clic sur un carré ON  → il repasse OFF, la période s'arrête au mois d'avant
+//  · glisser un carré ON (curseur ↔) → décale toute la période
 function MonthWindow({ win, setWin }) {
   const [hover, setHover] = useState(-1);
   const [dragging, setDragging] = useState(false);
@@ -254,18 +254,20 @@ function MonthWindow({ win, setWin }) {
 
   const toggle = i => {
     if (!isOnIdx(i)) {
+      // carré OFF → on l'allume, la période s'étend jusqu'à lui
       const s = Math.min(startIdx, i), e = Math.max(endIdx, i);
       setWin({ offset: 11 - e, length: e - s + 1 });
       return;
     }
-    if (len === 1) return;
-    if (i - startIdx <= endIdx - i) {
-      const s = Math.min(i + 1, endIdx);
-      setWin({ offset: off, length: endIdx - s + 1 });
-    } else {
-      const e = Math.max(i - 1, startIdx);
+    // carré ON → on l'éteint : la période s'arrête au mois d'avant
+    if (i > startIdx) {
+      const e = i - 1;
       setWin({ offset: 11 - e, length: e - startIdx + 1 });
+    } else if (endIdx > startIdx) {
+      // on a cliqué le premier mois de la période → elle démarre au mois d'après
+      setWin({ offset: off, length: endIdx - (i + 1) + 1 });
     }
+    // sinon (période d'un seul mois, clic dessus) : on garde
   };
 
   const startDrag = (i, ev) => {
@@ -297,7 +299,6 @@ function MonthWindow({ win, setWin }) {
       Array.from({ length: 12 }, (_, i) => {
         const on = isOnIdx(i);
         const isCurrent = i === 11;
-        const showArrow = on && hover === i;
         return h('button', { key: i, type: 'button', title: monthAgoLabel(11 - i),
           onClick: on ? undefined : () => toggle(i),
           onMouseDown: on ? (ev => startDrag(i, ev)) : undefined,
@@ -307,13 +308,13 @@ function MonthWindow({ win, setWin }) {
             border: '2px solid ' + (on || hover === i ? '#ec3013' : '#d7d3d3'),
             background: on ? '#ec3013' : hover === i ? '#ffe0d9' : 'transparent',
             color: on ? '#ffffff' : isCurrent ? '#201e1d' : '#605d5d',
-            fontFamily: 'inherit', fontSize: showArrow ? '13px' : '9px', fontWeight: '700',
+            fontFamily: 'inherit', fontSize: '9px', fontWeight: '700',
             letterSpacing: '0.02em', textTransform: 'uppercase', lineHeight: '1', position: 'relative',
             cursor: on ? 'ew-resize' : 'pointer',
           },
         },
-          showArrow ? '↔' : monthAgoLabel(11 - i),
-          isCurrent && !showArrow && h('span', { style: { position: 'absolute', top: '2px', right: '2px', width: '4px', height: '4px', background: on ? '#ffffff' : '#ec3013' } })
+          monthAgoLabel(11 - i),
+          isCurrent && h('span', { style: { position: 'absolute', top: '2px', right: '2px', width: '4px', height: '4px', background: on ? '#ffffff' : '#ec3013' } })
         );
       })
     ),
