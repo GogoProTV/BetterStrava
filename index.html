@@ -216,6 +216,24 @@ function chartDefaults() {
   Chart.defaults.font.family = 'Archivo, system-ui, sans-serif';
   Chart.defaults.font.size = 11;
   Chart.defaults.color = '#605d5d';
+  // Infobulle : toujours ancrée EN HAUT du graphique (elle ne suit pas la courbe)
+  let TT = null;
+  try { TT = Chart.Tooltip || Chart.registry.plugins.get('tooltip'); } catch (e) {}
+  if (TT && TT.positioners) {
+    if (!TT.positioners.topEdge) {
+      TT.positioners.topEdge = function (items, evtPos) {
+        const ca = this.chart.chartArea;
+        return { x: evtPos ? evtPos.x : (ca.left + ca.right) / 2, y: ca.top };
+      };
+    }
+    Chart.defaults.plugins.tooltip.position = 'topEdge';
+    Chart.defaults.plugins.tooltip.yAlign = 'top';
+    Chart.defaults.plugins.tooltip.caretSize = 0;
+    Chart.defaults.plugins.tooltip.caretPadding = 2;
+  }
+  // Pas d'agrandissement des points au survol
+  Chart.defaults.elements.point.hoverRadius = 0;
+  Chart.defaults.elements.point.hoverBorderWidth = 0;
 }
 
 // Libellé court d'un mois situé `back` mois avant le mois en cours (0 = mois en cours).
@@ -1030,8 +1048,8 @@ function App() {
     const altMax = altMin + 1000;
     const datasets = [];
     let paceMin = 2, paceMax = 10;
-    if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(smooth(hrData, 10)), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yHr', spanGaps: true });
-    if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(smooth(altData, 10)), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yAlt', spanGaps: true });
+    if (hrData.length && vis.fc) datasets.push({ label: 'FC (bpm)', data: thin(smooth(hrData, 10)), borderColor: '#ec3013', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius:0, yAxisID: 'yHr', spanGaps: true });
+    if (altData.length && vis.alt) datasets.push({ label: 'Altitude (m)', data: thin(smooth(altData, 10)), borderColor: '#201e1d', borderWidth: 1.5, backgroundColor: 'rgba(32,30,29,0.08)', fill: true, tension: 0.2, pointRadius: 0, pointHoverRadius:0, yAxisID: 'yAlt', spanGaps: true });
     if (velData.length && vis.vel) {
       const smoothedVel = smooth(velData, 30);
       const conv = isBike ? v => v > 0 ? Math.round(v * 3.6 * 10) / 10 : null : v => {
@@ -1043,9 +1061,9 @@ function App() {
       const paceVals = thin(smoothedVel).map(conv).filter(v => v !== null);
       paceMin = paceVals.length ? Math.max(1, Math.floor(Math.min(...paceVals) * 2) / 2 - 0.5) : 1;
       paceMax = paceVals.length ? Math.min(15, Math.ceil(Math.max(...paceVals) * 2) / 2 + 0.5) : 12;
-      datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(smoothedVel).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPace', spanGaps: true });
+      datasets.push({ label: isBike ? 'Vitesse (km/h)' : 'Allure (min/km)', data: thin(smoothedVel).map(conv), borderColor: '#3d3a3a', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius:0, yAxisID: 'yPace', spanGaps: true });
     }
-    if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(smooth(Array.from(estPowData), 30)), borderColor: '#7c4dbc', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'yPow', spanGaps: true });
+    if (estPowData.length && vis.pow) datasets.push({ label: 'Puissance est. (W)', data: thin(smooth(Array.from(estPowData), 30)), borderColor: '#7c4dbc', borderWidth: 1.5, backgroundColor: 'transparent', fill: false, tension: 0.2, pointRadius: 0, pointHoverRadius:0, yAxisID: 'yPow', spanGaps: true });
     const scales = { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 40 }, title: { display: true, text: usesDist ? 'Distance (km)' : 'Temps (min)', color: '#605d5d' } } };
     if (hrData.length && vis.fc) scales.yHr = { position: 'left', grid: { color: 'rgba(236,48,19,0.12)', drawTicks: false }, border: { display: false }, title: { display: true, text: 'FC (bpm)', color: '#ec3013' } };
     if (altData.length && vis.alt) scales.yAlt = { position: 'right', min: altMin, max: altMax, grid: { display: false }, border: { display: false }, title: { display: true, text: 'Altitude (m)', color: '#201e1d' } };
@@ -1095,10 +1113,12 @@ function App() {
   })();
 
   const POWER_DURATIONS = [
-    { s:5,l:'5 s' },{ s:10,l:'10 s' },{ s:15,l:'15 s' },{ s:30,l:'30 s' },{ s:60,l:'1 min' },
-    { s:120,l:'2 min' },{ s:180,l:'3 min' },{ s:300,l:'5 min' },{ s:420,l:'7 min' },
-    { s:600,l:'10 min' },{ s:1200,l:'20 min' },{ s:1800,l:'30 min' },
-    { s:3600,l:'1 h' },{ s:5400,l:'1 h 30' },{ s:10800,l:'3 h' },
+    { s:5,l:'5 s' },{ s:10,l:'10 s' },{ s:15,l:'15 s' },{ s:20,l:'20 s' },{ s:30,l:'30 s' },{ s:45,l:'45 s' },
+    { s:60,l:'1 min' },{ s:90,l:'1 min 30' },{ s:120,l:'2 min' },{ s:150,l:'2 min 30' },{ s:180,l:'3 min' },
+    { s:240,l:'4 min' },{ s:300,l:'5 min' },{ s:420,l:'7 min' },{ s:480,l:'8 min' },
+    { s:600,l:'10 min' },{ s:750,l:'12 min 30' },{ s:900,l:'15 min' },{ s:1200,l:'20 min' },{ s:1500,l:'25 min' },
+    { s:1800,l:'30 min' },{ s:2400,l:'40 min' },{ s:3000,l:'50 min' },
+    { s:3600,l:'1 h' },{ s:4800,l:'1 h 20' },{ s:5400,l:'1 h 30' },{ s:7200,l:'2 h' },{ s:9000,l:'2 h 30' },{ s:10800,l:'3 h' },
   ];
 
   function bestAvgWindow(arr, dur) {
@@ -1875,7 +1895,7 @@ function App() {
         datasets.push({ label: p.label + estSuffix, data: w, borderColor: p.color,
           borderWidth: idx === 0 ? 2.5 : 2, backgroundColor: 'transparent', fill: false, tension: 0.2,
           pointRadius: 2.5, pointBackgroundColor: p.color, pointBorderColor: '#f3f2f2', pointBorderWidth: 1,
-          pointHoverRadius: 5, spanGaps: true, yAxisID: 'yW' });
+          pointHoverRadius:0, spanGaps: true, yAxisID: 'yW' });
       });
       if (ftpVal) datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
       if (showCurveSel) {
@@ -1986,7 +2006,7 @@ function App() {
         label: c.label, data: c.vals.slice(paceIdxMin, paceIdxMax+1),
         borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
         backgroundColor: 'transparent', fill: false, tension: 0.3,
-        pointRadius: 0, pointHoverRadius: 4, spanGaps: true,
+        pointRadius: 0, pointHoverRadius:0, spanGaps: true,
       }));
       const yLabel = isTrail ? 'Allure VAP (min/km)' : 'Allure (min/km)';
       upsert('power', powerRef, {
@@ -2110,7 +2130,7 @@ function App() {
     const makeDataset = (res, color, dash, width, label) => {
       if (!res) return null;
       const vals = labels.map(lbl=>{const idx=Number(lbl)-res.lo;return idx>=0&&idx<res.vals.length?res.vals[idx]:null;});
-      return {label,data:vals,borderColor:color,borderWidth:width,borderDash:dash,backgroundColor:'transparent',fill:false,tension:0.3,pointRadius:0,pointHoverRadius:4,spanGaps:true};
+      return {label,data:vals,borderColor:color,borderWidth:width,borderDash:dash,backgroundColor:'transparent',fill:false,tension:0.3,pointRadius:0,pointHoverRadius:0,spanGaps:true};
     };
     const datasets = [
       ...periodRes.map(({res,color,width,label}) => makeDataset(res,color,[],width,label)),
@@ -2190,7 +2210,7 @@ function App() {
       type:'line', plugins:[crosshairPlugin, monthMarkersPlugin, vo2LabelsPlugin],
       data:{ labels, datasets:[
         { label:'Estimation par séance', data:vals, borderColor:'transparent', backgroundColor:'#f9a882',
-          fill:false, pointRadius:3.5, pointHoverRadius:5, pointBackgroundColor:'#f9a882',
+          fill:false, pointRadius:3.5, pointHoverRadius:0, pointBackgroundColor:'#f9a882',
           pointBorderColor:'#f3f2f2', pointBorderWidth:1, showLine:false, yAxisID:'y' },
         { label:'Tendance (moy. 5 séances)', data:rolled, borderColor:'#ec3013', borderWidth:2.5,
           backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:0, yAxisID:'y' },
@@ -2238,11 +2258,36 @@ function App() {
     });
     const effMonthMk = monthBoundaries(pts.map(p=>p.date.getTime()));
     const unit = isBike ? 'W/bpm' : 'm/min/bpm';
+    // Valeur affichée à côté de chaque point (dataset 0 = EF par séance)
+    const effLabelsPlugin = {
+      id: 'effLabels',
+      afterDatasetsDraw(chart) {
+        const meta = chart.getDatasetMeta(0);
+        if (!meta || !meta.data.length) return;
+        const ds = chart.data.datasets[0];
+        const { ctx, chartArea } = chart;
+        ctx.save();
+        ctx.font = '700 10px Archivo, system-ui, sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        let lastX = -Infinity;
+        meta.data.forEach((pt, i) => {
+          const v = ds.data[i];
+          if (v == null) return;
+          if (pt.x < chartArea.left || pt.x > chartArea.right) return;
+          if (pt.x - lastX < 34) return;
+          ctx.fillStyle = '#605d5d';
+          ctx.fillText(String(v), pt.x + 7, pt.y);
+          lastX = pt.x;
+        });
+        ctx.restore();
+      }
+    };
     upsert('eff', effRef, {
-      type:'line', plugins:[crosshairPlugin, monthMarkersPlugin],
+      type:'line', plugins:[crosshairPlugin, monthMarkersPlugin, effLabelsPlugin],
       data:{ labels, datasets:[
         { label:'EF par séance', data:vals, borderColor:'transparent', backgroundColor:'#f9a882',
-          fill:false, pointRadius:3.5, pointHoverRadius:5, pointBackgroundColor:'#f9a882',
+          fill:false, pointRadius:3.5, pointHoverRadius:0, pointBackgroundColor:'#f9a882',
           pointBorderColor:'#f3f2f2', pointBorderWidth:1, showLine:false, yAxisID:'y' },
         { label:'Tendance (moy. 5 séances)', data:rolled, borderColor:'#ec3013', borderWidth:2.5,
           backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:0, yAxisID:'y' },
@@ -2350,7 +2395,7 @@ function App() {
           borderColor: col, borderWidth: 2,
           backgroundColor: hexA(col, 0.15),
           fill: i === 0 ? 'origin' : '-1', tension: 0.25,
-          pointRadius: 2, pointHoverRadius: 5, pointBackgroundColor: col,
+          pointRadius: 2, pointHoverRadius:0, pointBackgroundColor: col,
           pointBorderColor: '#f3f2f2', pointBorderWidth: 1, yAxisID: 'y',
         };
       });
@@ -2361,9 +2406,9 @@ function App() {
       };
       lineLegend = { display:true, position:'bottom', labels:{boxWidth:10,boxHeight:10,padding:14} };
     } else {
-      datasets = [{ label:'Distance (km)', data:vals, borderColor:'#ec3013', borderWidth:2, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.25, pointRadius:3.5, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:6, yAxisID:'y' }];
-      if (showElev) datasets.push({ label:'D+ (m)', data:elevVals, borderColor:'#201e1d', borderWidth:2, backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#201e1d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y1' });
-      if (showEstPow) datasets.push({ label:'Puissance estimée (W)', data:powVals, borderColor:'#605d5d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#605d5d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, yAxisID:'y2', spanGaps:true });
+      datasets = [{ label:'Distance (km)', data:vals, borderColor:'#ec3013', borderWidth:2, backgroundColor:'rgba(236,48,19,0.08)', fill:true, tension:0.25, pointRadius:3.5, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:0, yAxisID:'y' }];
+      if (showElev) datasets.push({ label:'D+ (m)', data:elevVals, borderColor:'#201e1d', borderWidth:2, backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#201e1d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:0, yAxisID:'y1' });
+      if (showEstPow) datasets.push({ label:'Puissance estimée (W)', data:powVals, borderColor:'#605d5d', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.25, pointRadius:3, pointBackgroundColor:'#605d5d', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:0, yAxisID:'y2', spanGaps:true });
       lineScales = { x:{grid:{display:false},ticks:{maxRotation:0,autoSkipPadding:18},title:{display:true,text:xTitleTxt,color:'#605d5d'}}, y:{grid,border:{display:false},beginAtZero:true,max:yMaxKm,title:{display:true,text:'Distance (km)',color:'#605d5d'}}, y1:{display:showElev,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,max:yMaxElev,title:{display:true,text:'Dénivelé D+ (m)',color:'#605d5d'}}, y2:{display:showEstPow,position:'right',grid:{display:false},border:{display:false},beginAtZero:true,max:yMaxPow,title:{display:true,text:'W estimés (moy.)',color:'#605d5d'}} };
       lineLegend = { display:showEstPow||showElev, position:'bottom', labels:{boxWidth:14,boxHeight:2,padding:14} };
     }
