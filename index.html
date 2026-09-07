@@ -287,6 +287,25 @@ function PeriodStrip({ selStart, selEnd, cmpStart, cmpEnd, cmpColor = '#f9a882',
   );
 }
 
+// 4 boutons de période on/off (Puissance / Fréquence cardiaque). Chaque bouton
+// allumé = une courbe de cette couleur sur le graphique.
+function PeriodToggle({ sel, set, curves }) {
+  return h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+    curves.map(p => {
+      const on = !!sel[p.d];
+      return h('button', { key: p.d, type: 'button',
+        onClick: () => set(prev => ({ ...prev, [p.d]: !prev[p.d] })),
+        style: {
+          padding: '5px 10px', border: '2px solid ' + (on ? p.color : '#d7d3d3'),
+          background: on ? p.color : 'transparent', color: on ? '#ffffff' : '#605d5d',
+          fontFamily: 'inherit', fontSize: '11px', fontWeight: '700', letterSpacing: '0.06em',
+          textTransform: 'uppercase', cursor: 'pointer',
+        },
+      }, p.label);
+    })
+  );
+}
+
 // ── zone minutes ─────────────────────────────────────────────────────────────
 function zoneMinutes(list, fcMax) {
   const max = Number(fcMax) || 190;
@@ -1217,16 +1236,26 @@ function App() {
 
   const [hrSport, setHrSport] = useState('Course');
   const [powSport, setPowSport] = useState('Vélo');
-  // Intervalles A/B pour chaque onglet (jours)
-  const [showCurveA, setShowCurveA] = useState(true);
-  const [showCurveB, setShowCurveB] = useState(true);
+  // Puissance / FC : jeu de périodes affichées (chacune une courbe), on/off.
+  const [powPeriods, setPowPeriods] = useState({ 90: true });
+  const [hrPeriods, setHrPeriods] = useState({ 90: true });
   const [showCurveSel, setShowCurveSel] = useState(true);
-  const [powRangeA, setPowRangeA] = useState(30);
-  const [powRangeB, setPowRangeB] = useState(90);
-  const [paceRangeA, setPaceRangeA] = useState(30);
-  const [paceRangeB, setPaceRangeB] = useState(90);
-  const [hrRangeA, setHrRangeA] = useState(30);
-  const [hrRangeB, setHrRangeB] = useState(90);
+  // Couleurs / libellés des 4 périodes (orange de plus en plus clair, gris à 1 an)
+  const PERIOD_CURVE = [
+    { d: 30,  label: '30 j',   color: '#c62a10' },
+    { d: 90,  label: '3 mois', color: '#ee5a30' },
+    { d: 180, label: '6 mois', color: '#f6a184' },
+    { d: 365, label: '1 an',   color: '#bab6b6' },
+  ];
+  const powSel = PERIOD_CURVE.filter(p => powPeriods[p.d]);
+  const hrSel  = PERIOD_CURVE.filter(p => hrPeriods[p.d]);
+  // Compat avec les blocs de stats existants (période « A » = la plus courte affichée).
+  const showCurveA = athleteSection === 'Puissance' ? powSel.length > 0
+                   : athleteSection === 'Fréquence cardiaque' ? hrSel.length > 0 : true;
+  const showCurveB = false;
+  const powRangeA = powSel.length ? powSel[0].d : 90;
+  const hrRangeA  = hrSel.length  ? hrSel[0].d  : 90;
+  const powRangeB = 90, hrRangeB = 90;
   // Séance sélectionnée (null = agrégé)
   const [selActId1, setSelActId1] = useState(null);
   const [selActId2, setSelActId2] = useState(null);
@@ -1781,8 +1810,6 @@ function App() {
     const isVeloPow = powSport === 'Vélo';
     const isTrail   = powSport === 'Trail';
     const nowMs = Date.now();
-    const endA = nowMs, startA = endA - powRangeA * 86400000;
-    const endB = startA, startB = endB - powRangeB * 86400000;
     const d2s = t => new Date(t).toISOString().slice(0,10);
 
     if (isVeloPow) {
@@ -1792,17 +1819,21 @@ function App() {
       const hasEstPower  = data.filter(a=>a.sport==='Vélo').some(a=>actStreams[a.id] && actStreams[a.id]!=='error' && actStreams[a.id].pow);
       const estSuffix = !hasRealPower && hasEstPower ? ' (est.)' : '';
       const labels = POWER_DURATIONS.map(d => d.l);
-      const curveA = powerCurveByDate(d2s(startA), d2s(endA));
-      const curveB = powerCurveByDate(d2s(startB), d2s(endB));
-      const wA = curveA.map(v => v ? v.w : null);
-      const wB = curveB.map(v => v ? v.w : null);
-      const jA = curveA.map(v => v ? v.j : null);
-      const jB = curveB.map(v => v ? v.j : null);
-      const wmaxA = wA.filter(Boolean).length ? Math.max(...wA.filter(Boolean)) : null;
-      const wmaxB = wB.filter(Boolean).length ? Math.max(...wB.filter(Boolean)) : null;
+      // Une courbe par période sélectionnée (30 j / 3 m / 6 m / 1 an)
+      const jByLabel = {};
+      let wmaxA = null;
       const datasets = [];
-      if (showCurveB) datasets.push({ label:'Comparaison'+estSuffix, data:wB, borderColor:'#bab6b6', borderWidth:2, borderDash:[5,4], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#bab6b6', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, spanGaps:true, yAxisID:'yW' });
-      if (showCurveA) datasets.push({ label:'Actuelle'+estSuffix, data:wA, borderColor:'#ec3013', borderWidth:2.5, backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:3, pointBackgroundColor:'#ec3013', pointBorderColor:'#f3f2f2', pointBorderWidth:1.5, pointHoverRadius:5, spanGaps:true, yAxisID:'yW' });
+      powSel.forEach((p, idx) => {
+        const cur = powerCurveByDate(d2s(nowMs - p.d * 86400000), d2s(nowMs));
+        const w = cur.map(v => v ? v.w : null);
+        jByLabel[p.label + estSuffix] = cur.map(v => v ? v.j : null);
+        const wmax = w.filter(Boolean).length ? Math.max(...w.filter(Boolean)) : null;
+        if (wmax && (wmaxA === null || wmax > wmaxA)) wmaxA = wmax;
+        datasets.push({ label: p.label + estSuffix, data: w, borderColor: p.color,
+          borderWidth: idx === 0 ? 2.5 : 2, backgroundColor: 'transparent', fill: false, tension: 0.2,
+          pointRadius: 2.5, pointBackgroundColor: p.color, pointBorderColor: '#f3f2f2', pointBorderWidth: 1,
+          pointHoverRadius: 5, spanGaps: true, yAxisID: 'yW' });
+      });
       if (ftpVal) datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
       if (showCurveSel) {
         [[selActId1,'#7c4dbc','Séance 1'],[selActId2,'#2196f3','Séance 2']].forEach(([sid,col,defLbl]) => {
@@ -1829,15 +1860,15 @@ function App() {
                 label: c => {
                   const v = c.parsed.y; if (v===null) return null;
                   if (c.dataset.label.startsWith('FTP')) return '─── ' + c.dataset.label;
-                  const jVal = c.datasetIndex===1 ? jA[c.dataIndex] : c.datasetIndex===0 ? jB[c.dataIndex] : null;
+                  const jArr = jByLabel[c.dataset.label];
+                  const jVal = jArr ? jArr[c.dataIndex] : null;
                   const jStr = jVal ? '  ·  ' + (jVal>=1000 ? Math.round(jVal/100)/10+' kJ' : jVal+' J') : '';
                   const wpkg = profile.weight ? '  ·  ' + Math.round(v/Number(profile.weight)*100)/100+' W/kg' : '';
                   return c.dataset.label + ' : ' + v + ' W' + jStr + wpkg;
                 },
                 afterBody: () => {
                   const ls = [];
-                  if (wmaxA) ls.push('Wmax actuelle : ' + wmaxA + ' W');
-                  if (wmaxB) ls.push('Wmax compar. : ' + wmaxB + ' W');
+                  if (wmaxA) ls.push('Wmax : ' + wmaxA + ' W');
                   if (!hasRealPower && hasEstPower) ls.push('⚠ Puissance estimée (modèle physique)');
                   return ls;
                 }
@@ -1880,9 +1911,9 @@ function App() {
         });
         return { label, vals, color, dash, width };
       };
-      const cA = buildPaceCurve(startA, endA, '#ec3013', [], 2.5, 'Actuelle');
-      const cB = buildPaceCurve(startB, endB, '#bab6b6', [5,4], 2, 'Comparaison');
-      let cSel = null;
+      // Une courbe par période sélectionnée
+      const periodCurves = powSel.map((p, idx) =>
+        buildPaceCurve(nowMs - p.d * 86400000, nowMs, p.color, [], idx === 0 ? 2.5 : 2, p.label));
       const selCurves = [];
       if (showCurveSel) {
         [[selActId1,'#7c4dbc','Séance 1'],[selActId2,'#2196f3','Séance 2']].forEach(([sid,col,defLbl]) => {
@@ -1899,7 +1930,7 @@ function App() {
           }
         });
       }
-      const allCurves = [...(showCurveB&&cB?[cB]:[]), ...(showCurveA&&cA?[cA]:[]), ...selCurves];
+      const allCurves = [...periodCurves, ...selCurves];
       let paceIdxMin = PACE_DISTS_FINE.length - 1, paceIdxMax = 0;
       allCurves.forEach(c => c.vals.forEach((v,i) => { if (v!==null) { paceIdxMin=Math.min(paceIdxMin,i); paceIdxMax=Math.max(paceIdxMax,i); }}));
       if (paceIdxMin > paceIdxMax) { paceIdxMin=0; paceIdxMax=PACE_DISTS_FINE.length-1; }
@@ -1932,7 +1963,7 @@ function App() {
       });
     }
     return () => destroyChart('power');
-  }, [tab, athleteSection, data, actStreams, powSport, profile.ftp, profile.weight, ftpEstimated, powRangeA, powRangeB, selActId1, selActId2, showCurveA, showCurveB, showCurveSel]);
+  }, [tab, athleteSection, data, actStreams, powSport, profile.ftp, profile.weight, ftpEstimated, powPeriods, selActId1, selActId2, showCurveSel]);
 
 
 
@@ -1943,11 +1974,7 @@ function App() {
     const fmtP = v => { if (!v) return '—'; const m=Math.floor(v); const s=Math.round((v-m)*60); return m+"'"+String(s).padStart(2,'0')+'"'; };
     const tooltipFmt = v => v==null ? '—' : isBike ? v+' W' : fmtP(v)+' /km';
     const nowMs = Date.now();
-    const endA = nowMs, startA = endA - hrRangeA * 86400000;
-    const endB = startA, startB = endB - hrRangeB * 86400000;
-    const resA = hrCurvePerBpm(hrSport, hrRangeA);
-    // Pour B, on doit adapter hrCurvePerBpm pour prendre une plage arbitraire
-    // On utilise une version inline avec t0/t1
+    // Version inline de hrCurvePerBpm prenant une plage de dates
     const hrCurveRange = (sp, t0, t1) => {
       const isBk = sp === 'Vélo';
       const acts = data.filter(a => {
@@ -1993,7 +2020,11 @@ function App() {
       for(let b=lo;b<=hi;b++) vals.push(smoothed[b]);
       return {vals,lo,hi};
     };
-    const resB = hrCurveRange(hrSport, startB, endB);
+    // Une courbe par période sélectionnée
+    const periodRes = hrSel.map((p, idx) => ({
+      res: hrCurveRange(hrSport, nowMs - p.d * 86400000, nowMs),
+      color: p.color, width: idx === 0 ? 2.5 : 2, label: p.label,
+    }));
     // Séance sélectionnée — courbe FC→performance s/s
     let resSel = null;
     const resSelArr = [];
@@ -2023,7 +2054,7 @@ function App() {
         }
       }
     });
-    const allRes = [resA, resB, ...resSelArr.map(r=>r.res)].filter(Boolean);
+    const allRes = [...periodRes.map(r=>r.res), ...resSelArr.map(r=>r.res)].filter(Boolean);
     if (!allRes.length) { destroyChart('hr'); return; }
     let loAll=195,hiAll=40;
     allRes.forEach(r=>{loAll=Math.min(loAll,r.lo);hiAll=Math.max(hiAll,r.hi);});
@@ -2035,8 +2066,7 @@ function App() {
       return {label,data:vals,borderColor:color,borderWidth:width,borderDash:dash,backgroundColor:'transparent',fill:false,tension:0.3,pointRadius:0,pointHoverRadius:4,spanGaps:true};
     };
     const datasets = [
-      showCurveB && makeDataset(resB, '#bab6b6', [5,4], 2, 'Comparaison'),
-      showCurveA && makeDataset(resA, '#ec3013', [],    2.5, 'Actuelle'),
+      ...periodRes.map(({res,color,width,label}) => makeDataset(res,color,[],width,label)),
       ...(showCurveSel ? resSelArr.map(({res,color,label}) => makeDataset(res,color,[],1.5,label)) : []),
     ].filter(Boolean);
     const yTitle = isBike ? 'Puissance estimée (W)' : hrSport==='Trail' ? 'Allure VAP (min/km)' : 'Allure (min/km)';
@@ -2057,7 +2087,7 @@ function App() {
       },
     });
     return () => destroyChart('hr');
-  }, [tab, athleteSection, data, actStreams, hrSport, hrRangeA, hrRangeB, selActId1, selActId2, showCurveA, showCurveB, showCurveSel]);
+  }, [tab, athleteSection, data, actStreams, hrSport, hrPeriods, selActId1, selActId2, showCurveSel]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='VO2 max') return;
@@ -2395,7 +2425,6 @@ function App() {
     );
   }
 
-  const powPeriods=[{label:'1 mois',value:30},{label:'3 mois',value:90},{label:'6 mois',value:180},{label:'1 an',value:365}];
   const mkOptions=(list,current,setter)=>list.map(o=>({label:o.label,active:current===o.value,onClick:()=>setter(o.value)}));
   const now=Date.now();
   const cur90=data.filter(a=>a.date.getTime()>=now-90*86400000);
@@ -3010,10 +3039,11 @@ function App() {
         ),
         athleteSection==='Condition physique'&&h('div',{style:{display:'flex',flexDirection:'column',height:'calc(100vh - 0px)',boxSizing:'border-box',overflow:'auto'}},
           // ── Bande de contrôle période ──────────────────────────────────────
-          h('section',{style:{display:'flex',alignItems:'center',gap:'16px 24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexShrink:0,flexWrap:'wrap'}},
-            h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-            h(BtnRow,{options:mkOptions(PERIOD_BTNS,fitRange,setFitRange)}),
-            h(PeriodStrip,{...stripBounds(fitRange)}),
+          h('section',{style:{display:'flex',alignItems:'flex-start',gap:'16px 28px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexShrink:0,flexWrap:'wrap'}},
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
+              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
+              h(BtnRow,{options:mkOptions(PERIOD_BTNS,fitRange,setFitRange)})
+            ),
             pmcRef&&h('div',{style:{marginLeft:'auto',display:'flex',gap:'20px'}},
               [
                 {name:'Condition physique',abbr:'CTL',value:pmcRef.ctl,color:'#ec3013'},
@@ -3028,7 +3058,8 @@ function App() {
                 ),
                 h('span',{style:{fontSize:'18px',fontWeight:'800',letterSpacing:'-0.02em',color:s.color}},String(s.value))
               ))
-            )
+            ),
+            h('div',{style:{marginLeft:pmcRef?'0':'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(fitRange)}))
           ),
           // ── Corps : 2 graphiques collés ────────────────────────────────────
           h('div',{style:{flex:1,display:'flex',flexDirection:'column',padding:'12px 32px 0',minHeight:0}},
@@ -3090,30 +3121,8 @@ function App() {
           // Bande ctrl unifiée
           h('section',{style:{display:'flex',alignItems:'stretch',borderBottom:'2px solid #201e1d'}},
             h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('button',{type:'button',onClick:()=>setShowCurveA(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
-                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveA?'#ec3013':'#bab6b6',textDecoration:showCurveA?'none':'line-through'}},'Actuelle'),
-                h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveA?'#ec3013':'#bab6b6'}}),
-              ),
-              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===powRangeA&&showCurveA){setShowCurveA(false);}else{setPowRangeA(o.d);setShowCurveA(true);}},
-                  style:{padding:'5px 10px',border:'2px solid '+(powRangeA===o.d&&showCurveA?'#ec3013':'#d7d3d3'),background:powRangeA===o.d&&showCurveA?'#ec3013':'transparent',color:powRangeA===o.d&&showCurveA?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(!(powRangeA===o.d&&showCurveA))e.currentTarget.style.background='#ffe0d9';},
-                  onMouseLeave:e=>{if(!(powRangeA===o.d&&showCurveA))e.currentTarget.style.background='transparent';}
-                },o.l))
-              )
-            ),
-            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('button',{type:'button',onClick:()=>setShowCurveB(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
-                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveB?'#605d5d':'#bab6b6',textDecoration:showCurveB?'none':'line-through'}},'Comparaison'),
-                h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:showCurveB?'#bab6b6':'#d7d3d3',borderTop:'2px dashed '+(showCurveB?'#bab6b6':'#d7d3d3')}}),
-              ),
-              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===powRangeB&&showCurveB){setShowCurveB(false);}else{setPowRangeB(o.d);setShowCurveB(true);}},
-                  style:{padding:'5px 10px',border:'2px solid '+(powRangeB===o.d&&showCurveB?'#201e1d':'#d7d3d3'),background:powRangeB===o.d&&showCurveB?'#201e1d':'transparent',color:powRangeB===o.d&&showCurveB?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(!(powRangeB===o.d&&showCurveB))e.currentTarget.style.background='#eae9e9';},
-                  onMouseLeave:e=>{if(!(powRangeB===o.d&&showCurveB))e.currentTarget.style.background='transparent';}
-                },o.l))
-              )
+              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
+              h(PeriodToggle,{sel:powPeriods,set:setPowPeriods,curves:PERIOD_CURVE})
             ),
             h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px',flex:'1',minWidth:0}},
               h('button',{type:'button',onClick:()=>setShowCurveSel(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
@@ -3161,10 +3170,6 @@ function App() {
                 )
               )
             )
-          ),
-          h('section',{style:{padding:'10px 32px',borderBottom:'2px solid #201e1d',display:'flex',alignItems:'center',gap:'16px'}},
-            h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Périodes'),
-            h(PeriodStrip,{...stripBounds(powRangeA,powRangeB), cmpColor:'#bab6b6', showCmp:showCurveB})
           ),
           (()=>{
             const isVeloPow=powSport==='Vélo', isTrailPow=powSport==='Trail';
@@ -3216,7 +3221,7 @@ function App() {
               const wkgSrc = seanceModeV ? ftpS1 : ftpAval;
               const wkg = wkgSrc && profile.weight ? Math.round(wkgSrc/Number(profile.weight)*100)/100 : null;
               const useS2ref = seanceModeV && !!s2Curve;
-              const usePeriodBref = !seanceModeV || (!s2Curve && showCurveB);
+              const usePeriodBref = false; // plus de comparaison de période sur cette page
               const wmaxRef = useS2ref?(Math.max(...s2Curve.filter(Boolean))||null):(usePeriodBref?wmaxB2:null);
               const kj20Ref = useS2ref?(()=>{const v=s2Curve[POWER_DURATIONS.findIndex(d=>d.s===1200)];return v?Math.round(v*1200/1000*10)/10:null;})():(usePeriodBref?kjBval:null);
               const cpRef   = useS2ref?(()=>{const v30=s2Curve[POWER_DURATIONS.findIndex(d=>d.s===1800)],v60=s2Curve[POWER_DURATIONS.findIndex(d=>d.s===3600)];const b=Math.max(v30||0,v60||0);return b>0?Math.round(b*0.92):null;})():(usePeriodBref?cpBval:null);
@@ -3288,7 +3293,7 @@ function App() {
               }) : cur;
               // Référence : séance 2 si affichée, sinon période B si active, sinon null
               const useS2R = seanceModeR && showCurveSel && !!selActId2;
-              const usePBR = !seanceModeR || (!useS2R && showCurveB);
+              const usePBR = false;
               const refR = useS2R ? statDefs.map(({m:targetM}) => {
                 const ss = actStreams[selActId2];
                 if (!ss||!ss.dist||!ss.vel) return null;
@@ -3389,35 +3394,11 @@ function App() {
             )
           )      ),
         athleteSection==='Fréquence cardiaque'&&h('div',null,
-          // Bande de contrôle : Actuelle | Comparaison | Séance
+          // Bande de contrôle : Période | Séance | Sport
           h('section',{style:{display:'flex',alignItems:'stretch',borderBottom:'2px solid #201e1d'}},
-            // Période actuelle — label = bouton toggle
             h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('button',{type:'button',onClick:()=>setShowCurveA(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
-                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveA?'#ec3013':'#bab6b6',textDecoration:showCurveA?'none':'line-through'}},'Actuelle'),
-                h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveA?'#ec3013':'#bab6b6'}}),
-              ),
-              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===hrRangeA&&showCurveA){setShowCurveA(false);}else{setHrRangeA(o.d);setShowCurveA(true);}},
-                  style:{padding:'5px 10px',border:'2px solid '+(hrRangeA===o.d&&showCurveA?'#ec3013':'#d7d3d3'),background:hrRangeA===o.d&&showCurveA?'#ec3013':'transparent',color:hrRangeA===o.d&&showCurveA?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(!(hrRangeA===o.d&&showCurveA))e.currentTarget.style.background='#ffe0d9';},
-                  onMouseLeave:e=>{if(!(hrRangeA===o.d&&showCurveA))e.currentTarget.style.background='transparent';}
-                },o.l))
-              )
-            ),
-            // Comparaison — label = bouton toggle
-            h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px'}},
-              h('button',{type:'button',onClick:()=>setShowCurveB(v=>!v),style:{display:'flex',alignItems:'center',gap:'6px',padding:'0',border:'none',background:'none',cursor:'pointer',fontFamily:'inherit'}},
-                h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveB?'#605d5d':'#bab6b6',textDecoration:showCurveB?'none':'line-through'}},'Comparaison'),
-                h('span',{style:{display:'inline-block',width:'20px',height:'2px',background:showCurveB?'#bab6b6':'#d7d3d3',borderTop:'2px dashed '+(showCurveB?'#bab6b6':'#d7d3d3')}}),
-              ),
-              h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
-                [{l:'1 m',d:30},{l:'3 m',d:90},{l:'6 m',d:180},{l:'1 an',d:365}].map(o=>h('button',{key:o.l,type:'button',onClick:()=>{if(o.d===hrRangeB&&showCurveB){setShowCurveB(false);}else{setHrRangeB(o.d);setShowCurveB(true);}},
-                  style:{padding:'5px 10px',border:'2px solid '+(hrRangeB===o.d&&showCurveB?'#201e1d':'#d7d3d3'),background:hrRangeB===o.d&&showCurveB?'#201e1d':'transparent',color:hrRangeB===o.d&&showCurveB?'#ffffff':'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',cursor:'pointer'},
-                  onMouseEnter:e=>{if(!(hrRangeB===o.d&&showCurveB))e.currentTarget.style.background='#eae9e9';},
-                  onMouseLeave:e=>{if(!(hrRangeB===o.d&&showCurveB))e.currentTarget.style.background='transparent';}
-                },o.l))
-              )
+              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
+              h(PeriodToggle,{sel:hrPeriods,set:setHrPeriods,curves:PERIOD_CURVE})
             ),
             // Séance
             h('div',{style:{padding:'16px 20px',borderRight:'2px solid #201e1d',display:'flex',flexDirection:'column',gap:'8px',flex:'1',minWidth:0}},
@@ -3463,10 +3444,6 @@ function App() {
                 )
               )
             )
-          ),
-          h('section',{style:{padding:'10px 32px',borderBottom:'2px solid #201e1d',display:'flex',alignItems:'center',gap:'16px'}},
-            h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Périodes'),
-            h(PeriodStrip,{...stripBounds(hrRangeA,hrRangeB), cmpColor:'#bab6b6', showCmp:showCurveB})
           ),
 
           (()=>{
@@ -3554,7 +3531,7 @@ function App() {
                 return isBikeFC?Math.round(avg):Math.round((1000/60/avg)*100)/100;
               });
             })() : null;
-            const usePBFC = !seanceModeFC || (!useS2FC && showCurveB);
+            const usePBFC = false;
             const refLabelFC = useS2FC
               ?(()=>{const a=data.find(x=>String(x.id)===String(selActId2));return a?a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}):'Séance 2';})()
               :(usePBFC?(()=>{const rl=d=>d===30?'1 m':d===90?'3 m':d===180?'6 m':'1 an';return 'vs '+rl(hrRangeB)+' préc.';})():null);
@@ -3660,10 +3637,12 @@ function App() {
           )
         ),
         athleteSection==='VO2 max'&&h('div',null,
-          h('section',{style:{display:'flex',alignItems:'center',gap:'24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
-            h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-            h(BtnRow,{options:mkOptions(PERIOD_BTNS,vo2Range,setVo2Range)}),
-            h(PeriodStrip,{...stripBounds(vo2Range)}),
+          h('section',{style:{display:'flex',alignItems:'flex-start',gap:'28px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
+              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
+              h(BtnRow,{options:mkOptions(PERIOD_BTNS,vo2Range,setVo2Range)})
+            ),
+            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(vo2Range)}))
           ),
           (()=>{
             const hrMax = Number(profile.fcMax)||null;
@@ -3716,11 +3695,12 @@ function App() {
           })()
         ),
         athleteSection==='Efficacité'&&h('div',null,
-          h('section',{style:{display:'flex',alignItems:'center',gap:'24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
-            h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-            h(BtnRow,{options:mkOptions(PERIOD_BTNS,effRange,setEffRange)}),
-            h(PeriodStrip,{...stripBounds(effRange)}),
-            h('div',{style:{marginLeft:'auto',display:'flex',flexDirection:'column',gap:'8px'}},
+          h('section',{style:{display:'flex',alignItems:'flex-start',gap:'28px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
+              h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
+              h(BtnRow,{options:mkOptions(PERIOD_BTNS,effRange,setEffRange)})
+            ),
+            h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
               h('div',{style:{display:'flex',gap:'6px'}},
                 ['Vélo','Course'].map(sp=>h('button',{key:sp,type:'button',onClick:()=>setEffSport(sp),
@@ -3729,7 +3709,8 @@ function App() {
                   onMouseLeave:e=>{if(effSport!==sp){e.currentTarget.style.borderColor='#d7d3d3';e.currentTarget.style.color='#605d5d';}}
                 },sp))
               )
-            )
+            ),
+            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(effRange)}))
           ),
           (()=>{
             const isBike = effSport==='Vélo';
@@ -3792,7 +3773,7 @@ function App() {
         h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),h(SportSelector)),
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},
-            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période · Range'),
+            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
             h('div',{style:{display:'flex',alignItems:'center',gap:'20px',flexWrap:'wrap'}},
               h(BtnRow,{options:mkOptions(PERIOD_BTNS,range,setRange)}),
               h(PeriodStrip,{...stripBounds(range)})
