@@ -214,18 +214,20 @@ const clickAuraPlugin = {
     let a = best.ni, b = best.ni;
     while (a > 0 && best.src[a - 1] === sid) a--;
     while (b < best.src.length - 1 && best.src[b + 1] === sid) b++;
+    // Prolonger d'un pas de part et d'autre pour rejoindre les repères de changement.
+    if (b < best.src.length - 1) b++;
     const { ctx } = chart;
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(best.pts[a].x, best.pts[a].y);
     for (let i = a + 1; i <= b; i++) ctx.lineTo(best.pts[i].x, best.pts[i].y);
-    ctx.lineWidth = 8;
+    ctx.lineWidth = 4;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = best.color || '#7c4dbc';
     ctx.shadowColor = best.color || '#7c4dbc';
-    ctx.shadowBlur = 16;
-    ctx.globalAlpha = 0.3;
+    ctx.shadowBlur = 8;
+    ctx.globalAlpha = 0.28;
     ctx.stroke();
     ctx.restore();
     chart.canvas.style.cursor = 'pointer';
@@ -3140,8 +3142,8 @@ function App() {
       ),
       h('nav',{style:{display:'flex',flexDirection:'column',borderBottom:'1px solid #201e1d'}},
         h('button',{type:'button',onClick:()=>setTab('programme'),style:navStyle(tab==='programme'),onMouseEnter:e=>{if(tab!=='programme')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='programme')e.currentTarget.style.background='transparent';}},'Programme'),
-        athleteSections.map(s=>h('button',{key:s,type:'button',onClick:()=>{setAthleteSection(s);setTab('athlete');},style:navStyle(tab==='athlete'&&athleteSection===s),onMouseEnter:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='transparent';}},s)),
-        h('button',{type:'button',onClick:()=>setTab('activites'),style:navStyle(tab==='activites'),onMouseEnter:e=>{if(tab!=='activites')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='activites')e.currentTarget.style.background='transparent';}},'Activités')
+        h('button',{type:'button',onClick:()=>setTab('activites'),style:navStyle(tab==='activites'),onMouseEnter:e=>{if(tab!=='activites')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='activites')e.currentTarget.style.background='transparent';}},'Activités'),
+        athleteSections.map(s=>h('button',{key:s,type:'button',onClick:()=>{setAthleteSection(s);setTab('athlete');},style:navStyle(tab==='athlete'&&athleteSection===s),onMouseEnter:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='transparent';}},s))
       ),
       h('div',{style:{marginTop:'auto',padding:'20px 24px 8px'}},
         h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Strava'),
@@ -3595,16 +3597,6 @@ function App() {
             h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
               h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},powSport==='Vélo'?'Courbe de puissance':powSport==='Trail'?'Allure VAP — Trail':'Meilleure allure — Course'),
               h('div',{style:{display:'flex',alignItems:'baseline',gap:'14px'}},
-                (()=>{
-                  const efSeance = !showCurveA && showCurveSel && !!selActId1;
-                  const efEnd = Date.now(), efStart = efEnd - powRangeA*86400000;
-                  const efVal = efSeance ? actEF(powSport, actStreams[selActId1]) : periodEF(powSport, data, actStreams, efStart, efEnd);
-                  const efUnit = powSport==='Vélo' ? 'W/bpm' : 'm/min/bpm';
-                  const efCol = efSeance ? '#7c4dbc' : '#ec3013';
-                  return h('span',{style:{fontSize:'11px',letterSpacing:'0.08em',textTransform:'uppercase',fontWeight:'700',color:efVal?efCol:'#bab6b6'}},
-                    'EF '+(efVal!=null?efVal+' '+efUnit:'—')+(efSeance?' · séance':' · période')
-                  );
-                })(),
                 h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'fenêtre glissante s/s')
               )
             ),
