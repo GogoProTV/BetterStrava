@@ -218,16 +218,6 @@ function chartDefaults() {
   Chart.defaults.color = '#605d5d';
 }
 
-// Fenêtre { offset, length } (en mois) → bornes de dates [start, end).
-// offset = 0 → la période se termine au mois en cours (borne haute = maintenant).
-function winRange(win) {
-  const now = new Date();
-  const o = Math.max(0, Math.min(11, win.offset | 0));
-  const l = Math.max(1, Math.min(12 - o, win.length | 0));
-  const start = new Date(now.getFullYear(), now.getMonth() - o - l + 1, 1).getTime();
-  const endMonth = new Date(now.getFullYear(), now.getMonth() - o + 1, 1).getTime();
-  return { start, end: Math.min(endMonth, Date.now()), months: l, offset: o };
-}
 // Libellé court d'un mois situé `back` mois avant le mois en cours (0 = mois en cours).
 function monthAgoLabel(back) {
   const now = new Date();
@@ -235,93 +225,64 @@ function monthAgoLabel(back) {
   return d.toLocaleDateString('fr-FR', { month: 'short' }).replace('.', '');
 }
 
-// Sélecteur de fenêtre de calcul : 12 carrés = les 12 derniers mois
-// (le carré de droite = mois en cours).
-//  · clic sur un carré OFF → il passe ON, la période s'étend jusqu'à lui
-//  · clic sur un carré ON  → il repasse OFF, la période s'arrête au mois d'avant
-//  · glisser un carré ON (curseur ↔) → décale toute la période
-function MonthWindow({ win, setWin }) {
-  const [hover, setHover] = useState(-1);
-  const [dragging, setDragging] = useState(false);
-  const dragRef = useRef(null);
-  const CELL = 32, GAP = 3;
+// Boutons de période communs à toutes les pages.
+const PERIOD_BTNS = [
+  { label: '30 jours', value: 30 }, { label: '90 jours', value: 90 },
+  { label: '6 mois', value: 180 }, { label: '12 mois', value: 365 },
+];
 
-  const off = Math.max(0, Math.min(11, win.offset | 0));
-  const len = Math.max(1, Math.min(12 - off, win.length | 0));
-  const endIdx = 11 - off;
-  const startIdx = 12 - off - len;
-  const isOnIdx = i => i >= startIdx && i <= endIdx;
+// Bornes pour la bande décorative : période sélectionnée (selDays) + comparaison
+// (cmpDays, même durée par défaut, juste avant). À 1 an on cale sur 12 mois pleins.
+function stripBounds(selDays, cmpDays) {
+  const c = cmpDays || selDays;
+  if (selDays >= 365) {
+    const d = new Date();
+    const selStart = new Date(d.getFullYear(), d.getMonth() - 12, 1).getTime();
+    const selEnd = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+    return { selStart, selEnd, cmpStart: selStart - c * 86400000, cmpEnd: selStart, dropCurrent: true };
+  }
+  const selStart = Date.now() - selDays * 86400000;
+  return { selStart, selEnd: Date.now(), cmpStart: selStart - c * 86400000, cmpEnd: selStart, dropCurrent: false };
+}
 
-  const toggle = i => {
-    if (!isOnIdx(i)) {
-      // carré OFF → on l'allume, la période s'étend jusqu'à lui
-      const s = Math.min(startIdx, i), e = Math.max(endIdx, i);
-      setWin({ offset: 11 - e, length: e - s + 1 });
-      return;
-    }
-    // carré ON → on l'éteint : la période s'arrête au mois d'avant
-    if (i > startIdx) {
-      const e = i - 1;
-      setWin({ offset: 11 - e, length: e - startIdx + 1 });
-    } else if (endIdx > startIdx) {
-      // on a cliqué le premier mois de la période → elle démarre au mois d'après
-      setWin({ offset: off, length: endIdx - (i + 1) + 1 });
-    }
-    // sinon (période d'un seul mois, clic dessus) : on garde
-  };
-
-  const startDrag = (i, ev) => {
-    ev.preventDefault();
-    dragRef.current = { x0: ev.clientX, off0: off, moved: false };
-    setDragging(true);
-    const move = e => {
-      const d = dragRef.current;
-      if (!d) return;
-      const delta = Math.round((e.clientX - d.x0) / (CELL + GAP));
-      if (delta !== 0) d.moved = true;
-      const no = Math.max(0, Math.min(12 - len, d.off0 - delta));
-      setWin({ offset: no, length: len });
+// Bande décorative (affichage seul) : 12 mois, mois en cours à droite.
+//  · chaque barre est remplie au prorata de la part du mois dans la période
+//  · la barre du mois en cours est rognée à la portion écoulée et calée à droite
+//  · à 1 an : 12 mois pleins, ni mois en cours ni barre vide
+//  · cmpColor = couleur de la période de comparaison (orange clair ou gris)
+//  · showCmp = false → on masque la comparaison
+function PeriodStrip({ selStart, selEnd, cmpStart, cmpEnd, cmpColor = '#f9a882', dropCurrent = false, showCmp = true }) {
+  const now = new Date();
+  const useCmp = showCmp && cmpStart != null;
+  const cols = Array.from({ length: 12 }, (_, i) => {
+    const back = dropCurrent ? 12 - i : 11 - i;
+    const isCur = !dropCurrent && back === 0;
+    const ms = new Date(now.getFullYear(), now.getMonth() - back, 1).getTime();
+    const meFull = new Date(now.getFullYear(), now.getMonth() - back + 1, 1).getTime();
+    const me = isCur ? Date.now() : meFull;
+    const L = Math.max(1, me - ms);
+    const clamp = v => Math.max(0, Math.min(1, v));
+    const os = clamp((selStart - ms) / L), oe = clamp((selEnd - ms) / L);
+    const cs = useCmp ? clamp((cmpStart - ms) / L) : 0;
+    const ce = useCmp ? clamp((cmpEnd - ms) / L) : 0;
+    return {
+      i, back, grow: isCur ? (me - ms) / (meFull - ms) : 1,
+      seg: [
+        ce > cs ? { l: cs, w: ce - cs, c: cmpColor } : null,
+        oe > os ? { l: os, w: oe - os, c: '#ec3013' } : null,
+      ].filter(Boolean),
     };
-    const up = () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-      const d = dragRef.current;
-      dragRef.current = null;
-      setDragging(false);
-      if (d && !d.moved) toggle(i);
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  };
-
-  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', userSelect: 'none' } },
-    h('div', { style: { display: 'flex', gap: GAP + 'px' }, onMouseLeave: () => setHover(-1) },
-      Array.from({ length: 12 }, (_, i) => {
-        const on = isOnIdx(i);
-        const isCurrent = i === 11;
-        return h('button', { key: i, type: 'button', title: monthAgoLabel(11 - i),
-          onClick: on ? undefined : () => toggle(i),
-          onMouseDown: on ? (ev => startDrag(i, ev)) : undefined,
-          onMouseEnter: () => setHover(i),
-          style: {
-            width: CELL + 'px', height: CELL + 'px', padding: 0, flexShrink: 0,
-            border: '2px solid ' + (on || hover === i ? '#ec3013' : '#d7d3d3'),
-            background: on ? '#ec3013' : hover === i ? '#ffe0d9' : 'transparent',
-            color: on ? '#ffffff' : isCurrent ? '#201e1d' : '#605d5d',
-            fontFamily: 'inherit', fontSize: '9px', fontWeight: '700',
-            letterSpacing: '0.02em', textTransform: 'uppercase', lineHeight: '1', position: 'relative',
-            cursor: on ? 'ew-resize' : 'pointer',
-          },
-        },
-          monthAgoLabel(11 - i),
-          isCurrent && h('span', { style: { position: 'absolute', top: '2px', right: '2px', width: '4px', height: '4px', background: on ? '#ffffff' : '#ec3013' } })
-        );
-      })
+  });
+  const slot = g => ({ flexGrow: g, flexShrink: 1, flexBasis: 0, minWidth: '2px' });
+  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '3px' } },
+    h('div', { style: { display: 'flex', gap: '2px', width: '264px', alignItems: 'stretch' } },
+      cols.map(col => h('div', { key: col.i, title: monthAgoLabel(col.back),
+        style: { ...slot(col.grow), height: '16px', background: '#eae9e9', position: 'relative', overflow: 'hidden' } },
+        col.seg.map((s, si) => h('span', { key: si, style: { position: 'absolute', top: 0, bottom: 0, left: (s.l * 100) + '%', width: (s.w * 100) + '%', background: s.c } }))
+      ))
     ),
-    h('span', { style: { fontSize: '10px', color: '#bab6b6', letterSpacing: '0.04em' } },
-      dragging
-        ? 'Glisse pour décaler la période'
-        : len + ' mois · ' + monthAgoLabel(off + len - 1) + (len > 1 ? ' → ' + monthAgoLabel(off) : '')
+    h('div', { style: { display: 'flex', gap: '2px', width: '264px' } },
+      cols.map(col => h('span', { key: col.i, style: { ...slot(col.grow), textAlign: 'center', fontSize: '8px', fontWeight: '700', color: '#bab6b6', textTransform: 'uppercase', overflow: 'hidden' } }, monthAgoLabel(col.back).charAt(0)))
     )
   );
 }
@@ -798,9 +759,9 @@ function App() {
   const [hrCompare, setHrCompare] = useState(365);
   // Fenêtre de calcul en mois : { offset = mois écoulés depuis le mois en cours
   // jusqu'à la fin de la période, length = nombre de mois (1 à 12), offset+length ≤ 12 }
-  const [fitWin, setFitWin] = useState({ offset: 0, length: 3 });
-  const [vo2Win, setVo2Win] = useState({ offset: 0, length: 6 });
-  const [effWin, setEffWin] = useState({ offset: 0, length: 6 });
+  const [fitRange, setFitRange] = useState(180);
+  const [vo2Range, setVo2Range] = useState(180);
+  const [effRange, setEffRange] = useState(180);
   const [effSport, setEffSport] = useState('Vélo');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
@@ -1483,20 +1444,10 @@ function App() {
     ? Math.round((pmcToday.ctl - pmcSeries[pmcSeries.length - 8].ctl) * 10) / 10
     : null;
 
-  // Valeurs PMC à la FIN de la fenêtre de calcul sélectionnée (bande du haut de
-  // l'onglet Condition physique) — pour que les chiffres suivent la période.
-  const pmcRefIdx = (() => {
-    if (!pmcSeries.length) return -1;
-    const { end } = winRange(fitWin);
-    for (let i = pmcSeries.length - 1; i >= 0; i--) {
-      if (new Date(pmcSeries[i].date + 'T00:00:00').getTime() < end) return i;
-    }
-    return 0;
-  })();
-  const pmcRef = pmcRefIdx >= 0 ? pmcSeries[pmcRefIdx] : null;
-  const pmcRefRamp = pmcRefIdx >= 7
-    ? Math.round((pmcRef.ctl - pmcSeries[pmcRefIdx - 7].ctl) * 10) / 10
-    : null;
+  // La période (boutons) se termine toujours « aujourd'hui » → les chiffres de la
+  // bande du haut sont ceux du dernier jour de la série.
+  const pmcRef = pmcToday;
+  const pmcRefRamp = pmcRampRate;
 
   const fitStats = pmcToday ? [
     { label: 'Condition physique', value: String(pmcToday.ctl), valueStyle: { ...smallStat, fontSize: '26px', fontWeight: '800', letterSpacing: '-0.02em', color: '#ec3013' }, sub: 'CTL · charge chronique 42 j' },
@@ -1509,9 +1460,9 @@ function App() {
     if (tab!=='athlete'||athleteSection!=='Condition physique') return;
     chartDefaults();
 
-    const { start:winStart, end:winEnd, offset:winOffset } = winRange(fitWin);
-    // Projection future (7 j) seulement si la fenêtre se termine au mois en cours
-    const showFuture = winOffset === 0;
+    const winEnd = Date.now();
+    const winStart = winEnd - fitRange * 86400000;
+    const showFuture = true; // la période se termine toujours aujourd'hui
     // Générer les 7 jours futurs (TSS=0, CTL/ATL continuent de décroître)
     const lastPmc = pmcSeries.length ? pmcSeries[pmcSeries.length-1] : null;
     const kCTLf = Math.exp(-1/42), kATLf = Math.exp(-1/7);
@@ -1822,7 +1773,7 @@ function App() {
 
 
     return () => { destroyChart('fitness'); destroyChart('fitness2'); };
-  }, [tab, athleteSection, pmcSeries, fitWin]);
+  }, [tab, athleteSection, pmcSeries, fitRange]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Puissance') return;
@@ -2113,7 +2064,7 @@ function App() {
     chartDefaults();
     const hrMax = Number(profile.fcMax)||null;
     const hrRest = Number(profile.fcRest)||null;
-    const { start:winStart, end:winEnd } = winRange(vo2Win);
+    const winEnd = Date.now(), winStart = winEnd - vo2Range * 86400000;
     const runs = data.filter(a => (a.sport==='Course'||a.sport==='Trail') && a.date.getTime()>=winStart && a.date.getTime()<winEnd);
     const pts = runs
       .map(a => ({ date:a.date, act:a, v:estimateVo2maxFromRun(a, hrMax, hrRest) }))
@@ -2184,13 +2135,13 @@ function App() {
       },
     });
     return () => destroyChart('vo2');
-  }, [tab, athleteSection, data, profile.fcMax, profile.fcRest, vo2Win]);
+  }, [tab, athleteSection, data, profile.fcMax, profile.fcRest, vo2Range]);
 
   useEffect(() => {
     if (tab!=='athlete'||athleteSection!=='Efficacité') return;
     chartDefaults();
     const isBike = effSport==='Vélo';
-    const { start:winStart, end:winEnd } = winRange(effWin);
+    const winEnd = Date.now(), winStart = winEnd - effRange * 86400000;
     const acts = data.filter(a => (isBike ? a.sport==='Vélo' : (a.sport==='Course'||a.sport==='Trail')) && a.date.getTime()>=winStart && a.date.getTime()<winEnd);
     const pts = acts
       .map(a => ({ date:a.date, act:a, v:activityEF(a, actStreams[a.id]) }))
@@ -2236,7 +2187,7 @@ function App() {
       },
     });
     return () => destroyChart('eff');
-  }, [tab, athleteSection, data, actStreams, effSport, effWin]);
+  }, [tab, athleteSection, data, actStreams, effSport, effRange]);
 
   useEffect(() => {
     if (tab!=='activites') return;
@@ -3061,7 +3012,8 @@ function App() {
           // ── Bande de contrôle période ──────────────────────────────────────
           h('section',{style:{display:'flex',alignItems:'center',gap:'16px 24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexShrink:0,flexWrap:'wrap'}},
             h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-            h(MonthWindow,{win:fitWin,setWin:setFitWin}),
+            h(BtnRow,{options:mkOptions(PERIOD_BTNS,fitRange,setFitRange)}),
+            h(PeriodStrip,{...stripBounds(fitRange)}),
             pmcRef&&h('div',{style:{marginLeft:'auto',display:'flex',gap:'20px'}},
               [
                 {name:'Condition physique',abbr:'CTL',value:pmcRef.ctl,color:'#ec3013'},
@@ -3209,6 +3161,10 @@ function App() {
                 )
               )
             )
+          ),
+          h('section',{style:{padding:'10px 32px',borderBottom:'2px solid #201e1d',display:'flex',alignItems:'center',gap:'16px'}},
+            h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Périodes'),
+            h(PeriodStrip,{...stripBounds(powRangeA,powRangeB), cmpColor:'#bab6b6', showCmp:showCurveB})
           ),
           (()=>{
             const isVeloPow=powSport==='Vélo', isTrailPow=powSport==='Trail';
@@ -3508,6 +3464,10 @@ function App() {
               )
             )
           ),
+          h('section',{style:{padding:'10px 32px',borderBottom:'2px solid #201e1d',display:'flex',alignItems:'center',gap:'16px'}},
+            h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Périodes'),
+            h(PeriodStrip,{...stripBounds(hrRangeA,hrRangeB), cmpColor:'#bab6b6', showCmp:showCurveB})
+          ),
 
           (()=>{
             const fcMax = Number(profile.fcMax)||190;
@@ -3702,13 +3662,15 @@ function App() {
         athleteSection==='VO2 max'&&h('div',null,
           h('section',{style:{display:'flex',alignItems:'center',gap:'24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
             h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-            h(MonthWindow,{win:vo2Win,setWin:setVo2Win}),
+            h(BtnRow,{options:mkOptions(PERIOD_BTNS,vo2Range,setVo2Range)}),
+            h(PeriodStrip,{...stripBounds(vo2Range)}),
           ),
           (()=>{
             const hrMax = Number(profile.fcMax)||null;
             const hrRest = Number(profile.fcRest)||null;
             if (!hrMax||!hrRest) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Renseigne FC max et FC repos dans le Profil pour activer l’estimation du VO2max.');
-            const { start:winStart, end:winEnd, months:winMonths } = winRange(vo2Win);
+            const winEnd = Date.now(), winStart = winEnd - vo2Range * 86400000;
+            const winMonths = Math.round(vo2Range / 30);
             const runs = data.filter(a=>(a.sport==='Course'||a.sport==='Trail')&&a.date.getTime()>=winStart&&a.date.getTime()<winEnd);
             const pts = runs.map(a=>({date:a.date,act:a,v:estimateVo2maxFromRun(a,hrMax,hrRest)})).filter(p=>p.v!==null).sort((a,b)=>a.date-b.date);
             if (!pts.length) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Aucune séance de course exploitable sur cette période — il faut un effort sous-maximal stable, FC entre 50 et 95 % de la réserve cardiaque.');
@@ -3756,7 +3718,8 @@ function App() {
         athleteSection==='Efficacité'&&h('div',null,
           h('section',{style:{display:'flex',alignItems:'center',gap:'24px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
             h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-            h(MonthWindow,{win:effWin,setWin:setEffWin}),
+            h(BtnRow,{options:mkOptions(PERIOD_BTNS,effRange,setEffRange)}),
+            h(PeriodStrip,{...stripBounds(effRange)}),
             h('div',{style:{marginLeft:'auto',display:'flex',flexDirection:'column',gap:'8px'}},
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
               h('div',{style:{display:'flex',gap:'6px'}},
@@ -3771,7 +3734,8 @@ function App() {
           (()=>{
             const isBike = effSport==='Vélo';
             const unit = isBike ? 'W/bpm' : 'm/min/bpm';
-            const { start:winStart, end:winEnd, months:winMonths } = winRange(effWin);
+            const winEnd = Date.now(), winStart = winEnd - effRange * 86400000;
+            const winMonths = Math.round(effRange / 30);
             const acts = data.filter(a=>(isBike?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&a.date.getTime()>=winStart&&a.date.getTime()<winEnd);
             const pts = acts.map(a=>({date:a.date,act:a,v:activityEF(a,actStreams[a.id])})).filter(p=>p.v!==null).sort((a,b)=>a.date-b.date);
             if (!pts.length) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Aucune séance '+(isBike?'vélo':'course')+' exploitable sur cette période — il faut la FC moyenne et la puissance (vélo) ou l’allure (course) de la séance.');
@@ -3830,29 +3794,8 @@ function App() {
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},
             h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période · Range'),
             h('div',{style:{display:'flex',alignItems:'center',gap:'20px',flexWrap:'wrap'}},
-              h(BtnRow,{options:mkOptions([{label:'1 mois',value:30},{label:'3 mois',value:90},{label:'6 mois',value:180},{label:'1 an',value:365}],range,setRange)}),
-              // Bande décorative — 12 mois (mois en cours à droite). Chaque barre est
-              // remplie au prorata de la part du mois réellement dans la période :
-              // orange = période affichée · orange clair = période de comparaison.
-              h('div',{style:{display:'flex',flexDirection:'column',gap:'3px'}},
-                h('div',{style:{display:'flex',gap:'2px',width:'264px'}},
-                  Array.from({length:12},(_,i)=>{
-                    const _n=new Date();
-                    const ms=new Date(_n.getFullYear(),_n.getMonth()-(11-i),1).getTime();
-                    const me=new Date(_n.getFullYear(),_n.getMonth()-(11-i)+1,1).getTime();
-                    const L=me-ms;
-                    const cl=Math.max(0,Math.min(1,(prevStart-ms)/L)), cr=Math.max(0,Math.min(1,(prevEnd-ms)/L));
-                    const sl=Math.max(0,Math.min(1,(winStart-ms)/L)), sr=Math.max(0,Math.min(1,(winEnd-ms)/L));
-                    return h('div',{key:i,title:monthAgoLabel(11-i),style:{flex:1,height:'16px',background:'#eae9e9',position:'relative',overflow:'hidden'}},
-                      cr>cl&&h('span',{style:{position:'absolute',top:0,bottom:0,left:(cl*100)+'%',width:((cr-cl)*100)+'%',background:'#f9a882'}}),
-                      sr>sl&&h('span',{style:{position:'absolute',top:0,bottom:0,left:(sl*100)+'%',width:((sr-sl)*100)+'%',background:'#ec3013'}})
-                    );
-                  })
-                ),
-                h('div',{style:{display:'flex',gap:'2px',width:'264px'}},
-                  Array.from({length:12},(_,i)=>h('span',{key:i,style:{flex:1,textAlign:'center',fontSize:'8px',fontWeight:'700',color:'#bab6b6',textTransform:'uppercase'}},monthAgoLabel(11-i).charAt(0)))
-                )
-              )
+              h(BtnRow,{options:mkOptions(PERIOD_BTNS,range,setRange)}),
+              h(PeriodStrip,{...stripBounds(range)})
             )
           )
         ),
