@@ -160,11 +160,13 @@ const crosshairPlugin = {
   id: 'crosshair',
   afterEvent(chart, args) {
     const e = args.event;
-    chart._cx = (e.type === 'mousemove' && e.x >= chart.chartArea.left && e.x <= chart.chartArea.right) ? e.x : null;
+    const ca = chart.chartArea;
+    if (!ca) return;
+    chart._cx = (e.type === 'mousemove' && e.x >= ca.left && e.x <= ca.right) ? e.x : null;
     if (e.type === 'mouseout') chart._cx = null;
   },
   afterDatasetsDraw(chart) {
-    if (chart._cx == null) return;
+    if (chart._cx == null || !chart.chartArea) return;
     const { ctx, chartArea } = chart;
     ctx.save(); ctx.beginPath();
     ctx.moveTo(chart._cx, chartArea.top); ctx.lineTo(chart._cx, chartArea.bottom);
@@ -223,6 +225,7 @@ function chartDefaults() {
     if (!TT.positioners.topEdge) {
       TT.positioners.topEdge = function (items, evtPos) {
         const ca = this.chart.chartArea;
+        if (!ca) return evtPos || false;
         return { x: evtPos ? evtPos.x : (ca.left + ca.right) / 2, y: ca.top };
       };
     }
@@ -231,6 +234,7 @@ function chartDefaults() {
     Chart.defaults.plugins.tooltip.caretSize = 0;
     Chart.defaults.plugins.tooltip.caretPadding = 2;
   }
+  Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(32,30,29,0.88)';
   // Pas d'agrandissement des points au survol
   Chart.defaults.elements.point.hoverRadius = 0;
   Chart.defaults.elements.point.hoverBorderWidth = 0;
@@ -1009,6 +1013,21 @@ function App() {
     }
   }
 
+  // Va sur l'onglet Activités et ouvre le déroulant de l'activité `actId`.
+  function openActivity(actId) {
+    const act = data.find(a => String(a.id) === String(actId));
+    if (!act) return;
+    setTab('activites');
+    setTimeout(() => {
+      setExpanded(true);
+      setTimeout(() => {
+        const el = document.getElementById('act-row-' + act.id);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (openRowId !== act.id) toggleRow(act);
+      }, 180);
+    }, 90);
+  }
+
   function drawRowChart(id, act, streamsData, canvasEl, serieVis) {
     if (!canvasEl) return;
     if (rowChartInsts.current[id]) { rowChartInsts.current[id].destroy(); delete rowChartInsts.current[id]; }
@@ -1074,7 +1093,7 @@ function App() {
     rowChartInsts.current[id] = new Chart(canvasEl, {
       type: 'line', plugins: [crosshairPlugin],
       data: { labels: xLabels, datasets },
-      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 }, plugins: { legend: { display: false }, tooltip: { enabled: true, animation: false, backgroundColor: '#201e1d', cornerRadius: 0, padding: 10, displayColors: true, callbacks: { label: c => { const v = c.parsed.y; if (v === null) return null; const r1 = Math.round(v*10)/10; const id = c.dataset.yAxisID; if (id==='yPow') return c.dataset.label+' · '+r1+' W'; if (id==='yHr') return c.dataset.label+' · '+Math.round(v)+' bpm'; if (id==='yAlt') return c.dataset.label+' · '+r1+' m'; return c.dataset.label+' · '+r1; } } } }, scales },
+      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, interaction: { mode: 'index', intersect: false, axis: 'x' }, hover: { animationDuration: 0 }, plugins: { legend: { display: false }, tooltip: { enabled: true, animation: false, backgroundColor: 'rgba(32,30,29,0.88)', cornerRadius: 0, padding: 10, displayColors: true, callbacks: { label: c => { const v = c.parsed.y; if (v === null) return null; const r1 = Math.round(v*10)/10; const id = c.dataset.yAxisID; if (id==='yPow') return c.dataset.label+' · '+r1+' W'; if (id==='yHr') return c.dataset.label+' · '+Math.round(v)+' bpm'; if (id==='yAlt') return c.dataset.label+' · '+r1+' m'; return c.dataset.label+' · '+r1; } } } }, scales },
     });
   }
 
@@ -1801,7 +1820,7 @@ function App() {
                 });
               }
             },
-            backgroundColor:'#201e1d', titleColor:'#fff', bodyColor:'#d7d3d3', padding:12, cornerRadius:0,
+            backgroundColor:'rgba(32,30,29,0.88)', titleColor:'#fff', bodyColor:'#d7d3d3', padding:12, cornerRadius:0,
           },
         },
         scales:{
@@ -1839,7 +1858,7 @@ function App() {
                 return '  Forme (TSB) : '+sign+v+' \u2014 '+(zone?.label||'');
               },
             },
-            backgroundColor:'#201e1d', titleColor:'#fff', bodyColor:'#d7d3d3', padding:12, cornerRadius:0,
+            backgroundColor:'rgba(32,30,29,0.88)', titleColor:'#fff', bodyColor:'#d7d3d3', padding:12, cornerRadius:0,
           },
         },
         scales:{
@@ -1894,12 +1913,12 @@ function App() {
         srcByLabel[p.label + estSuffix] = src;
         const wmax = w.filter(Boolean).length ? Math.max(...w.filter(Boolean)) : null;
         if (wmax && (wmaxA === null || wmax > wmaxA)) wmaxA = wmax;
-        // Marqueur : point visible uniquement là où l'activité à l'origine du meilleur effort change
-        const ptR = src.map((id, i) => (id != null && i > 0 && src[i-1] != null && id !== src[i-1]) ? 4 : 0);
+        // Repère : point visible uniquement là où l'activité à l'origine du meilleur effort change
+        const ptR = src.map((id, i) => (id != null && i > 0 && src[i-1] != null && id !== src[i-1]) ? 2.5 : 0);
         datasets.push({ label: p.label + estSuffix, data: w, borderColor: p.color,
           borderWidth: idx === 0 ? 2.5 : 2, backgroundColor: 'transparent', fill: false, tension: 0.2,
-          pointRadius: ptR, pointBackgroundColor: p.color, pointBorderColor: '#201e1d', pointBorderWidth: 1.5,
-          pointHoverRadius: 0, spanGaps: true, yAxisID: 'yW' });
+          pointRadius: ptR, pointHoverRadius: ptR, pointBackgroundColor: p.color, pointBorderColor: '#201e1d', pointBorderWidth: 1,
+          spanGaps: true, yAxisID: 'yW' });
       });
       if (ftpVal) datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
       if (showCurveSel) {
@@ -1935,7 +1954,7 @@ function App() {
           },
           plugins:{
             legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
-            tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:12,displayColors:true,
+            tooltip:{enabled:true,animation:false,backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:12,displayColors:true,
               callbacks:{
                 title: items => 'Effort : ' + PD[items[0].dataIndex].l,
                 label: c => {
@@ -1943,24 +1962,17 @@ function App() {
                   if (c.dataset.label.startsWith('FTP')) return '─── ' + c.dataset.label;
                   const jArr = jByLabel[c.dataset.label];
                   const jVal = jArr ? jArr[c.dataIndex] : null;
-                  const jStr = jVal ? '  ·  ' + (jVal>=1000 ? Math.round(jVal/100)/10+' kJ' : jVal+' J') : '';
-                  const wpkg = profile.weight ? '  ·  ' + Math.round(v/Number(profile.weight)*100)/100+' W/kg' : '';
-                  return c.dataset.label + ' : ' + v + ' W' + jStr + wpkg;
+                  const jStr = jVal ? ' · ' + (jVal>=1000 ? Math.round(jVal/100)/10+' kJ' : jVal+' J') : '';
+                  const wpkg = profile.weight ? ' · ' + Math.round(v/Number(profile.weight)*100)/100+' W/kg' : '';
+                  const sArr = srcByLabel[c.dataset.label];
+                  const sid = sArr ? sArr[c.dataIndex] : null;
+                  const act = sid!=null ? data.find(x => String(x.id) === String(sid)) : null;
+                  const nm = act ? (act.name || act.sport) : '';
+                  const sStr = act ? '   ◂ ' + act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}) + ' ' + (nm.length>22?nm.slice(0,21)+'…':nm) : '';
+                  return c.dataset.label + ' : ' + v + ' W' + jStr + wpkg + sStr;
                 },
-                afterBody: (items) => {
-                  const ls = [];
-                  const idx = items[0].dataIndex;
-                  const seen = new Set();
-                  items.forEach(it => {
-                    const arr = srcByLabel[it.dataset.label];
-                    const id = arr && arr[idx];
-                    if (id != null && !seen.has(id)) {
-                      seen.add(id);
-                      const act = data.find(x => String(x.id) === String(id));
-                      if (act) ls.push('▸ ' + act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}) + ' · ' + (act.name || act.sport));
-                    }
-                  });
-                  if (seen.size) ls.push('(clic sur la courbe → Séance 1)');
+                afterBody: () => {
+                  const ls = ['clic sur une courbe → Séance 1'];
                   if (wmaxA) ls.push('Wmax : ' + wmaxA + ' W');
                   if (!hasRealPower && hasEstPower) ls.push('⚠ Puissance estimée (modèle physique)');
                   return ls;
@@ -2040,18 +2052,18 @@ function App() {
       const paceDatasetsNew = allCurves.map(c => {
         const src = (c.src || []).slice(paceIdxMin, paceIdxMax+1);
         srcByLabel[c.label] = src;
-        const ptR = src.map((id, i) => (id != null && i > 0 && src[i-1] != null && id !== src[i-1]) ? 4 : 0);
+        const ptR = src.map((id, i) => (id != null && i > 0 && src[i-1] != null && id !== src[i-1]) ? 2.5 : 0);
         return {
           label: c.label, data: c.vals.slice(paceIdxMin, paceIdxMax+1),
           borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
           backgroundColor: 'transparent', fill: false, tension: 0.3,
-          pointRadius: c.src ? ptR : 0, pointBackgroundColor: c.color, pointBorderColor: '#201e1d', pointBorderWidth: 1.5,
-          pointHoverRadius: 0, spanGaps: true,
+          pointRadius: c.src ? ptR : 0, pointHoverRadius: c.src ? ptR : 0, pointBackgroundColor: c.color, pointBorderColor: '#201e1d', pointBorderWidth: 1,
+          spanGaps: true,
         };
       });
       const yLabel = isTrail ? 'Allure VAP (min/km)' : 'Allure (min/km)';
       upsert('power', powerRef, {
-        type:'line',
+        type:'line', plugins:[crosshairPlugin],
         data:{ labels: paceLabelsSlice, datasets: paceDatasetsNew },
         options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
           onHover:(e,els,chart)=>{ chart.canvas.style.cursor = els.length ? 'pointer' : 'default'; },
@@ -2070,25 +2082,19 @@ function App() {
           },
           plugins:{
             legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
-            tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
+            tooltip:{backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:10,displayColors:true,
               callbacks:{
                 title: items => { const m=PACE_DISTS_FINE[paceIdxMin+items[0].dataIndex]; return m>=1000?(m/1000%1===0?m/1000+' km':(m/1000).toFixed(1)+' km'):m+' m'; },
-                label: c => c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':fmtP(c.parsed.y)+' /km'),
-                afterBody: (items) => {
-                  const idx = items[0].dataIndex;
-                  const ls = [], seen = new Set();
-                  items.forEach(it => {
-                    const arr = srcByLabel[it.dataset.label];
-                    const id = arr && arr[idx];
-                    if (id != null && !seen.has(id)) {
-                      seen.add(id);
-                      const act = data.find(x => String(x.id) === String(id));
-                      if (act) ls.push('▸ ' + act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}) + ' · ' + (act.name || act.sport));
-                    }
-                  });
-                  if (seen.size) ls.push('(clic sur la courbe → Séance 1)');
-                  return ls;
-                }
+                label: c => {
+                  const base = c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':fmtP(c.parsed.y)+' /km');
+                  const arr = srcByLabel[c.dataset.label];
+                  const id = arr ? arr[c.dataIndex] : null;
+                  const act = id!=null ? data.find(x => String(x.id) === String(id)) : null;
+                  if (!act) return base;
+                  const nm = act.name || act.sport;
+                  return base + '   ◂ ' + act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}) + ' ' + (nm.length>22?nm.slice(0,21)+'…':nm);
+                },
+                afterBody: () => ['clic sur une courbe → Séance 1'],
               }
             }
           },
@@ -2215,7 +2221,7 @@ function App() {
         interaction:{mode:'index',intersect:false},
         plugins:{
           legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
-          tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{title:items=>items[0].label+' bpm',label:c=>c.dataset.label+' · '+tooltipFmt(c.parsed.y)}}
+          tooltip:{backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:10,displayColors:true,callbacks:{title:items=>items[0].label+' bpm',label:c=>c.dataset.label+' · '+tooltipFmt(c.parsed.y)}}
         },
         scales:{
           x:{grid:{display:false},title:{display:true,text:'Fréquence cardiaque (bpm)',color:'#605d5d'},ticks:{maxRotation:0,autoSkipPadding:20}},
@@ -2288,10 +2294,12 @@ function App() {
       options:{
         responsive:true, maintainAspectRatio:false, animation:{duration:240},
         interaction:{mode:'index',intersect:false},
+        onHover:(e,els,chart)=>{ chart.canvas.style.cursor = els.length ? 'pointer' : 'default'; },
+        onClick:(e,els)=>{ const p = els.length ? pts[els[0].index] : null; if (p) openActivity(p.act.id); },
         plugins:{
           monthMarkers:{ boundaries: vo2MonthMk },
           legend:{display:true,position:'top',align:'end',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:true,font:{size:12,weight:'600'}}},
-          tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
+          tooltip:{backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:10,displayColors:true,
             callbacks:{
               title: items => new Date(labels[items[0].dataIndex]).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}),
               label: c => c.dataset.label+' · '+c.parsed.y+' ml/kg/min',
@@ -2365,10 +2373,12 @@ function App() {
       options:{
         responsive:true, maintainAspectRatio:false, animation:{duration:240},
         interaction:{mode:'index',intersect:false},
+        onHover:(e,els,chart)=>{ chart.canvas.style.cursor = els.length ? 'pointer' : 'default'; },
+        onClick:(e,els)=>{ const p = els.length ? pts[els[0].index] : null; if (p) openActivity(p.act.id); },
         plugins:{
           monthMarkers:{ boundaries: effMonthMk },
           legend:{display:true,position:'top',align:'end',labels:{boxWidth:14,boxHeight:2,padding:16,usePointStyle:true,font:{size:12,weight:'600'}}},
-          tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
+          tooltip:{backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:10,displayColors:true,
             callbacks:{
               title: items => new Date(labels[items[0].dataIndex]).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}),
               label: c => c.dataset.label+' · '+c.parsed.y+' '+unit,
@@ -2484,7 +2494,7 @@ function App() {
     }
     upsert('line', lineRef, { type:'line', plugins:[monthMarkersPlugin], data:{labels,datasets}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
       plugins:{ monthMarkers:{ boundaries: monthMk }, legend: lineLegend,
-        tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors: isTous || showEstPow || showElev,
+        tooltip:{backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:10,displayColors: isTous || showEstPow || showElev,
           callbacks:{ title: items => labels[items[0].dataIndex] || '',
             label: c => c.dataset.label+' · '+(Math.round(c.parsed.y*10)/10)+(lineIsHours?' h':''),
             afterBody: items => { const idx = items[0].dataIndex; const k = bucketKeys[idx]; const list = bucketActsMap.get(k) || []; if (!list.length) return ['— Aucune activité']; return list.slice(0,6).map(a => { const t = Math.floor(a.time/60)+'h'+String(a.time%60).padStart(2,'0'); const d = fmtNum(a.dist,1)+' km'; return (a.name||a.sport)+' · '+t+' · '+d; }).concat(list.length>6?['+ '+(list.length-6)+' activité(s)']:[]); }
@@ -2500,14 +2510,14 @@ function App() {
     const perDay=new Map();
     data.forEach(a=>{if(sport!=='Tous'&&a.sport!==sport)return;const k=a.date.toDateString();perDay.set(k,(perDay.get(k)||0)+a.time);});
     const dayMk = monthBoundaries(days.map(d=>d.getTime()));
-    upsert('daily', dailyRef, { type:'bar', plugins:[monthMarkersPlugin], data:{labels:days.map(d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})),datasets:[{data:days.map(d=>Math.round(perDay.get(d.toDateString())||0)),backgroundColor:days.map(d=>d.getDay()===0||d.getDay()===6?'#605d5d':'#ec3013'),borderWidth:0,barPercentage:1,categoryPercentage:0.82}]}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{monthMarkers:{boundaries:dayMk},legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:false,callbacks:{label:c=>c.parsed.y+' min'}}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,autoSkipPadding:28},title:{display:true,text:'Jours',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,max:yMaxDay,title:{display:true,text:'Minutes / jour',color:'#605d5d'}}} } });
+    upsert('daily', dailyRef, { type:'bar', plugins:[monthMarkersPlugin], data:{labels:days.map(d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})),datasets:[{data:days.map(d=>Math.round(perDay.get(d.toDateString())||0)),backgroundColor:days.map(d=>d.getDay()===0||d.getDay()===6?'#605d5d':'#ec3013'),borderWidth:0,barPercentage:1,categoryPercentage:0.82}]}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{monthMarkers:{boundaries:dayMk},legend:{display:false},tooltip:{backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:10,displayColors:false,callbacks:{label:c=>c.parsed.y+' min'}}}, scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,autoSkipPadding:28},title:{display:true,text:'Jours',color:'#605d5d'}},y:{grid,border:{display:false},beginAtZero:true,max:yMaxDay,title:{display:true,text:'Minutes / jour',color:'#605d5d'}}} } });
     const sports=['Course','Trail','Vélo','Natation'];
     const shades={Course:'#ec3013',Trail:'#ff9783','Vélo':'#605d5d',Natation:'#bab6b6'};
     const zoneMin=zoneMinutes(acts,profile.fcMax);
-    upsert('zone', zoneRef, { type:'doughnut', data:{labels:zoneMin.map(z=>z.label),datasets:[{data:zoneMin.map(z=>z.min),backgroundColor:zoneMin.map(z=>z.color),borderColor:'#f3f2f2',borderWidth:2}]}, options:{ responsive:true, maintainAspectRatio:false, cutout:'46%', plugins:{legend:{display:false},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.label+' · '+Math.round(c.parsed/60)+' h ('+Math.round((c.parsed/zoneMin.reduce((s,z)=>s+z.min,0))*100)+' %)'}}} } });
+    upsert('zone', zoneRef, { type:'doughnut', data:{labels:zoneMin.map(z=>z.label),datasets:[{data:zoneMin.map(z=>z.min),backgroundColor:zoneMin.map(z=>z.color),borderColor:'#f3f2f2',borderWidth:2}]}, options:{ responsive:true, maintainAspectRatio:false, cutout:'46%', plugins:{legend:{display:false},tooltip:{backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.label+' · '+Math.round(c.parsed/60)+' h ('+Math.round((c.parsed/zoneMin.reduce((s,z)=>s+z.min,0))*100)+' %)'}}} } });
     const splitKeys=[...buckets.keys()];
     const shown=sport==='Tous'?sports:[sport];
-    upsert('bar', barRef, { type:'bar', plugins:[monthMarkersPlugin], data:{labels,datasets:shown.map(sp=>({label:sp,backgroundColor:shades[sp],borderWidth:0,data:splitKeys.map(k=>Math.round(acts.filter(a=>a.sport===sp&&keyOf(a.date)===k).reduce((s,a)=>s+a.time/60,0)*10)/10)}))}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{monthMarkers:{boundaries:monthMk},legend:{display:shown.length>1,position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.dataset.label+' · '+(Math.round(c.parsed.y*10)/10)+' h'}}}, scales:{x:{stacked:true,grid:{display:false},title:{display:true,text:xTitleTxt,color:'#605d5d'}},y:{stacked:true,grid,border:{display:false},beginAtZero:true,max:yMaxH,title:{display:true,text:'Heures',color:'#605d5d'}}} } });
+    upsert('bar', barRef, { type:'bar', plugins:[monthMarkersPlugin], data:{labels,datasets:shown.map(sp=>({label:sp,backgroundColor:shades[sp],borderWidth:0,data:splitKeys.map(k=>Math.round(acts.filter(a=>a.sport===sp&&keyOf(a.date)===k).reduce((s,a)=>s+a.time/60,0)*10)/10)}))}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{monthMarkers:{boundaries:monthMk},legend:{display:shown.length>1,position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14}},tooltip:{backgroundColor:'rgba(32,30,29,0.88)',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.dataset.label+' · '+(Math.round(c.parsed.y*10)/10)+' h'}}}, scales:{x:{stacked:true,grid:{display:false},title:{display:true,text:xTitleTxt,color:'#605d5d'}},y:{stacked:true,grid,border:{display:false},beginAtZero:true,max:yMaxH,title:{display:true,text:'Heures',color:'#605d5d'}}} } });
     return () => { destroyChart('line'); destroyChart('daily'); destroyChart('zone'); destroyChart('bar'); };
   }, [tab, data, range, sport, showElev, profile.fcMax, profile.weight, profile.bikeMass]);
 
