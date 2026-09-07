@@ -767,7 +767,7 @@ function App() {
   const [view, setView] = useState(8);
   const [sport, setSport] = useState('Tous');
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [range, setRange] = useState(180);
+  const [range, setRange] = useState(90);
   const [showElev, setShowElev] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [powRange, setPowRange] = useState(90);
@@ -835,10 +835,10 @@ function App() {
   const [hrCompare, setHrCompare] = useState(365);
   // Fenêtre de calcul en mois : { offset = mois écoulés depuis le mois en cours
   // jusqu'à la fin de la période, length = nombre de mois (1 à 12), offset+length ≤ 12 }
-  const [fitRange, setFitRange] = useState(180);
-  const [vo2Range, setVo2Range] = useState(180);
+  const [fitRange, setFitRange] = useState(90);
+  const [vo2Range, setVo2Range] = useState(90);
   const [vo2Sport, setVo2Sport] = useState('Course');
-  const [effRange, setEffRange] = useState(180);
+  const [effRange, setEffRange] = useState(90);
   const [effSport, setEffSport] = useState('Vélo');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
@@ -1137,15 +1137,15 @@ function App() {
     const start = new Date(d0).getTime(), end = new Date(d1).getTime() + 86400000;
     const rides = data.filter(a => a.sport === 'Vélo' && a.date.getTime() >= start && a.date.getTime() < end);
     return POWER_DURATIONS.map(({ s: dur }) => {
-      let bestW = null;
+      let bestW = null, bestId = null;
       for (const a of rides) {
         const s = actStreams[a.id];
         if (s && s.pow && s.pow.length >= dur) {
           const v = bestAvgWindow(s.pow, dur);
-          if (v !== null) bestW = bestW === null ? v : Math.max(bestW, v);
+          if (v !== null && (bestW === null || v > bestW)) { bestW = v; bestId = a.id; }
         }
       }
-      return bestW !== null ? { w: bestW, j: Math.round(bestW * dur) } : null;
+      return bestW !== null ? { w: bestW, j: Math.round(bestW * dur), srcId: bestId } : null;
     });
   }
 
@@ -1297,8 +1297,8 @@ function App() {
   const [hrSport, setHrSport] = useState('Course');
   const [powSport, setPowSport] = useState('Vélo');
   // Puissance / FC : jeu de périodes affichées (chacune une courbe), on/off.
-  const [powPeriods, setPowPeriods] = useState({ 90: true });
-  const [hrPeriods, setHrPeriods] = useState({ 90: true });
+  const [powPeriods, setPowPeriods] = useState({ 30: true, 90: true, 180: true, 365: true });
+  const [hrPeriods, setHrPeriods] = useState({ 30: true, 90: true, 180: true, 365: true });
   const [showCurveSel, setShowCurveSel] = useState(true);
   // Couleurs / libellés des 4 périodes (orange de plus en plus clair, gris à 1 an)
   const PERIOD_CURVE = [
@@ -1883,19 +1883,23 @@ function App() {
       const PD = POWER_DURATIONS.slice(P0);
       const labels = PD.map(d => d.l);
       // Une courbe par période sélectionnée (30 j / 3 m / 6 m / 1 an)
-      const jByLabel = {};
+      const jByLabel = {}, srcByLabel = {};
       let wmaxA = null;
       const datasets = [];
       powSel.forEach((p, idx) => {
         const cur = powerCurveByDate(d2s(nowMs - p.d * 86400000), d2s(nowMs)).slice(P0);
         const w = cur.map(v => v ? v.w : null);
+        const src = cur.map(v => v ? v.srcId : null);
         jByLabel[p.label + estSuffix] = cur.map(v => v ? v.j : null);
+        srcByLabel[p.label + estSuffix] = src;
         const wmax = w.filter(Boolean).length ? Math.max(...w.filter(Boolean)) : null;
         if (wmax && (wmaxA === null || wmax > wmaxA)) wmaxA = wmax;
+        // Marqueur : point visible uniquement là où l'activité à l'origine du meilleur effort change
+        const ptR = src.map((id, i) => (id != null && i > 0 && src[i-1] != null && id !== src[i-1]) ? 4 : 0);
         datasets.push({ label: p.label + estSuffix, data: w, borderColor: p.color,
           borderWidth: idx === 0 ? 2.5 : 2, backgroundColor: 'transparent', fill: false, tension: 0.2,
-          pointRadius: 2.5, pointBackgroundColor: p.color, pointBorderColor: '#f3f2f2', pointBorderWidth: 1,
-          pointHoverRadius:0, spanGaps: true, yAxisID: 'yW' });
+          pointRadius: ptR, pointBackgroundColor: p.color, pointBorderColor: '#201e1d', pointBorderWidth: 1.5,
+          pointHoverRadius: 0, spanGaps: true, yAxisID: 'yW' });
       });
       if (ftpVal) datasets.push({ label:'FTP · '+ftpVal+' W', data:labels.map(()=>ftpVal), borderColor:'#201e1d', borderWidth:1.5, borderDash:[2,4], backgroundColor:'transparent', fill:false, tension:0, pointRadius:0, yAxisID:'yW' });
       if (showCurveSel) {
@@ -1906,7 +1910,7 @@ function App() {
             const act = data.find(a => String(a.id) === String(sid));
             const lbl = act ? act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' '+fmtNum(act.dist,1)+'km' : defLbl;
             const actPowCurve = PD.map(({s:dur}) => bestAvgWindow(s.pow, dur));
-            datasets.push({ label:lbl, data:actPowCurve, borderColor:col, borderWidth:1.5, borderDash:[], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:2, pointBackgroundColor:col, pointBorderColor:'#f3f2f2', pointBorderWidth:1, spanGaps:true, yAxisID:'yW' });
+            datasets.push({ label:lbl, data:actPowCurve, borderColor:col, borderWidth:1.5, borderDash:[], backgroundColor:'transparent', fill:false, tension:0.2, pointRadius:0, pointBackgroundColor:col, pointBorderColor:'#f3f2f2', pointBorderWidth:1, spanGaps:true, yAxisID:'yW' });
           }
         });
       }
@@ -1915,6 +1919,20 @@ function App() {
         data:{ labels, datasets },
         options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240},
           interaction:{mode:'index',intersect:false,axis:'x'}, hover:{animationDuration:0},
+          onHover:(e,els,chart)=>{ chart.canvas.style.cursor = els.length ? 'pointer' : 'default'; },
+          onClick:(e,els,chart)=>{
+            if (!els.length) return;
+            const cy = e && e.y;
+            let bestId = null, bestDy = Infinity;
+            els.forEach(el => {
+              const arr = srcByLabel[chart.data.datasets[el.datasetIndex].label];
+              const id = arr && arr[el.index];
+              if (id == null) return;
+              const dy = (cy != null && el.element) ? Math.abs(el.element.y - cy) : 0;
+              if (dy < bestDy) { bestDy = dy; bestId = id; }
+            });
+            if (bestId) { setSelActId1(String(bestId)); setShowCurveSel(true); }
+          },
           plugins:{
             legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
             tooltip:{enabled:true,animation:false,backgroundColor:'#201e1d',cornerRadius:0,padding:12,displayColors:true,
@@ -1929,8 +1947,20 @@ function App() {
                   const wpkg = profile.weight ? '  ·  ' + Math.round(v/Number(profile.weight)*100)/100+' W/kg' : '';
                   return c.dataset.label + ' : ' + v + ' W' + jStr + wpkg;
                 },
-                afterBody: () => {
+                afterBody: (items) => {
                   const ls = [];
+                  const idx = items[0].dataIndex;
+                  const seen = new Set();
+                  items.forEach(it => {
+                    const arr = srcByLabel[it.dataset.label];
+                    const id = arr && arr[idx];
+                    if (id != null && !seen.has(id)) {
+                      seen.add(id);
+                      const act = data.find(x => String(x.id) === String(id));
+                      if (act) ls.push('▸ ' + act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}) + ' · ' + (act.name || act.sport));
+                    }
+                  });
+                  if (seen.size) ls.push('(clic sur la courbe → Séance 1)');
                   if (wmaxA) ls.push('Wmax : ' + wmaxA + ' W');
                   if (!hasRealPower && hasEstPower) ls.push('⚠ Puissance estimée (modèle physique)');
                   return ls;
@@ -1959,20 +1989,24 @@ function App() {
       });
       const buildPaceCurve = (t0, t1, color, dash, width, label) => {
         const runs = data.filter(a => a.sport===powSport && a.date.getTime()>=t0 && a.date.getTime()<t1);
+        const src = [];
         const vals = PACE_DISTS_FINE.map(targetM => {
-          let best = null;
+          let best = null, bestId = null;
           for (const a of runs) {
             const ps = actStreams[a.id];
+            let v = null;
             if (ps && ps.dist && ps.vel) {
-              const v = bestPaceWindow(ps.dist, ps.vel, targetM);
-              if (v !== null && v <= MAX_PACE) best = best === null ? v : Math.min(best, v);
+              const w = bestPaceWindow(ps.dist, ps.vel, targetM);
+              if (w !== null && w <= MAX_PACE) v = w;
             } else if (a.dist*1000 >= targetM && a.pace && a.pace <= MAX_PACE) {
-              best = best === null ? a.pace : Math.min(best, a.pace);
+              v = a.pace;
             }
+            if (v !== null && (best === null || v < best)) { best = v; bestId = a.id; }
           }
+          src.push(bestId);
           return best !== null ? Math.round(best * 100) / 100 : null;
         });
-        return { label, vals, color, dash, width };
+        return { label, vals, color, dash, width, src };
       };
       // Une courbe par période sélectionnée
       const periodCurves = powSel.map((p, idx) =>
@@ -2002,23 +2036,59 @@ function App() {
       if (km1 >= 0) paceIdxMin = Math.max(paceIdxMin, km1);
       if (paceIdxMin > paceIdxMax) paceIdxMax = paceIdxMin;
       const paceLabelsSlice = paceLabels.slice(paceIdxMin, paceIdxMax+1);
-      const paceDatasetsNew = allCurves.map(c => ({
-        label: c.label, data: c.vals.slice(paceIdxMin, paceIdxMax+1),
-        borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
-        backgroundColor: 'transparent', fill: false, tension: 0.3,
-        pointRadius: 0, pointHoverRadius:0, spanGaps: true,
-      }));
+      const srcByLabel = {};
+      const paceDatasetsNew = allCurves.map(c => {
+        const src = (c.src || []).slice(paceIdxMin, paceIdxMax+1);
+        srcByLabel[c.label] = src;
+        const ptR = src.map((id, i) => (id != null && i > 0 && src[i-1] != null && id !== src[i-1]) ? 4 : 0);
+        return {
+          label: c.label, data: c.vals.slice(paceIdxMin, paceIdxMax+1),
+          borderColor: c.color, borderWidth: c.width, borderDash: c.dash,
+          backgroundColor: 'transparent', fill: false, tension: 0.3,
+          pointRadius: c.src ? ptR : 0, pointBackgroundColor: c.color, pointBorderColor: '#201e1d', pointBorderWidth: 1.5,
+          pointHoverRadius: 0, spanGaps: true,
+        };
+      });
       const yLabel = isTrail ? 'Allure VAP (min/km)' : 'Allure (min/km)';
       upsert('power', powerRef, {
         type:'line',
         data:{ labels: paceLabelsSlice, datasets: paceDatasetsNew },
         options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, interaction:{mode:'index',intersect:false},
+          onHover:(e,els,chart)=>{ chart.canvas.style.cursor = els.length ? 'pointer' : 'default'; },
+          onClick:(e,els,chart)=>{
+            if (!els.length) return;
+            const cy = e && e.y;
+            let bestId = null, bestDy = Infinity;
+            els.forEach(el => {
+              const arr = srcByLabel[chart.data.datasets[el.datasetIndex].label];
+              const id = arr && arr[el.index];
+              if (id == null) return;
+              const dy = (cy != null && el.element) ? Math.abs(el.element.y - cy) : 0;
+              if (dy < bestDy) { bestDy = dy; bestId = id; }
+            });
+            if (bestId) { setSelActId1(String(bestId)); setShowCurveSel(true); }
+          },
           plugins:{
             legend:{display:true,position:'top',align:'end',labels:{boxWidth:24,boxHeight:3,padding:20,usePointStyle:true,font:{size:13,weight:'600'}}},
             tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,
               callbacks:{
                 title: items => { const m=PACE_DISTS_FINE[paceIdxMin+items[0].dataIndex]; return m>=1000?(m/1000%1===0?m/1000+' km':(m/1000).toFixed(1)+' km'):m+' m'; },
                 label: c => c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':fmtP(c.parsed.y)+' /km'),
+                afterBody: (items) => {
+                  const idx = items[0].dataIndex;
+                  const ls = [], seen = new Set();
+                  items.forEach(it => {
+                    const arr = srcByLabel[it.dataset.label];
+                    const id = arr && arr[idx];
+                    if (id != null && !seen.has(id)) {
+                      seen.add(id);
+                      const act = data.find(x => String(x.id) === String(id));
+                      if (act) ls.push('▸ ' + act.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}) + ' · ' + (act.name || act.sport));
+                    }
+                  });
+                  if (seen.size) ls.push('(clic sur la courbe → Séance 1)');
+                  return ls;
+                }
               }
             }
           },
