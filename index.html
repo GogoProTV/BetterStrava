@@ -287,6 +287,24 @@ function PeriodStrip({ selStart, selEnd, cmpStart, cmpEnd, cmpColor = '#f9a882',
   );
 }
 
+// 4 boutons de période à choix unique (VO2 max / Efficacité / Condition physique),
+// même style que les boutons on/off de Puissance / FC.
+function PeriodBtns({ value, onChange, curves }) {
+  return h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+    curves.map(p => {
+      const on = value === p.d;
+      return h('button', { key: p.d, type: 'button', onClick: () => onChange(p.d),
+        style: {
+          padding: '5px 10px', border: '2px solid ' + (on ? p.color : '#d7d3d3'),
+          background: on ? p.color : 'transparent', color: on ? '#ffffff' : '#605d5d',
+          fontFamily: 'inherit', fontSize: '11px', fontWeight: '700', letterSpacing: '0.06em',
+          textTransform: 'uppercase', cursor: 'pointer',
+        },
+      }, p.label);
+    })
+  );
+}
+
 // 4 boutons de période on/off (Puissance / Fréquence cardiaque). Chaque bouton
 // allumé = une courbe de cette couleur sur le graphique.
 function PeriodToggle({ sel, set, curves }) {
@@ -3042,9 +3060,10 @@ function App() {
           h('section',{style:{display:'flex',alignItems:'flex-start',gap:'16px 28px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexShrink:0,flexWrap:'wrap'}},
             h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-              h(BtnRow,{options:mkOptions(PERIOD_BTNS,fitRange,setFitRange)})
+              h(PeriodBtns,{value:fitRange,onChange:setFitRange,curves:PERIOD_CURVE})
             ),
-            pmcRef&&h('div',{style:{marginLeft:'auto',display:'flex',gap:'20px'}},
+            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(fitRange)})),
+            pmcRef&&h('div',{style:{display:'flex',gap:'20px'}},
               [
                 {name:'Condition physique',abbr:'CTL',value:pmcRef.ctl,color:'#ec3013'},
                 {name:'Fatigue',abbr:'ATL',value:pmcRef.atl,color:'#201e1d'},
@@ -3058,8 +3077,7 @@ function App() {
                 ),
                 h('span',{style:{fontSize:'18px',fontWeight:'800',letterSpacing:'-0.02em',color:s.color}},String(s.value))
               ))
-            ),
-            h('div',{style:{marginLeft:pmcRef?'0':'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(fitRange)}))
+            )
           ),
           // ── Corps : 2 graphiques collés ────────────────────────────────────
           h('div',{style:{flex:1,display:'flex',flexDirection:'column',padding:'12px 32px 0',minHeight:0}},
@@ -3129,29 +3147,27 @@ function App() {
                 h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&(selActId1||selActId2)?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
                 (selActId1||selActId2)&&h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveSel?'#7c4dbc':'#d7d3d3'}})
               ),
-              h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
-              h('div',{style:{display:'flex',gap:'6px'}},
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',flex:'1',minWidth:0}},
-                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#7c4dbc'}},'1'),
+              h('div',{style:{display:'flex',gap:'8px'}},
+                h('div',{style:{display:'flex',alignItems:'center',gap:'4px',flex:'1',minWidth:0}},
+                  h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#7c4dbc',flexShrink:0}},'1'),
                   h('select',{value:selActId1||'',onChange:e=>{setSelActId1(e.target.value||null);setShowCurveSel(true);},
-                    style:{padding:'4px 6px',border:'2px solid '+(selActId1?'#7c4dbc':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
+                    style:{padding:'4px 6px',border:'2px solid '+(selActId1?'#7c4dbc':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%',minWidth:0}},
                     h('option',{value:''},"Pas d'affichage"),
                     data.filter(a=>(powSport==='Vélo'?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
                       a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+fmtNum(a.dist,1)+'km'+(a.elev?' +'+fmtNum(a.elev,0)+'m':'')+' · '+(a.name||a.sport)
                     ))
                   )
                 ),
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',flex:'1',minWidth:0}},
-                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#2196f3'}},'2'),
+                h('div',{style:{display:'flex',alignItems:'center',gap:'4px',flex:'1',minWidth:0}},
+                  h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#2196f3',flexShrink:0}},'2'),
                   h('select',{value:selActId2||'',onChange:e=>{setSelActId2(e.target.value||null);setShowCurveSel(true);},
-                    style:{padding:'4px 6px',border:'2px solid '+(selActId2?'#2196f3':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
+                    style:{padding:'4px 6px',border:'2px solid '+(selActId2?'#2196f3':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%',minWidth:0}},
                     h('option',{value:''},"Pas d'affichage"),
                     data.filter(a=>(powSport==='Vélo'?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
                       a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+fmtNum(a.dist,1)+'km'+(a.elev?' +'+fmtNum(a.elev,0)+'m':'')+' · '+(a.name||a.sport)
                     ))
                   )
                 )
-              )
               )
             ),
             h('div',{style:{padding:'16px 20px',display:'flex',flexDirection:'column',gap:'8px'}},
@@ -3406,29 +3422,27 @@ function App() {
                 h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:showCurveSel&&(selActId1||selActId2)?'#7c4dbc':'#bab6b6',textDecoration:showCurveSel?'none':'line-through'}},'Séance'),
                 (selActId1||selActId2)&&h('span',{style:{display:'inline-block',width:'20px',height:'3px',background:showCurveSel?'#7c4dbc':'#d7d3d3'}})
               ),
-              h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
-              h('div',{style:{display:'flex',gap:'6px'}},
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',flex:'1',minWidth:0}},
-                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#7c4dbc'}},'1'),
+              h('div',{style:{display:'flex',gap:'8px'}},
+                h('div',{style:{display:'flex',alignItems:'center',gap:'4px',flex:'1',minWidth:0}},
+                  h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#7c4dbc',flexShrink:0}},'1'),
                   h('select',{value:selActId1||'',onChange:e=>{setSelActId1(e.target.value||null);setShowCurveSel(true);},
-                    style:{padding:'4px 6px',border:'2px solid '+(selActId1?'#7c4dbc':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
+                    style:{padding:'4px 6px',border:'2px solid '+(selActId1?'#7c4dbc':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%',minWidth:0}},
                     h('option',{value:''},"Pas d'affichage"),
                     data.filter(a=>a.sport===hrSport&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
                       a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+fmtNum(a.dist,1)+'km'+(a.elev?' +'+fmtNum(a.elev,0)+'m':'')+' · '+(a.name||a.sport)
                     ))
                   )
                 ),
-                h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',flex:'1',minWidth:0}},
-                  h('span',{style:{fontSize:'9px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#2196f3'}},'2'),
+                h('div',{style:{display:'flex',alignItems:'center',gap:'4px',flex:'1',minWidth:0}},
+                  h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#2196f3',flexShrink:0}},'2'),
                   h('select',{value:selActId2||'',onChange:e=>{setSelActId2(e.target.value||null);setShowCurveSel(true);},
-                    style:{padding:'4px 6px',border:'2px solid '+(selActId2?'#2196f3':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%'}},
+                    style:{padding:'4px 6px',border:'2px solid '+(selActId2?'#2196f3':'#d7d3d3'),background:'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'11px',fontWeight:'600',cursor:'pointer',width:'100%',minWidth:0}},
                     h('option',{value:''},"Pas d'affichage"),
                     data.filter(a=>a.sport===hrSport&&actStreams[a.id]&&actStreams[a.id]!=='error').slice(0,40).map(a=>h('option',{key:a.id,value:String(a.id)},
                       a.date.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+' · '+fmtNum(a.dist,1)+'km'+(a.elev?' +'+fmtNum(a.elev,0)+'m':'')+' · '+(a.name||a.sport)
                     ))
                   )
                 )
-              )
               )
             ),
             // Sport
@@ -3640,7 +3654,7 @@ function App() {
           h('section',{style:{display:'flex',alignItems:'flex-start',gap:'28px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
             h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-              h(BtnRow,{options:mkOptions(PERIOD_BTNS,vo2Range,setVo2Range)})
+              h(PeriodBtns,{value:vo2Range,onChange:setVo2Range,curves:PERIOD_CURVE})
             ),
             h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(vo2Range)}))
           ),
@@ -3698,8 +3712,9 @@ function App() {
           h('section',{style:{display:'flex',alignItems:'flex-start',gap:'28px',padding:'12px 32px',borderBottom:'2px solid #201e1d',flexWrap:'wrap'}},
             h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-              h(BtnRow,{options:mkOptions(PERIOD_BTNS,effRange,setEffRange)})
+              h(PeriodBtns,{value:effRange,onChange:setEffRange,curves:PERIOD_CURVE})
             ),
+            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(effRange)})),
             h('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}},
               h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),
               h('div',{style:{display:'flex',gap:'6px'}},
@@ -3709,8 +3724,7 @@ function App() {
                   onMouseLeave:e=>{if(effSport!==sp){e.currentTarget.style.borderColor='#d7d3d3';e.currentTarget.style.color='#605d5d';}}
                 },sp))
               )
-            ),
-            h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(effRange)}))
+            )
           ),
           (()=>{
             const isBike = effSport==='Vélo';
@@ -3770,15 +3784,13 @@ function App() {
             h('span',{style:{fontSize:'12px',color:'#605d5d'}},acts.length?fmtNum(Math.round(sum(acts,'dist')),0)+' km · '+Math.round(sum(acts,'time')/60)+' h · +'+fmtNum(sum(acts,'elev'),0)+' m':status==='loading'?'Import Strava en cours…':'Connecte Strava pour importer tes activités.')
           )
         ),
-        h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+        h('section',{style:{display:'flex',flexWrap:'wrap',alignItems:'flex-start',gap:'24px 40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),h(SportSelector)),
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},
             h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période'),
-            h('div',{style:{display:'flex',alignItems:'center',gap:'20px',flexWrap:'wrap'}},
-              h(BtnRow,{options:mkOptions(PERIOD_BTNS,range,setRange)}),
-              h(PeriodStrip,{...stripBounds(range)})
-            )
-          )
+            h(BtnRow,{options:mkOptions(PERIOD_BTNS,range,setRange)})
+          ),
+          h('div',{style:{marginLeft:'auto',alignSelf:'flex-end'}},h(PeriodStrip,{...stripBounds(range), showCmp:false}))
         ),
         isSwimFilter
           ? h('section',{style:{display:'grid',gridTemplateColumns:'3fr 1fr',borderBottom:'2px solid #201e1d'}},
