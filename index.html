@@ -730,7 +730,8 @@ function App() {
   const [view, setView] = useState(8);
   const [sport, setSport] = useState('Tous');
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [range, setRange] = useState(180);
+  // Page Activités : fenêtre de calcul en mois (comme les onglets Athlète)
+  const [actWin, setActWin] = useState({ offset: 0, length: 6 });
   const [showElev, setShowElev] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [powRange, setPowRange] = useState(90);
@@ -1041,7 +1042,7 @@ function App() {
   }
 
   function exportCsv() {
-    const acts = filtered(data, range, sport);
+    const acts = actsWin(data);
     const head = 'date,sport,distance_km,duree_min,denivele_m,allure_min_km,puissance_w,fc_moy\n';
     const body = acts.map(a => [a.date.toISOString().slice(0, 10), a.sport, a.dist, a.time, a.elev, Math.round(a.pace * 100) / 100, a.power || '', a.hr].join(',')).join('\n');
     const url = URL.createObjectURL(new Blob([head + body], { type: 'text/csv' }));
@@ -1058,6 +1059,28 @@ function App() {
     const start = end - rangeDays * 86400000;
     return d.filter(a => a.date.getTime() >= start && a.date.getTime() < end && (sp === 'Tous' || a.sport === sp));
   }
+
+  // ── Page Activités : fenêtre sélectionnée + période de comparaison ────────
+  // Comparaison = période de MÊME durée, immédiatement avant (fin = début de la
+  // période sélectionnée).
+  const _actR = winRange(actWin);
+  const winStart = _actR.start;
+  const winEnd = _actR.end;
+  const winDur = Math.max(86400000, winEnd - winStart);
+  const prevEnd = winStart;
+  const prevStart = winStart - winDur;
+  const range = Math.max(7, Math.round(winDur / 86400000)); // compat code hebdo/quotidien
+  const _monShort = t => new Date(t).toLocaleDateString('fr-FR', { month: 'short' }).replace('.', '');
+  const cmpLabel = (() => {
+    const a = _monShort(prevStart), b = _monShort(prevEnd - 86400000);
+    return a === b ? a : a + '–' + b;
+  })();
+  const winMonthsLabel = (() => {
+    const a = _monShort(winStart), b = _monShort(winEnd - 86400000);
+    return a === b ? a : a + '–' + b;
+  })();
+  const actsWin  = d => d.filter(a => a.date.getTime() >= winStart && a.date.getTime() < winEnd  && (sport === 'Tous' || a.sport === sport));
+  const actsPrev = d => d.filter(a => a.date.getTime() >= prevStart && a.date.getTime() < prevEnd && (sport === 'Tous' || a.sport === sport));
 
   const POWER_DURATIONS = [
     { s:5,l:'5 s' },{ s:10,l:'10 s' },{ s:15,l:'15 s' },{ s:30,l:'30 s' },{ s:60,l:'1 min' },
@@ -2227,11 +2250,12 @@ function App() {
     if (tab!=='activites') return;
     chartDefaults();
     const grid = { color:'rgba(32,30,29,0.12)', drawTicks:false };
-    const acts = filtered(data, range, sport);
+    const acts = actsWin(data);
     const keyOf = d => weekStart(d).getTime();
-    const nW = Math.ceil(range / 7);
     const buckets = new Map();
-    for (let i = nW - 1; i >= 0; i--) buckets.set(keyOf(new Date(Date.now() - i * 7 * 86400000)), {km:0, h:0, elev:0});
+    const wkFrom = weekStart(new Date(winStart)).getTime();
+    const wkTo = weekStart(new Date(winEnd - 1)).getTime();
+    for (let t = wkFrom; t <= wkTo; t += 7 * 86400000) buckets.set(t, {km:0, h:0, elev:0});
     acts.forEach(a => { const w = buckets.get(keyOf(a.date)); if (w) { w.km += a.dist; w.h += a.time/60; w.elev += a.elev; } });
     const labels = [...buckets.keys()].map(k => {
       const d = new Date(k);
@@ -2326,8 +2350,10 @@ function App() {
       },
       scales: lineScales
     } });
-    const days=[]; const dayStart=new Date(); dayStart.setHours(0,0,0,0);
-    for(let i=range-1;i>=0;i--) days.push(new Date(dayStart.getTime()-i*86400000));
+    const days=[];
+    const _d0=new Date(winStart); _d0.setHours(0,0,0,0);
+    const _dN=new Date(winEnd-1); _dN.setHours(0,0,0,0);
+    for(let t=_d0.getTime(); t<=_dN.getTime(); t+=86400000) days.push(new Date(t));
     const perDay=new Map();
     data.forEach(a=>{if(sport!=='Tous'&&a.sport!==sport)return;const k=a.date.toDateString();perDay.set(k,(perDay.get(k)||0)+a.time);});
     const dayMk = monthBoundaries(days.map(d=>d.getTime()));
@@ -2340,7 +2366,7 @@ function App() {
     const shown=sport==='Tous'?sports:[sport];
     upsert('bar', barRef, { type:'bar', plugins:[monthMarkersPlugin], data:{labels,datasets:shown.map(sp=>({label:sp,backgroundColor:shades[sp],borderWidth:0,data:splitKeys.map(k=>Math.round(acts.filter(a=>a.sport===sp&&keyOf(a.date)===k).reduce((s,a)=>s+a.time/60,0)*10)/10)}))}, options:{ responsive:true, maintainAspectRatio:false, animation:{duration:240}, plugins:{monthMarkers:{boundaries:monthMk},legend:{display:shown.length>1,position:'bottom',labels:{boxWidth:10,boxHeight:10,padding:14}},tooltip:{backgroundColor:'#201e1d',cornerRadius:0,padding:10,displayColors:true,callbacks:{label:c=>c.dataset.label+' · '+(Math.round(c.parsed.y*10)/10)+' h'}}}, scales:{x:{stacked:true,grid:{display:false},title:{display:true,text:xTitleTxt,color:'#605d5d'}},y:{stacked:true,grid,border:{display:false},beginAtZero:true,max:yMaxH,title:{display:true,text:'Heures',color:'#605d5d'}}} } });
     return () => { destroyChart('line'); destroyChart('daily'); destroyChart('zone'); destroyChart('bar'); };
-  }, [tab, data, range, sport, showElev, profile.fcMax, profile.weight, profile.bikeMass]);
+  }, [tab, data, actWin, sport, showElev, profile.fcMax, profile.weight, profile.bikeMass]);
 
   function buildWeeks() {
     const thisWeek=weekStart(new Date());
@@ -2462,9 +2488,9 @@ function App() {
   const projNote = projResult
     ? (projResult.segments ? 'Triathlon estimé segment par segment' : 'D\'après ' + (projResult.refName||'sortie') + ' · ' + fmtNum(projResult.refDist,1) + ' km · ' + fmtPace(projResult.refPace) + '/km')
     : (data.length ? 'Pas assez de données' : 'à calculer');
-  const acts=filtered(data,range,sport);
-  const curW=window2(data,0,range,sport);
-  const prevW=window2(data,1,range,sport);
+  const acts=actsWin(data);
+  const curW=actsWin(data);
+  const prevW=actsPrev(data);
   const rows=acts.slice(0,expanded?40:8).map(a=>({
     id:a.id, act:a,
     name: a.name || 'Donnée manquante',
@@ -3805,7 +3831,7 @@ function App() {
         ),
         h('section',{style:{display:'flex',flexWrap:'wrap',gap:'40px',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Sport'),h(SportSelector)),
-          h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période · Range'),h(BtnRow,{options:mkOptions([{label:'30 j',value:30},{label:'90 j',value:90},{label:'6 mois',value:180},{label:'12 mois',value:365}],range,setRange)}))
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}},h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Période · comparaison sur '+cmpLabel),h(MonthWindow,{win:actWin,setWin:setActWin}))
         ),
         isSwimFilter
           ? h('section',{style:{display:'grid',gridTemplateColumns:'3fr 1fr',borderBottom:'2px solid #201e1d'}},
@@ -3820,7 +3846,7 @@ function App() {
                     h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'10px'}},
                       kpi.arrow&&h('span',{style:kpi.arrowStyle},kpi.arrow),
                       kpi.delta&&kpi.delta!=='—'&&h('span',{style:{...kpi.deltaStyle,padding:'2px 7px'}},kpi.delta),
-                      h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},'S\u22121 : '+(kpi.prevTxt||'0')+(kpi.prevUnit?' '+kpi.prevUnit:''))
+                      h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},cmpLabel+' : '+(kpi.prevTxt||'0')+(kpi.prevUnit?' '+kpi.prevUnit:''))
                     )
                   )
                 )
@@ -3834,7 +3860,7 @@ function App() {
                 h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'10px'}},
                   kpis[2].arrow&&h('span',{style:kpis[2].arrowStyle},kpis[2].arrow),
                   kpis[2].delta&&kpis[2].delta!=='—'&&h('span',{style:{...kpis[2].deltaStyle,padding:'2px 7px'}},kpis[2].delta),
-                  h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},'S\u22121 : '+(kpis[2].prevTxt||'0')+(kpis[2].prevUnit?' '+kpis[2].prevUnit:''))
+                  h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},cmpLabel+' : '+(kpis[2].prevTxt||'0')+(kpis[2].prevUnit?' '+kpis[2].prevUnit:''))
                 )
               )
             )
@@ -3856,7 +3882,7 @@ function App() {
                   h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px',marginTop:'10px'}},
                     kpi.arrow&&h('span',{style:kpi.arrowStyle},kpi.arrow),
                     kpi.delta&&kpi.delta!=='—'&&h('span',{style:{...kpi.deltaStyle,padding:'2px 7px'}},kpi.delta),
-                    h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},'S\u22121 : '+(kpi.prevTxt||'0')+(kpi.prevUnit?' '+kpi.prevUnit:''))
+                    h('span',{style:{fontSize:'11px',color:'#bab6b6',fontVariantNumeric:'tabular-nums'}},cmpLabel+' : '+(kpi.prevTxt||'0')+(kpi.prevUnit?' '+kpi.prevUnit:''))
                   ),
                   powMissing && h('div',{style:{marginTop:'6px',fontSize:'11px',color:'#ec3013',fontWeight:'600',letterSpacing:'0.04em'}},'\u2192 Renseigne le profil')
                 );
@@ -4007,7 +4033,7 @@ function App() {
           h('div',{style:{gridColumn:'1',gridRow:'2',minWidth:0,padding:'28px 32px 32px',borderRight:'2px solid #201e1d'}},
             h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',marginBottom:'8px'}},
               h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Charge quotidienne'),
-              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},range>=365?'12 mois':range>=180?'6 mois':range+' jours')
+              h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},winMonthsLabel)
             ),
             h('p',{style:{margin:'0 0 14px',fontSize:'12px',color:'#605d5d',maxWidth:'62ch'}},!acts.length?'Donnée manquante — aucune activité importée.':"Minutes d'activité par jour. Les week-ends sont en gris."),
             h('div',{style:{height:'252px'}},h('canvas',{ref:dailyRef}))
