@@ -15,19 +15,36 @@ const LIMIT = Number(process.env.COACH_DAILY_LIMIT) || 10;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Un appel abandonné au bout de `ms` pour ne jamais dépasser le budget de la fonction.
+async function fetchT(url, opts, ms) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ctl.signal }); }
+  finally { clearTimeout(t); }
+}
+
 async function callGemini(key, payload) {
+  const deadline = Date.now() + 45000;
   let lastErr = 'inconnu';
   for (const model of MODELS) {
+    if (Date.now() > deadline) break;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const r = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key),
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-      );
+      let r;
+      try {
+        r = await fetchT(
+          'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key),
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
+          Math.min(20000, Math.max(3000, deadline - Date.now()))
+        );
+      } catch (e) {
+        lastErr = e.name === 'AbortError' ? 'délai dépassé (' + model + ')' : e.message;
+        break;
+      }
       const j = await r.json().catch(() => ({}));
       if (r.ok) return { j, model };
       lastErr = (j.error && j.error.message) || ('HTTP ' + r.status);
-      // 503 surcharge / 429 quota modèle → on retente puis on change de modèle
-      if (r.status === 503 || r.status === 429 || r.status === 500) { await sleep(700 * (attempt + 1)); continue; }
+      // 503 surcharge / 429 quota modèle / 500 → petit délai puis on change de modèle
+      if ((r.status === 503 || r.status === 429 || r.status === 500) && Date.now() < deadline) { await sleep(400); continue; }
       break; // autre erreur (400, clé invalide…) : inutile d'insister
     }
   }
@@ -182,3 +199,6 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: err.message, quota });
   }
 };
+
+// Laisse à la fonction le temps d'essayer plusieurs modèles quand Gemini est surchargé.
+module.exports.config = { maxDuration: 60 };

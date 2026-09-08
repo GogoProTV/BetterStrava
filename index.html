@@ -2895,9 +2895,16 @@ function App() {
           plan: coachPlan,
         }),
       });
-      const j = await r.json();
+      const raw = await r.text();
+      let j = {};
+      try { j = raw ? JSON.parse(raw) : {}; } catch (e) {
+        setCoachErr(r.status === 504
+          ? 'Le coach a mis trop de temps à répondre (Gemini surchargé). Réessaie dans un instant.'
+          : 'Réponse serveur invalide (' + r.status + ').');
+        setCoachBusy(false); return;
+      }
       if (j.quota) setCoachQuota(j.quota);
-      if (!r.ok) { setCoachErr(j.error || 'Erreur serveur'); setCoachBusy(false); return; }
+      if (!r.ok) { setCoachErr(j.error || 'Erreur serveur (' + r.status + ')'); setCoachBusy(false); return; }
       setCoachChat(c => [...c, { role: 'coach', text: j.reply || '(réponse vide)' }]);
       if (j.plan && Array.isArray(j.plan.sessions) && j.plan.sessions.length) {
         setCoachPlan({
