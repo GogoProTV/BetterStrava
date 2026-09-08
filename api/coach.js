@@ -9,7 +9,7 @@
 
 // Essayés dans l'ordre ; on passe au suivant si le modèle est surchargé / indisponible.
 // Surchargeable via GEMINI_MODELS="modele1,modele2".
-const MODELS = (process.env.GEMINI_MODELS || 'gemini-3.6-flash,gemini-flash-latest,gemini-2.5-flash,gemini-2.5-flash-lite')
+const MODELS = (process.env.GEMINI_MODELS || 'gemini-3.6-flash,gemini-flash-latest,gemini-3.5-flash-lite,gemini-flash-lite-latest')
   .split(',').map(s => s.trim()).filter(Boolean);
 const LIMIT = Number(process.env.COACH_DAILY_LIMIT) || 10;
 
