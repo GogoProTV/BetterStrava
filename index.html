@@ -2735,8 +2735,8 @@ function App() {
     const n=view==='saison'?allWeeks:Math.min(allWeeks,view);
     const starts=[];
     for(let i=n-1;i>=0;i--) starts.push(new Date(thisWeek.getTime()-i*7*86400000));
-    // Semaines à venir (programme du coach) — visibles en scrollant vers le haut.
-    const futureN = coachPlan ? 2 : 0;
+    // Une seule semaine projetée (programme du coach) — visible en scrollant vers le haut.
+    const futureN = coachPlan ? 1 : 0;
     for(let i=1;i<=futureN;i++) starts.push(new Date(thisWeek.getTime()+i*7*86400000));
     const dows=['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
     const today=new Date(); today.setHours(0,0,0,0);
@@ -2791,8 +2791,21 @@ function App() {
       const span=wkDate.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})+' \u2013 '+wkEnd.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
       const wkNum=(()=>{const d=new Date(s);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-(d.getDay()+6)%7);const w=new Date(d.getFullYear(),0,4);return 1+Math.round(((d.getTime()-w.getTime())/86400000-3+(w.getDay()+6)%7)/7);})();
       const futStat=(label,value)=>({label,value:value||'0',arrow:'',arrowStyle:{},delta:'visé',deltaStyle:{padding:'3px 8px',fontSize:'12px',fontWeight:'600',background:'#eae9e9',color:'#605d5d'},prevVal:'—'});
+      let objective=null;
+      if((isCurrent||isFuture)&&coachPlan){
+        const pa=plannedAgg(s);
+        const tg=(isCurrent&&coachPlan.targets)?coachPlan.targets:{};
+        const okm=tg.kmSemaine!=null?tg.kmSemaine:(pa.km||null);
+        const omin=tg.heuresSemaine!=null?Math.round(tg.heuresSemaine*60):(pa.min||null);
+        const on=tg.nbSeances!=null?tg.nbSeances:pa.n;
+        const parts=[];
+        if(okm)parts.push(fmtNum(Math.round(okm),0)+' km');
+        if(omin)parts.push(fmtH(omin));
+        parts.push(on+' séance'+(on>1?'s':''));
+        objective='Objectif : '+parts.join(' · ');
+      }
       return {
-        isCurrent, isFuture,
+        isCurrent, isFuture, objective,
         rowStyle:{borderTop:isCurrent?'2px solid #ec3013':undefined,borderBottom:'2px solid #201e1d',borderLeft:isCurrent?'6px solid #ec3013':isFuture?'6px solid #d7d3d3':undefined,background:isCurrent?'#fdf1ee':undefined},
         title:'Semaine '+wkNum,span,tag:isCurrent?'En cours':isFuture?'À venir':'',
         tagStyle:{padding:'2px 8px',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',background:isCurrent?'#ec3013':'#bab6b6',color:'#fff',display:(isCurrent||isFuture)?undefined:'none'},
@@ -2978,6 +2991,17 @@ function App() {
       .filter(a => !a.planned && a.date.getTime() >= wsMs && a.date.getTime() <= nowMs)
       .sort((a, b) => a.date - b.date)
       .map(a => summarizeSession(a));
+    // Comparaison volume / charge : semaine en cours (à date) vs 4 semaines précédentes.
+    const weekAgg = (t0, t1) => {
+      const list = data.filter(a => !a.planned && a.date.getTime() >= t0 && a.date.getTime() < t1);
+      const tss = pmcSeries.filter(p => { const t = new Date(p.date + 'T12:00:00').getTime(); return t >= t0 && t < t1; }).reduce((s, p) => s + (p.tss || 0), 0);
+      return { nbSeances: list.length, km: Math.round(list.reduce((s, a) => s + a.dist, 0) * 10) / 10, minutes: list.reduce((s, a) => s + a.time, 0), dplus: list.reduce((s, a) => s + a.elev, 0), chargeTSS: Math.round(tss) };
+    };
+    const semaineEnCoursADate = weekAgg(wsMs, nowMs);
+    const semainePrecedente = weekAgg(wsMs - 7 * 86400000, wsMs);
+    const sem2 = weekAgg(wsMs - 14 * 86400000, wsMs - 7 * 86400000);
+    const sem3 = weekAgg(wsMs - 21 * 86400000, wsMs - 14 * 86400000);
+    const chargeMoy3SemPrecedentes = Math.round((semainePrecedente.chargeTSS + sem2.chargeTSS + sem3.chargeTSS) / 3);
     const zones = {};
     if (profile.thresholdPace) zones.allureSeuilMinKm = Number(profile.thresholdPace);
     if (profile.fcMax) zones.fcMax = Number(profile.fcMax);
@@ -2998,6 +3022,11 @@ function App() {
       forme: last ? { ctl: last.ctl, atl: last.atl, tsb: last.tsb, rampeCtl7j: ramp } : null,
       chargeMoyenneSeancesParSemaine: Math.round((win.length / 4) * 10) / 10,
       volumeMoyenMinParSemaine: Math.round(win.reduce((s, a) => s + a.time, 0) / 4),
+      comparaisonSemaines: {
+        semaineEnCoursADate,
+        semainePrecedente,
+        chargeMoy3SemPrecedentes,
+      },
       sportPrincipal: coachPrimarySport(),
       zones,
       seancesDejaRealiseesCetteSemaine: doneThisWeek,
@@ -3070,7 +3099,7 @@ function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           profileId: coachProfileId(),
-          messages: [{ role: 'user', content: 'Analyse UNIQUEMENT ma dernière séance ci-dessous en détail (W/kg, FC moyenne, répartition du temps par zone de FC, facteur d\'efficacité, découplage, intervalles détectés, VO2max) : ce qui a été travaillé, la qualité de l\'exécution, la fatigue induite, ce qu\'il faut retenir. Ne renvoie PAS de "plan" (mets-le à null).' }],
+          messages: [{ role: 'user', content: 'Analyse UNIQUEMENT ma dernière séance ("derniereSeance" du contexte) : ce qui a été travaillé, la qualité de l\'exécution, la fatigue induite, ce qu\'il faut retenir. Passe en revue CHAQUE donnée (W/kg, FC moyenne, répartition du temps par zone de FC, facteur d\'efficacité, découplage, intervalles détectés, VO2max) en l\'EXPLIQUANT : jamais un chiffre nu, toujours [ce que c\'est] → [ta valeur] → [ce que ça signifie]. Ne renvoie PAS de "plan" (mets-le à null). Ici tu peux ignorer la structure en 4 sections.' }],
           context: { ...buildCoachContext(), derniereSeance: summarizeSession(last) },
           plan: null,
         }),
@@ -3551,8 +3580,8 @@ function App() {
       ),
       h('nav',{style:{display:'flex',flexDirection:'column',borderBottom:'1px solid #201e1d'}},
         h('button',{type:'button',onClick:()=>setTab('programme'),style:navStyle(tab==='programme'),onMouseEnter:e=>{if(tab!=='programme')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='programme')e.currentTarget.style.background='transparent';}},'Programme'),
-        h('button',{type:'button',onClick:()=>setTab('activites'),style:navStyle(tab==='activites'),onMouseEnter:e=>{if(tab!=='activites')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='activites')e.currentTarget.style.background='transparent';}},'Activités'),
         h('button',{type:'button',onClick:()=>setTab('coach'),style:navStyle(tab==='coach'),onMouseEnter:e=>{if(tab!=='coach')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='coach')e.currentTarget.style.background='transparent';}},'Coach'),
+        h('button',{type:'button',onClick:()=>setTab('activites'),style:navStyle(tab==='activites'),onMouseEnter:e=>{if(tab!=='activites')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='activites')e.currentTarget.style.background='transparent';}},'Activités'),
         athleteSections.map(s=>h('button',{key:s,type:'button',onClick:()=>{setAthleteSection(s);setTab('athlete');},style:navStyle(tab==='athlete'&&athleteSection===s),onMouseEnter:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='transparent';}},s))
       ),
       h('div',{style:{marginTop:'auto',padding:'20px 24px 8px'}},
@@ -3630,7 +3659,10 @@ function App() {
                   h('span',{style:{fontSize:'12px',color:'#605d5d'}},wk.span),
                   (wk.isCurrent||wk.isFuture)&&h('span',{style:wk.tagStyle},wk.tag)
                 ),
-                h('span',{style:{fontSize:'12px',color:'#605d5d'}},wk.blockNote)
+                h('div',{style:{display:'flex',alignItems:'baseline',gap:'14px'}},
+                  wk.objective&&h('span',{style:{fontSize:'12px',fontWeight:'700',color:'#ec3013'}},wk.objective),
+                  h('span',{style:{fontSize:'12px',color:'#605d5d'}},wk.blockNote)
+                )
               ),
               h('div',{style:{display:'grid',gridTemplateColumns:'calc(100% / 4) minmax(0, 1fr)'}},
                 h('div',{style:{minWidth:0,padding:'16px 14px 20px',borderRight:'1px solid #d7d3d3'}},
@@ -3696,6 +3728,30 @@ function App() {
             h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},'Plan & coach IA')
           )
         ),
+        // ── Grande barre : objectif visé ────────────────────────────────────
+        (()=>{
+          const wsMs=weekStart(new Date()).getTime();
+          const seDone=data.filter(a=>!a.planned&&a.date.getTime()>=wsMs&&a.date.getTime()<=Date.now()&&a.sport!=='Repos').length;
+          const seTarget=coachPlan&&coachPlan.targets&&coachPlan.targets.nbSeances!=null
+            ? coachPlan.targets.nbSeances
+            : (coachPlan?coachPlan.sessions.filter(s=>{const t=new Date(s.date+'T12:00:00').getTime();return t>=wsMs&&t<wsMs+7*86400000&&s.sport&&s.sport!=='Repos';}).length:null);
+          const tiles=[
+            {label:'Objectif visé',value:race.type,unit:'',note:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'})+(daysToRace!=null?' · J−'+daysToRace:''):'date à renseigner'},
+            {label:'Temps estimé',value:projDisplay,unit:'',note:projResult?projMethodLabel:'—'},
+            {label:'Séances cette semaine',value:seTarget!=null?seDone+' / '+seTarget:String(seDone),unit:'',note:seTarget!=null?'réalisées / visées':'aucun programme'},
+            {label:'Semaines avant course',value:raceDateObj?String(weeksLeft):'—',unit:raceDateObj?'sem.':'',note:''},
+          ];
+          return h('section',{style:{display:'flex',flexWrap:'wrap',gap:'20px 44px',padding:'18px 32px',borderBottom:'2px solid #201e1d'}},
+            tiles.map((k,i)=>h('div',{key:i,style:{display:'flex',flexDirection:'column',gap:'6px',minWidth:0}},
+              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},k.label),
+              h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px'}},
+                h('span',{style:{fontSize:String(k.value).length>16?'16px':'20px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.05'}},k.value),
+                k.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},k.unit)
+              ),
+              k.note&&h('span',{style:{fontSize:'12px',color:'#605d5d'}},k.note)
+            ))
+          );
+        })(),
         h('section',{style:{padding:'32px'}},
           // ── Pas encore de programme : gros bouton / progression ───────────
           !coachPlan&&h('div',{style:{maxWidth:'620px'}},
