@@ -2792,11 +2792,9 @@ function App() {
   const projRefClick = projResult && projResult.refId != null ? () => openActivity(projResult.refId) : null;
 
   // ── Coach : état ────────────────────────────────────────────────────────────
-  const COACH_LIMIT = 10;
-  // La conversation avec le coach n'est pas enregistrée : repart vide à chaque visite.
-  const [coachChat, setCoachChat] = useState([]);
-  const [coachInput, setCoachInput] = useState('');
+  const COACH_LIMIT = 100;
   const [coachBusy, setCoachBusy] = useState(false);
+  const [coachPhase, setCoachPhase] = useState(0); // 0 idle · 1 analyse · 2 création du programme
   const [coachErr, setCoachErr] = useState('');
   const [coachQuota, setCoachQuota] = useState(null);
   const [coachPlan, setCoachPlan] = useState(() => {
@@ -2867,24 +2865,23 @@ function App() {
     };
   }
 
-  // Un seul point d'entrée : `visibleUser` = ce qui s'affiche à droite, `sent` = ce qu'on envoie au modèle.
-  async function coachAsk(sent, visibleUser) {
+  async function coachFullAnalysis() {
     if (coachBusy) return;
-    if (coachLeft <= 0) { setCoachErr('Limite quotidienne atteinte (' + COACH_LIMIT + ' échanges par jour).'); return; }
+    if (coachLeft <= 0) { setCoachErr('Limite quotidienne atteinte (' + COACH_LIMIT + ' analyses par jour).'); return; }
+    if (!data.length) { setCoachErr('Importe d\'abord tes activités Strava.'); return; }
     setCoachErr('');
-    const history = coachChat.map(m => ({ role: m.role, content: m.text }));
-    const nextChat = visibleUser ? [...coachChat, { role: 'user', text: visibleUser }] : coachChat;
-    if (visibleUser) setCoachChat(nextChat);
     setCoachBusy(true);
+    setCoachPhase(1);
+    const toProg = setTimeout(() => setCoachPhase(2), 6000);
     try { const q = coachLocalQuota(); q.count++; localStorage.setItem('bs_coach_lq', JSON.stringify(q)); } catch (e) {}
     try {
       const r = await fetch('/api/coach', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           profileId: coachProfileId(),
-          messages: [...history, { role: 'user', content: sent }],
+          messages: [{ role: 'user', content: 'Analyse mon profil (forme, fatigue, objectif, historique récent) et crée un programme d\'entraînement complet pour la semaine en cours. Fournis le champ "plan" avec toutes les séances.' }],
           context: buildCoachContext(),
-          plan: coachPlan,
+          plan: null,
         }),
       });
       const raw = await r.text();
@@ -2893,11 +2890,10 @@ function App() {
         setCoachErr(r.status === 504
           ? 'Le coach a mis trop de temps à répondre (Gemini surchargé). Réessaie dans un instant.'
           : 'Réponse serveur invalide (' + r.status + ').');
-        setCoachBusy(false); return;
+        clearTimeout(toProg); setCoachPhase(0); setCoachBusy(false); return;
       }
       if (j.quota) setCoachQuota(j.quota);
-      if (!r.ok) { setCoachErr(j.error || 'Erreur serveur (' + r.status + ')'); setCoachBusy(false); return; }
-      if (j.reply) setCoachChat(c => [...c, { role: 'coach', text: j.reply }]);
+      if (!r.ok) { setCoachErr(j.error || 'Erreur serveur (' + r.status + ')'); clearTimeout(toProg); setCoachPhase(0); setCoachBusy(false); return; }
       if (j.plan && Array.isArray(j.plan.sessions) && j.plan.sessions.length) {
         setCoachPlan({
           source: 'llm',
@@ -2907,24 +2903,15 @@ function App() {
           summary: j.reply || '',
           sessions: j.plan.sessions,
         });
+      } else {
+        setCoachErr('Le coach n\'a pas renvoyé de programme. Réessaie.');
       }
     } catch (e) {
       setCoachErr('Réseau indisponible : ' + e.message);
     }
+    clearTimeout(toProg);
+    setCoachPhase(0);
     setCoachBusy(false);
-  }
-
-  function coachSend() {
-    const text = coachInput.trim();
-    if (!text) return;
-    setCoachInput('');
-    coachAsk(text, text);
-  }
-  function coachFullAnalysis() {
-    coachAsk(
-      'Analyse mon profil (forme, fatigue, objectif, historique récent) et propose-moi un programme d\'entraînement complet pour la semaine en cours. Fournis le champ "plan" avec toutes les séances. Termine ta réponse par une phrase m\'invitant à te demander des ajustements.',
-      'Analyse complète et programme de la semaine'
-    );
   }
 
   // Analyse + programme automatiques dès que les activités sont importées (une fois).
@@ -3516,20 +3503,40 @@ function App() {
             h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},'Plan & coach IA')
           )
         ),
-        // Analyse & programme
-        h('section',{style:{padding:'22px 32px',borderBottom:'2px solid #201e1d'}},
-          h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'10px'}},
-            h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Analyse & programme de la semaine'),
-            coachPlan&&coachPlan.generatedAt&&h('span',{style:{fontSize:'11px',color:'#605d5d'}},'maj '+new Date(coachPlan.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})),
-            h('span',{style:{marginLeft:'auto',display:'flex',gap:'8px'}},
-              h('button',{type:'button',onClick:coachFullAnalysis,disabled:coachBusy||coachLeft<=0||!data.length,style:{padding:'6px 12px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0||!data.length)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0||!data.length)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||coachLeft<=0||!data.length)?'not-allowed':'pointer'}},coachPlan?'Nouvelle analyse':'Lancer l’analyse'),
-              coachPlan&&h('button',{type:'button',onClick:()=>{if(confirm('Effacer le programme ?'))setCoachPlan(null);},style:{padding:'6px 12px',border:'2px solid #bab6b6',background:'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Effacer')
-            )
+        h('section',{style:{padding:'32px'}},
+          // ── Pas encore de programme : gros bouton / progression ───────────
+          !coachPlan&&h('div',{style:{maxWidth:'620px'}},
+            coachBusy
+              ? h('div',null,
+                  h('h2',{style:{margin:'0 0 20px',fontSize:'18px',fontWeight:'800',letterSpacing:'-0.01em'}},'Ton coach travaille…'),
+                  [[1,'Analyse de ta forme, ta fatigue et ton historique'],[2,'Création de ton programme de la semaine']].map(([n,lab])=>
+                    h('div',{key:n,style:{display:'flex',alignItems:'center',gap:'12px',padding:'12px 0',borderTop:n>1?'1px solid #d7d3d3':'none'}},
+                      h('span',{style:{flex:'0 0 22px',height:'22px',borderRadius:'50%',border:'2px solid '+(coachPhase>n?'#ec3013':coachPhase===n?'#ec3013':'#d7d3d3'),background:coachPhase>n?'#ec3013':'transparent',color:'#fff',fontSize:'12px',fontWeight:'800',display:'flex',alignItems:'center',justifyContent:'center'}},coachPhase>n?'✓':''),
+                      h('span',{style:{fontSize:'14px',fontWeight:coachPhase===n?'800':'600',color:coachPhase>=n?'#201e1d':'#bab6b6'}},lab+(coachPhase===n?' …':''))
+                    )
+                  )
+                )
+              : h('div',null,
+                  h('p',{style:{margin:'0 0 20px',fontSize:'14px',lineHeight:'1.5',color:'#605d5d'}},
+                    data.length
+                      ? 'Le coach va analyser ta forme, ta fatigue et ton objectif, puis créer ton programme de la semaine.'
+                      : 'Importe tes activités Strava, puis lance l’analyse.'),
+                  h('button',{type:'button',onClick:coachFullAnalysis,disabled:coachLeft<=0||!data.length,style:{width:'100%',padding:'22px',border:'2px solid #ec3013',background:(coachLeft<=0||!data.length)?'#f3f2f2':'#ec3013',color:(coachLeft<=0||!data.length)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'16px',fontWeight:'800',letterSpacing:'0.04em',textTransform:'uppercase',cursor:(coachLeft<=0||!data.length)?'not-allowed':'pointer'}},'Analyser & créer mon programme'),
+                  coachErr&&h('p',{style:{margin:'12px 0 0',fontSize:'12px',color:'#ec3013'}},coachErr)
+                )
           ),
-          !coachPlan&&coachBusy&&h('p',{style:{margin:0,fontSize:'13px',color:'#605d5d'}},'Le coach analyse tes données et prépare ton programme…'),
-          !coachPlan&&!coachBusy&&h('p',{style:{margin:0,fontSize:'13px',color:'#605d5d'}},data.length?'Clique sur « Lancer l’analyse » pour obtenir ton programme.':'Importe tes activités Strava : le coach lancera l’analyse automatiquement.'),
-          coachPlan&&coachPlan.summary&&h('p',{style:{margin:'0 0 14px',fontSize:'13px',lineHeight:'1.5',color:'#201e1d',whiteSpace:'pre-wrap'}},coachPlan.summary),
+          // ── Programme défini ─────────────────────────────────────────────
           coachPlan&&h('div',null,
+            h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'12px'}},
+              h('h2',{style:{margin:0,fontSize:'18px',fontWeight:'800',letterSpacing:'-0.01em'}},'Ton programme de la semaine'),
+              coachPlan.generatedAt&&h('span',{style:{fontSize:'11px',color:'#605d5d'}},'créé le '+new Date(coachPlan.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})),
+              h('span',{style:{marginLeft:'auto',display:'flex',gap:'8px'}},
+                h('button',{type:'button',onClick:coachFullAnalysis,disabled:coachBusy||coachLeft<=0,style:{padding:'6px 12px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||coachLeft<=0)?'not-allowed':'pointer'}},coachBusy?'…':'Nouvelle analyse'),
+                h('button',{type:'button',onClick:()=>{if(confirm('Effacer le programme ?'))setCoachPlan(null);},style:{padding:'6px 12px',border:'2px solid #bab6b6',background:'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Effacer')
+              )
+            ),
+            coachErr&&h('p',{style:{margin:'0 0 12px',fontSize:'12px',color:'#ec3013'}},coachErr),
+            coachPlan.summary&&h('p',{style:{margin:'0 0 16px',fontSize:'13px',lineHeight:'1.5',color:'#201e1d',whiteSpace:'pre-wrap'}},coachPlan.summary),
             coachPlan.sessions.slice().sort((a,b)=>a.date<b.date?-1:1).map((s,si)=>
               h('div',{key:si,style:{display:'grid',gridTemplateColumns:'118px 1fr',gap:'14px',padding:'10px 0',borderTop:si?'1px solid #d7d3d3':'none'}},
                 h('div',null,
@@ -3541,25 +3548,9 @@ function App() {
                   s.description&&h('span',{style:{display:'block',fontSize:'12px',color:'#3d3a3a',marginTop:'2px',lineHeight:'1.45'}},s.description)
                 )
               )
-            )
-          ),
-          coachPlan&&h('p',{style:{margin:'12px 0 0',fontSize:'11px',color:'#605d5d'}},'Ces séances apparaissent en gris pointillé sur le calendrier du Programme.')
-        ),
-        // Adapter le programme
-        h('section',{style:{padding:'20px 32px 36px'}},
-          h('h2',{style:{margin:'0 0 10px',fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Adapter le programme'),
-          h('div',{style:{border:'2px solid #201e1d',background:'#fff',padding:'14px',display:'flex',flexDirection:'column',gap:'10px',maxHeight:'420px',overflowY:'auto'}},
-            coachChat.length
-              ? coachChat.map((m,mi)=>h('div',{key:mi,style:{alignSelf:m.role==='user'?'flex-end':'flex-start',maxWidth:'82%',padding:'8px 12px',fontSize:'13px',lineHeight:'1.45',whiteSpace:'pre-wrap',background:m.role==='user'?'#ffe0d9':'#f3f2f2',color:'#201e1d'}},m.text))
-              : h('span',{style:{fontSize:'12px',color:'#605d5d'}},'Dis au coach ce qui change : « je pars 3 jours sans courir », « allège, je suis fatigué », « décale la séance de seuil à jeudi », « ajoute une séance de natation »…'),
-            coachBusy&&h('span',{style:{fontSize:'12px',color:'#605d5d'}},'Le coach réfléchit…')
-          ),
-          coachErr&&h('p',{style:{margin:'8px 0 0',fontSize:'12px',color:'#ec3013'}},coachErr),
-          h('div',{style:{display:'flex',gap:'8px',marginTop:'10px'}},
-            h('textarea',{value:coachInput,disabled:!coachPlan,onChange:e=>setCoachInput(e.target.value),onKeyDown:e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();coachSend();}},rows:2,placeholder:coachPlan?'Demande un ajustement au programme…':'Le programme n’est pas encore prêt.',style:{flex:1,padding:'10px 12px',border:'2px solid #201e1d',background:coachPlan?'#fff':'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',resize:'vertical'}}),
-            h('button',{type:'button',onClick:coachSend,disabled:coachBusy||!coachInput.trim()||coachLeft<=0||!coachPlan,style:{padding:'0 18px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0||!coachPlan)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0||!coachPlan)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||!coachInput.trim()||coachLeft<=0||!coachPlan)?'not-allowed':'pointer'}},'Envoyer')
-          ),
-          h('p',{style:{margin:'8px 0 0',fontSize:'11px',color:'#605d5d'}},'Prompts restants aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'. Ton programme est conservé sur cet appareil ; la conversation n’est pas enregistrée.')
+            ),
+            h('p',{style:{margin:'14px 0 0',fontSize:'11px',color:'#605d5d'}},'Ces séances apparaissent en gris pointillé sur le calendrier du Programme. Analyses restantes aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'.')
+          )
         )
       ),
 

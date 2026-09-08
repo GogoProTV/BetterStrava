@@ -17,13 +17,13 @@ L'onglet **Coach** fonctionne en deux temps :
 | Variable | Requis | Rôle |
 |---|---|---|
 | `GEMINI_API_KEY` | oui | Clé [Google AI Studio](https://aistudio.google.com/apikey) — tier gratuit, sans carte |
-| `COACH_DAILY_LIMIT` | non | Nombre d'échanges/jour par profil (défaut : 10) |
+| `COACH_DAILY_LIMIT` | non | Nombre d'analyses/jour par profil (défaut : 100) |
 | `KV_REST_API_URL` + `KV_REST_API_TOKEN` | non | Vercel KV — quota réellement imposé côté serveur |
 | `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` | non | alternative à Vercel KV |
 
 Sans store KV, la limite retombe sur un compteur en mémoire (remis à zéro à
 chaque démarrage à froid) doublé d'un compteur `localStorage` côté navigateur.
-Pour une limite stricte de 10 prompts/jour/profil, ajouter un store **Vercel KV**
+Pour une limite stricte par jour et par profil, ajouter un store **Vercel KV**
 (onglet Storage du projet) : les variables `KV_REST_API_*` sont injectées
 automatiquement.
 

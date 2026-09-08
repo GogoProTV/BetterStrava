@@ -11,7 +11,7 @@
 // Surchargeable via GEMINI_MODELS="modele1,modele2".
 const MODELS = (process.env.GEMINI_MODELS || 'gemini-3.6-flash,gemini-flash-latest,gemini-3.5-flash-lite,gemini-flash-lite-latest')
   .split(',').map(s => s.trim()).filter(Boolean);
-const LIMIT = Number(process.env.COACH_DAILY_LIMIT) || 10;
+const LIMIT = Number(process.env.COACH_DAILY_LIMIT) || 100;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
