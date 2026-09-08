@@ -6,7 +6,7 @@
 //   UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN (Upstash)     / imposé si présent
 // Sans KV configuré, le quota retombe sur un compteur en mémoire (best effort).
 
-const MODEL = 'gemini-2.0-flash';
+const MODEL = 'gemini-3.6-flash';
 const LIMIT = Number(process.env.COACH_DAILY_LIMIT) || 10;
 
 const KV_URL   = process.env.KV_REST_API_URL   || process.env.UPSTASH_REDIS_REST_URL   || null;

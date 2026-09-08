@@ -2793,10 +2793,8 @@ function App() {
 
   // ── Coach : état ────────────────────────────────────────────────────────────
   const COACH_LIMIT = 10;
-  const [coachChat, setCoachChat] = useState(() => {
-    try { const s = localStorage.getItem('bs_coach_chat'); if (s) return JSON.parse(s); } catch (e) {}
-    return [];
-  });
+  // La conversation avec le coach n'est pas enregistrée : repart vide à chaque visite.
+  const [coachChat, setCoachChat] = useState([]);
   const [coachInput, setCoachInput] = useState('');
   const [coachBusy, setCoachBusy] = useState(false);
   const [coachErr, setCoachErr] = useState('');
@@ -2809,7 +2807,7 @@ function App() {
     try { const s = localStorage.getItem('bs_coach_avail'); if (s) return { days: 4, minutes: 75, longDay: 6, ...JSON.parse(s) }; } catch (e) {}
     return { days: 4, minutes: 75, longDay: 6 };
   });
-  useEffect(() => { try { localStorage.setItem('bs_coach_chat', JSON.stringify(coachChat.slice(-40))); } catch (e) {} }, [coachChat]);
+  useEffect(() => { try { localStorage.removeItem('bs_coach_chat'); } catch (e) {} }, []);
   useEffect(() => { try { localStorage.setItem('bs_coach_plan', coachPlan ? JSON.stringify(coachPlan) : ''); } catch (e) {} }, [coachPlan]);
   useEffect(() => { try { localStorage.setItem('bs_coach_avail', JSON.stringify(coachAvail)); } catch (e) {} }, [coachAvail]);
 
@@ -3551,7 +3549,7 @@ function App() {
             h('textarea',{value:coachInput,onChange:e=>setCoachInput(e.target.value),onKeyDown:e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();coachSend();}},rows:2,placeholder:'Écris au coach…',style:{flex:1,padding:'10px 12px',border:'2px solid #201e1d',background:'#fff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',resize:'vertical'}}),
             h('button',{type:'button',onClick:coachSend,disabled:coachBusy||!coachInput.trim()||coachLeft<=0,style:{padding:'0 18px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||!coachInput.trim()||coachLeft<=0)?'not-allowed':'pointer'}},'Envoyer')
           ),
-          h('p',{style:{margin:'8px 0 0',fontSize:'11px',color:'#605d5d'}},'Prompts restants aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'. Ton plan et cette conversation sont conservés sur cet appareil.')
+          h('p',{style:{margin:'8px 0 0',fontSize:'11px',color:'#605d5d'}},'Prompts restants aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'. Ton plan est conservé sur cet appareil ; la conversation n’est pas enregistrée.')
         )
       ),
 
