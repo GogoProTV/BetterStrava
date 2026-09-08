@@ -2877,65 +2877,6 @@ function App() {
     };
   }
 
-  // ── Coach : planificateur déterministe ────────────────────────────────────
-  function planWeek() {
-    if (!pmcToday) return null;
-    const ws = weekStart(new Date());
-    const wsMs = ws.getTime();
-    const tsb = pmcToday.tsb;
-    const wl = race.date ? weeksLeft : null;
-    const spRaw = coachPrimarySport();
-    const sport = spRaw === 'Triathlon' || spRaw === 'Natation' ? 'Course' : spRaw;
-    let phase = 'Entretien';
-    if (wl != null) {
-      if (wl <= 1) phase = 'Affûtage';
-      else if (wl <= 4) phase = 'Spécifique';
-      else if (wl <= 12) phase = 'Développement';
-      else phase = 'Base';
-    }
-    const highFatigue = tsb <= -20;
-    const nDays = Math.max(2, Math.min(7, Number(coachAvail.days) || 4));
-    const base = Math.max(30, Number(coachAvail.minutes) || 60);
-    const longDay = Math.max(0, Math.min(6, Number(coachAvail.longDay)));
-    const order = [longDay, 2, 4, 0, 6, 3, 1].filter((d, i, arr) => arr.indexOf(d) === i);
-    const dayIdx = order.slice(0, nDays).sort((a, b) => a - b);
-    const qualityByPhase = {
-      'Base': { title: 'Côtes', desc: 'Échauffement 15 min. 8 × 1 min en côte à allure soutenue, récup en trottinant à la descente. Retour au calme 10 min.' },
-      'Développement': { title: 'Seuil', desc: 'Échauffement 15 min. 3 × 8 min à allure seuil (environ allure semi-marathon), récup 2 min. Retour au calme 10 min.' },
-      'Spécifique': { title: 'Allure course', desc: 'Échauffement 15 min. 5 × 6 min à l’allure objectif de course, récup 90 s. Retour au calme 10 min.' },
-      'Affûtage': { title: 'Rappels courts', desc: 'Échauffement 15 min. 5 × 1 min à allure 10 km, récup 2 min. Retour au calme 10 min.' },
-      'Entretien': { title: 'Fractionné', desc: 'Échauffement 15 min. 8 × 400 m rapides, récup 1 min. Retour au calme 10 min.' },
-    };
-    const q = qualityByPhase[phase];
-    const longMin = Math.round((highFatigue ? 0.75 : 1) * Math.min(base * 2.3, phase === 'Affûtage' ? base * 1.4 : base * 2.4));
-    const sessions = dayIdx.map((di, i) => {
-      const date = isoLocal(new Date(wsMs + di * 86400000));
-      let s;
-      if (di === longDay) {
-        s = { sport, title: 'Sortie longue', durationMin: longMin, description: 'Endurance fondamentale, allure conversationnelle (65–75 % FCmax). Relief proche de celui de la course si possible.' };
-      } else if (!highFatigue && (i === 1 || (nDays >= 5 && i === 3))) {
-        s = { sport, title: q.title, durationMin: base, description: q.desc };
-      } else if (highFatigue && i === 0) {
-        s = { sport, title: 'Récupération', durationMin: Math.round(base * 0.6), description: 'Footing très lent ou repos actif — la Forme (TSB) est basse, priorité à la récupération.' };
-      } else {
-        s = { sport, title: 'Endurance', durationMin: Math.round(base * 0.9), description: 'Footing en endurance fondamentale, environ 70 % FCmax, aisance respiratoire complète.' };
-      }
-      s.date = date;
-      const f = s.title === 'Sortie longue' ? 1.05 : s.title === 'Récupération' ? 0.7 : s.title === q.title ? 1.35 : 0.95;
-      s.load = Math.round(s.durationMin * f);
-      return s;
-    });
-    const weekTSS = sessions.reduce((a, b) => a + (b.load || 0), 0);
-    const note = phase === 'Affûtage' ? 'réduction de charge (affûtage)' : highFatigue ? 'charge allégée (fatigue élevée)' : 'progression contrôlée';
-    return {
-      source: 'deterministic',
-      weekStartISO: isoLocal(ws),
-      generatedAt: new Date().toISOString(),
-      rationale: 'Phase : ' + phase + '. ' + (highFatigue ? 'Forme (TSB ' + tsb + ') basse → ' : '') + note + '. ≈ ' + weekTSS + ' TSS sur ' + nDays + ' séances.',
-      sessions,
-    };
-  }
-
   async function coachSend() {
     const text = coachInput.trim();
     if (!text || coachBusy) return;
@@ -3554,7 +3495,7 @@ function App() {
             h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},'Plan & coach IA')
           )
         ),
-        // Disponibilité + génération
+        // Disponibilité (contexte transmis au coach)
         h('section',{style:{display:'flex',flexWrap:'wrap',alignItems:'flex-end',gap:'18px 28px',padding:'18px 32px',borderBottom:'2px solid #201e1d'}},
           [['Jours / semaine','days',2,7,1],['Minutes / séance','minutes',20,240,5]].map(([lab,k,mn,mx,st])=>
             h('div',{key:k,style:{display:'flex',flexDirection:'column',gap:'6px'}},
@@ -3568,16 +3509,18 @@ function App() {
               ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'].map((d,i)=>h('option',{key:i,value:i},d))
             )
           ),
-          h('button',{type:'button',onClick:()=>{const p=planWeek();if(p)setCoachPlan(p);else setCoachErr('Charge tes activités Strava pour générer un plan.');},style:{padding:'10px 18px',border:'2px solid #ec3013',background:'#ec3013',color:'#fff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},coachPlan?'Régénérer (déterministe)':'Générer le plan')
+          h('span',{style:{fontSize:'11px',color:'#605d5d',maxWidth:'32ch',lineHeight:'1.4'}},'Ces infos sont transmises au coach. Demande-lui un plan dans le chat ci-dessous.')
         ),
         // Plan de la semaine
         h('section',{style:{padding:'20px 32px',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'8px'}},
             h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Semaine en cours'),
-            coachPlan&&h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:coachPlan.source==='llm'?'#7c4dbc':'#605d5d'}},coachPlan.source==='llm'?'Ajusté par le coach IA':'Plan déterministe')
+            coachPlan&&h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:'#7c4dbc'}},'Plan du coach'),
+            coachPlan&&coachPlan.generatedAt&&h('span',{style:{fontSize:'11px',color:'#605d5d'}},'maj '+new Date(coachPlan.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})),
+            coachPlan&&h('button',{type:'button',onClick:()=>{if(confirm('Effacer le plan en cours ?'))setCoachPlan(null);},style:{marginLeft:'auto',padding:'4px 10px',border:'2px solid #bab6b6',background:'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Effacer')
           ),
-          !coachPlan&&h('p',{style:{margin:0,fontSize:'13px',color:'#605d5d'}},pmcToday?'Aucun plan. Renseigne ta disponibilité puis « Générer le plan ».':'Charge tes activités Strava pour générer un plan.'),
-          coachPlan&&h('p',{style:{margin:'0 0 12px',fontSize:'12px',color:'#605d5d'}},coachPlan.rationale),
+          !coachPlan&&h('p',{style:{margin:0,fontSize:'13px',color:'#605d5d'}},'Aucun plan enregistré. Demande-en un au coach dans le chat — il sera conservé jusqu’à ce que tu en demandes un nouveau.'),
+          coachPlan&&coachPlan.rationale&&h('p',{style:{margin:'0 0 12px',fontSize:'12px',color:'#605d5d'}},coachPlan.rationale),
           coachPlan&&h('div',null,
             coachPlan.sessions.slice().sort((a,b)=>a.date<b.date?-1:1).map((s,si)=>
               h('div',{key:si,style:{display:'grid',gridTemplateColumns:'110px 1fr',gap:'14px',padding:'10px 0',borderTop:si?'1px solid #d7d3d3':'none'}},
@@ -3600,7 +3543,7 @@ function App() {
           h('div',{style:{border:'2px solid #201e1d',background:'#fff',padding:'14px',display:'flex',flexDirection:'column',gap:'10px',maxHeight:'420px',overflowY:'auto'}},
             coachChat.length
               ? coachChat.map((m,mi)=>h('div',{key:mi,style:{alignSelf:m.role==='user'?'flex-end':'flex-start',maxWidth:'82%',padding:'8px 12px',fontSize:'13px',lineHeight:'1.45',whiteSpace:'pre-wrap',background:m.role==='user'?'#ffe0d9':'#f3f2f2',color:'#201e1d'}},m.text))
-              : h('span',{style:{fontSize:'12px',color:'#605d5d'}},'Exemples : « je suis fatigué cette semaine, allège », « je pars 3 jours sans courir, adapte le plan », « pourquoi une séance de seuil ? »'),
+              : h('span',{style:{fontSize:'12px',color:'#605d5d'}},'Exemples : « fais-moi le plan de la semaine », « je suis fatigué, allège », « je pars 3 jours sans courir, adapte le plan », « pourquoi une séance de seuil ? »'),
             coachBusy&&h('span',{style:{fontSize:'12px',color:'#605d5d'}},'Le coach réfléchit…')
           ),
           coachErr&&h('p',{style:{margin:'8px 0 0',fontSize:'12px',color:'#ec3013'}},coachErr),
@@ -3608,7 +3551,7 @@ function App() {
             h('textarea',{value:coachInput,onChange:e=>setCoachInput(e.target.value),onKeyDown:e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();coachSend();}},rows:2,placeholder:'Écris au coach…',style:{flex:1,padding:'10px 12px',border:'2px solid #201e1d',background:'#fff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',resize:'vertical'}}),
             h('button',{type:'button',onClick:coachSend,disabled:coachBusy||!coachInput.trim()||coachLeft<=0,style:{padding:'0 18px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||!coachInput.trim()||coachLeft<=0)?'not-allowed':'pointer'}},'Envoyer')
           ),
-          h('p',{style:{margin:'8px 0 0',fontSize:'11px',color:'#605d5d'}},'Prompts restants aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'. Le coach IA peut écraser le plan déterministe.')
+          h('p',{style:{margin:'8px 0 0',fontSize:'11px',color:'#605d5d'}},'Prompts restants aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'. Ton plan et cette conversation sont conservés sur cet appareil.')
         )
       ),
 
