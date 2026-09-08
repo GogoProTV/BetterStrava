@@ -24,7 +24,7 @@ async function fetchT(url, opts, ms) {
 }
 
 async function callGemini(key, payload) {
-  const deadline = Date.now() + 45000;
+  const deadline = Date.now() + 55000;
   let lastErr = 'inconnu';
   for (const model of MODELS) {
     if (Date.now() > deadline) break;
@@ -34,7 +34,7 @@ async function callGemini(key, payload) {
         r = await fetchT(
           'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key),
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
-          Math.min(20000, Math.max(3000, deadline - Date.now()))
+          Math.min(32000, Math.max(3000, deadline - Date.now()))
         );
       } catch (e) {
         lastErr = e.name === 'AbortError' ? 'délai dépassé (' + model + ')' : e.message;
@@ -75,28 +75,37 @@ SÉCURITÉ :
 
 RÉPONSE — tu réponds STRICTEMENT avec un objet JSON valide et COMPLET de la forme :
 {
-  "reply": "analyse + explication en français, en texte lisible (paragraphes courts ou puces). C'est le SEUL texte que verra l'athlète : mets-y ton analyse de la forme/fatigue/objectif et un résumé du programme. N'y mets jamais de JSON.",
+  "reply": "analyse + explication en français, texte lisible (paragraphes courts ou puces). SEUL texte vu par l'athlète : analyse forme/fatigue/objectif + résumé du programme + ce qui a été fait cette semaine. JAMAIS de JSON ici.",
   "plan": null
     | {
-        "rationale": "1 phrase sur la logique de la semaine",
+        "rationale": "1 phrase sur la logique du bloc",
+        "targets": { "kmSemaine": 42, "heuresSemaine": 5.5, "nbSeances": 5 },
         "sessions": [
           {
             "date": "YYYY-MM-DD",
             "sport": "Course" | "Trail" | "Vélo" | "Natation" | "Repos",
             "title": "nom court",
+            "focus": "ce qui est travaillé (ex: Seuil lactique, Endurance / économie de course, PMA, Récupération)",
             "durationMin": 60,
-            "description": "échauffement + corps de séance + allures/zones cibles, 2 phrases maximum",
-            "load": 55
+            "distanceKm": 10,
+            "load": 55,
+            "description": "échauffement + corps de séance + allures/zones/watts cibles, 2 phrases max",
+            "done": false
           }
         ]
       }
 }
-- Si l'athlète demande une analyse, un programme, ou un ajustement du programme → fournis TOUJOURS "plan"
-  avec TOUTES les séances de la semaine en cours (à partir de "semaineDebut", 7 jours max).
-- "plan" REMPLACE intégralement la semaine.
-- Si l'athlète pose juste une question sans toucher au programme → "plan" à null.
-- Reste CONCIS : descriptions de 2 phrases max, pas de blabla, pour que la réponse tienne en entier.
-- Déduis la disponibilité (nombre de jours, durée) de l'historique récent et de la charge moyenne du CONTEXTE.`;
+- Quand l'athlète demande une analyse / un programme / un ajustement → fournis TOUJOURS "plan".
+- Le "plan" couvre DEUX semaines : la semaine en cours (à partir de "semaineDebut") ET la semaine suivante
+  (à partir de "semaineSuivanteDebut"). "targets" concerne la semaine en cours.
+- ADAPTATION : recopie les séances de "seancesDejaRealiseesCetteSemaine" à leur date avec "done": true
+  (title reflétant ce qui a réellement été fait, ex "Seuil 3×10 min réalisé"). Puis adapte SEULEMENT les
+  jours restants de la semaine en cours en fonction de ces séances réalisées (charge déjà encaissée,
+  qualité déjà faite ou non, fatigue). Ne re-planifie pas le passé.
+- Utilise les intervalles réellement détectés (champ "intervallesDetectes") pour décrire ce qui a été fait.
+- "plan" REMPLACE intégralement les deux semaines.
+- Si l'athlète pose une simple question sans toucher au programme → "plan" à null.
+- CONCIS : descriptions 2 phrases max. Déduis la disponibilité de l'historique et de la charge moyenne.`;
 
 async function kvIncr(key) {
   const r = await fetch(KV_URL + '/pipeline', {
@@ -167,7 +176,7 @@ module.exports = async function handler(req, res) {
     const out = await callGemini(key, {
       systemInstruction: { parts: [{ text: SYSTEM }] },
       contents,
-      generationConfig: { temperature: 0.6, maxOutputTokens: 4096, responseMimeType: 'application/json' },
+      generationConfig: { temperature: 0.6, maxOutputTokens: 8192, responseMimeType: 'application/json' },
     });
     if (out.error) {
       return res.status(502).json({ error: 'Gemini : ' + out.error, quota });
@@ -189,15 +198,24 @@ module.exports = async function handler(req, res) {
     if (parsed && typeof parsed === 'object') {
       reply = typeof parsed.reply === 'string' ? parsed.reply : '';
       if (parsed.plan && Array.isArray(parsed.plan.sessions)) {
+        const tg = parsed.plan.targets && typeof parsed.plan.targets === 'object' ? parsed.plan.targets : null;
         plan = {
           rationale: String(parsed.plan.rationale || ''),
-          sessions: parsed.plan.sessions.slice(0, 7).map(s => ({
+          targets: tg ? {
+            kmSemaine: tg.kmSemaine == null ? null : Math.round(Number(tg.kmSemaine) || 0),
+            heuresSemaine: tg.heuresSemaine == null ? null : Math.round((Number(tg.heuresSemaine) || 0) * 10) / 10,
+            nbSeances: tg.nbSeances == null ? null : Math.round(Number(tg.nbSeances) || 0),
+          } : null,
+          sessions: parsed.plan.sessions.slice(0, 16).map(s => ({
             date: String(s.date || '').slice(0, 10),
             sport: String(s.sport || 'Course'),
             title: String(s.title || 'Séance'),
+            focus: s.focus ? String(s.focus).slice(0, 120) : '',
             durationMin: Math.max(0, Math.round(Number(s.durationMin) || 0)),
+            distanceKm: s.distanceKm == null ? null : Math.round((Number(s.distanceKm) || 0) * 10) / 10,
             description: String(s.description || ''),
             load: s.load == null ? null : Math.max(0, Math.round(Number(s.load) || 0)),
+            done: s.done === true,
           })).filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s.date)),
         };
       }

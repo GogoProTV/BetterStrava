@@ -660,6 +660,77 @@ function activityEF(act, s) {
   return calcEF('Course', null, (act.dist * 1000) / (act.time * 60), hr);
 }
 
+// ── Répartition du temps par zone de FC (sur le stream seconde par seconde) ──
+function hrZoneBreakdown(hrArr, fcMax) {
+  const max = Number(fcMax) || 190;
+  const bounds = [0.6, 0.7, 0.8, 0.9, 1.2];
+  const labels = ['Z1 récup', 'Z2 endurance', 'Z3 tempo', 'Z4 seuil', 'Z5 VMA/PMA'];
+  if (!hrArr || !hrArr.length) return [];
+  const cnt = [0, 0, 0, 0, 0];
+  let tot = 0;
+  for (let i = 0; i < hrArr.length; i++) {
+    const v = hrArr[i];
+    if (!v || v < 40) continue;
+    const r = v / max;
+    let z = bounds.findIndex(b => r <= b);
+    if (z < 0) z = 4;
+    cnt[z]++; tot++;
+  }
+  if (!tot) return [];
+  return labels.map((label, i) => ({ label, pct: Math.round((cnt[i] / tot) * 100), min: Math.round(cnt[i] / 60) }));
+}
+
+// ── Détection des efforts / répétitions dans un stream (intervalles) ─────────
+// Repère les blocs nettement au-dessus de l'intensité de fond, puis les regroupe
+// par durée et intensité voisines → « 3 × ~10 min à … ».
+function detectEfforts(sport, s) {
+  const raw = sport === 'Vélo' ? (s && s.pow) : (s && s.vel);
+  const hr = s && s.hr;
+  if (!raw || raw.length < 360) return { efforts: [], groups: [] };
+  const N = raw.length;
+  const win = 15;
+  const sm = new Float64Array(N);
+  let acc = 0;
+  for (let i = 0; i < N; i++) {
+    acc += raw[i];
+    if (i >= win) acc -= raw[i - win];
+    sm[i] = acc / Math.min(i + 1, win);
+  }
+  const sorted = Array.from(sm).filter(v => v > 0).sort((a, b) => a - b);
+  if (!sorted.length) return { efforts: [], groups: [] };
+  const base = sorted[Math.floor(sorted.length * 0.45)] || 1;
+  const thr = base * (sport === 'Vélo' ? 1.18 : 1.12);
+  const efforts = [];
+  let start = -1;
+  for (let i = 0; i <= N; i++) {
+    const on = i < N && sm[i] >= thr;
+    if (on && start < 0) start = i;
+    if ((!on || i === N) && start >= 0) {
+      const dur = i - start;
+      if (dur >= 55) {
+        let sv = 0, sh = 0, ch = 0;
+        for (let k = start; k < i; k++) { sv += raw[k]; if (hr && hr[k] > 0) { sh += hr[k]; ch++; } }
+        efforts.push({ startMin: Math.round(start / 60), durMin: Math.round((dur / 60) * 10) / 10, value: sv / dur, hr: ch ? Math.round(sh / ch) : null });
+      }
+      start = -1;
+    }
+  }
+  const groups = [];
+  efforts.forEach(e => {
+    const g = groups.find(g => Math.abs(g.durMin - e.durMin) / g.durMin < 0.3 && Math.abs(g.value - e.value) / g.value < 0.1);
+    if (g) {
+      const n = g.n + 1;
+      g.durMin = Math.round(((g.durMin * g.n + e.durMin) / n) * 10) / 10;
+      g.value = (g.value * g.n + e.value) / n;
+      if (e.hr) g.hr = Math.round(((g.hr || e.hr) * g.n + e.hr) / n);
+      g.n = n;
+    } else {
+      groups.push({ n: 1, durMin: e.durMin, value: e.value, hr: e.hr });
+    }
+  });
+  return { efforts: efforts.slice(0, 16), groups };
+}
+
 // ── VO2max estimé — méthode sous-maximale allure + FC (façon Firstbeat/Garmin/Polar) ──
 // Principe : sur un effort aérobie sous-maximal et stable, le coût en oxygène de la
 // course (formule ACSM) et la fraction de réserve cardiaque utilisée (%FCR) sont
@@ -2664,12 +2735,18 @@ function App() {
     const n=view==='saison'?allWeeks:Math.min(allWeeks,view);
     const starts=[];
     for(let i=n-1;i>=0;i--) starts.push(new Date(thisWeek.getTime()-i*7*86400000));
+    // Semaines à venir (programme du coach) — visibles en scrollant vers le haut.
+    const futureN = coachPlan ? 2 : 0;
+    for(let i=1;i<=futureN;i++) starts.push(new Date(thisWeek.getTime()+i*7*86400000));
     const dows=['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
     const today=new Date(); today.setHours(0,0,0,0);
     const agg=s=>{ const end=s.getTime()+7*86400000; const list=data.filter(a=>a.date.getTime()>=s.getTime()&&a.date.getTime()<end&&!a.planned); return {list,min:sum(list,'time'),km:sum(list,'dist'),elev:sum(list,'elev'),n:list.length}; };
+    const plannedAgg=s=>{ const end=s.getTime()+7*86400000; const list=((coachPlan&&coachPlan.sessions)||[]).filter(p=>{const t=new Date(p.date+'T12:00:00').getTime();return t>=s.getTime()&&t<end&&p.sport&&p.sport!=='Repos';}); return {min:list.reduce((x,p)=>x+(p.durationMin||0),0),km:list.reduce((x,p)=>x+(p.distanceKm||0),0),n:list.length}; };
     return starts.map(s=>{
       const cur=agg(s); const prev=agg(new Date(s.getTime()-7*86400000));
       const isCurrent=s.getTime()===thisWeek.getTime();
+      const isFuture=s.getTime()>thisWeek.getTime();
+      const pAgg=isFuture?plannedAgg(s):null;
       const pct=(a,b)=>b>0?Math.round(((a-b)/b)*100):null;
       const mkStat=(label,value,pctv,prevVal)=>{const chip=deltaChip(pctv,true);return{label,value:value||'0',arrow:chip.arrow,arrowStyle:chip.arrowStyle,delta:chip.text,deltaStyle:chip.style,prevVal:prevVal||'0'};};
       const daysList=dows.map((dow,i)=>{
@@ -2701,10 +2778,11 @@ function App() {
         const isToday=d.toDateString()===today.toDateString();
         const dISO=isoLocal(d), todayISO=isoLocal(today);
         const planned=(coachPlan&&Array.isArray(coachPlan.sessions)&&dISO>=todayISO)
-          ? coachPlan.sessions.filter(p=>p.date===dISO&&p.sport&&p.sport!=='Repos').map(p=>({
+          ? coachPlan.sessions.filter(p=>p.date===dISO&&p.sport&&p.sport!=='Repos'&&!p.done).map(p=>({
               sport:({Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'})[p.sport]||p.sport,
               title:p.title||'Séance',
               time:p.durationMin?fmtDur(p.durationMin):'',
+              focus:p.focus||'',
             }))
           : [];
         return{dow,num:d.getDate(),sessions,planned,empty:sessions.length===0&&planned.length===0,numStyle:{fontSize:'12px',fontWeight:'800',...(isToday?{padding:'1px 6px',background:'#201e1d',color:'#ffffff'}:{color:'#201e1d'})},cellStyle:{minWidth:0,padding:'8px 6px 8px',borderRight:'1px solid #d7d3d3',borderLeft:i>0?'0':undefined}};
@@ -2712,13 +2790,16 @@ function App() {
       const wkDate=new Date(s); const wkEnd=new Date(s.getTime()+6*86400000);
       const span=wkDate.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})+' \u2013 '+wkEnd.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
       const wkNum=(()=>{const d=new Date(s);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-(d.getDay()+6)%7);const w=new Date(d.getFullYear(),0,4);return 1+Math.round(((d.getTime()-w.getTime())/86400000-3+(w.getDay()+6)%7)/7);})();
+      const futStat=(label,value)=>({label,value:value||'0',arrow:'',arrowStyle:{},delta:'visé',deltaStyle:{padding:'3px 8px',fontSize:'12px',fontWeight:'600',background:'#eae9e9',color:'#605d5d'},prevVal:'—'});
       return {
-        isCurrent,
-        rowStyle:{borderTop:isCurrent?'2px solid #ec3013':undefined,borderBottom:'2px solid #201e1d',borderLeft:isCurrent?'6px solid #ec3013':undefined,background:isCurrent?'#fdf1ee':undefined},
-        title:'Semaine '+wkNum,span,tag:isCurrent?'En cours':'',
-        tagStyle:{padding:'2px 8px',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',background:'#ec3013',color:'#fff',display:isCurrent?undefined:'none'},
-        blockNote:cur.n+' séance'+(cur.n>1?'s':''),
-        stats:[mkStat('Temps',cur.min?fmtH(cur.min):'',pct(cur.min,prev.min),prev.min?fmtH(prev.min):'0'),mkStat('Distance',cur.km?fmtNum(Math.round(cur.km),0)+' km':'',pct(cur.km,prev.km),prev.km?fmtNum(Math.round(prev.km),0)+' km':'0'),mkStat('D+',cur.elev?'+'+fmtNum(Math.round(cur.elev),0)+' m':'',pct(cur.elev,prev.elev),prev.elev?'+'+fmtNum(Math.round(prev.elev),0)+' m':'0'),mkStat('Séances',String(cur.n),pct(cur.n,prev.n),String(prev.n))],
+        isCurrent, isFuture,
+        rowStyle:{borderTop:isCurrent?'2px solid #ec3013':undefined,borderBottom:'2px solid #201e1d',borderLeft:isCurrent?'6px solid #ec3013':isFuture?'6px solid #d7d3d3':undefined,background:isCurrent?'#fdf1ee':undefined},
+        title:'Semaine '+wkNum,span,tag:isCurrent?'En cours':isFuture?'À venir':'',
+        tagStyle:{padding:'2px 8px',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',background:isCurrent?'#ec3013':'#bab6b6',color:'#fff',display:(isCurrent||isFuture)?undefined:'none'},
+        blockNote:isFuture?(pAgg.n+' séance'+(pAgg.n>1?'s':'')+' prévue'+(pAgg.n>1?'s':'')):(cur.n+' séance'+(cur.n>1?'s':'')),
+        stats:isFuture
+          ? [futStat('Temps',pAgg.min?fmtH(pAgg.min):''),futStat('Distance',pAgg.km?fmtNum(Math.round(pAgg.km),0)+' km':''),futStat('Séances',String(pAgg.n)),futStat('D+','—')]
+          : [mkStat('Temps',cur.min?fmtH(cur.min):'',pct(cur.min,prev.min),prev.min?fmtH(prev.min):'0'),mkStat('Distance',cur.km?fmtNum(Math.round(cur.km),0)+' km':'',pct(cur.km,prev.km),prev.km?fmtNum(Math.round(prev.km),0)+' km':'0'),mkStat('D+',cur.elev?'+'+fmtNum(Math.round(cur.elev),0)+' m':'',pct(cur.elev,prev.elev),prev.elev?'+'+fmtNum(Math.round(prev.elev),0)+' m':'0'),mkStat('Séances',String(cur.n),pct(cur.n,prev.n),String(prev.n))],
         days:daysList,
       };
     }).reverse();
@@ -2801,6 +2882,11 @@ function App() {
     try { const s = localStorage.getItem('bs_coach_plan'); if (s) return JSON.parse(s); } catch (e) {}
     return null;
   });
+  const [coachLastAnalysis, setCoachLastAnalysis] = useState(() => {
+    try { const s = localStorage.getItem('bs_coach_lastseance'); if (s) return JSON.parse(s); } catch (e) {}
+    return null;
+  });
+  useEffect(() => { try { localStorage.setItem('bs_coach_lastseance', coachLastAnalysis ? JSON.stringify(coachLastAnalysis) : ''); } catch (e) {} }, [coachLastAnalysis]);
   const coachAutoRef = useRef(false);
   useEffect(() => { try { localStorage.removeItem('bs_coach_chat'); localStorage.removeItem('bs_coach_avail'); } catch (e) {} }, []);
   useEffect(() => { try { localStorage.setItem('bs_coach_plan', coachPlan ? JSON.stringify(coachPlan) : ''); } catch (e) {} }, [coachPlan]);
@@ -2834,13 +2920,64 @@ function App() {
     return 'Course';
   }
 
+  // Résumé détaillé d'une séance (W/kg, FC moy, % de temps par zone de FC, EF,
+  // découplage, VO2max estimé, intervalles détectés) pour l'analyse par le coach.
+  function summarizeSession(act) {
+    const s = actStreams[act.id];
+    const sok = s && s !== 'error';
+    const isBike = act.sport === 'Vélo';
+    const fcMax = Number(profile.fcMax) || null;
+    const fcRest = Number(profile.fcRest) || null;
+    const weight = Number(profile.weight) || null;
+    const hrArr = sok ? s.hr : null;
+    const out = {
+      date: isoLocal(act.date), sport: act.sport, nom: act.name || null,
+      km: Math.round(act.dist * 10) / 10, dureeMin: act.time, dplus: act.elev,
+      fcMoy: hrArr && hrArr.length ? Math.round(avgStream(hrArr)) : (act.hr || null),
+      fcMax: hrArr && hrArr.length ? Math.round(Math.max.apply(null, Array.from(hrArr))) : (act.maxHr || null),
+    };
+    if (hrArr && fcMax) {
+      const zb = hrZoneBreakdown(hrArr, fcMax);
+      if (zb.length) out.tempsParZoneFC = zb.reduce((o, z) => (o[z.label] = z.pct + ' %', o), {});
+    }
+    if (isBike) {
+      const np = sok && s.pow ? (calcNP(s.pow) || avgStream(s.pow)) : (act.power || null);
+      const avgP = sok && s.pow ? avgStream(s.pow) : (act.power || null);
+      if (avgP) { out.wMoy = Math.round(avgP); if (weight) out.wkgMoy = Math.round((avgP / weight) * 100) / 100; }
+      if (np) { out.np = Math.round(np); if (weight) out.wkgNP = Math.round((np / weight) * 100) / 100; }
+      out.facteurEfficaciteWparBpm = actEF('Vélo', sok ? s : null);
+      out.decouplagePwHrPct = sok && s.pow && s.hr ? calcDecoupling('Vélo', s.pow, s.hr) : null;
+    } else {
+      out.allureMoyMinKm = act.pace ? Math.round(act.pace * 100) / 100 : null;
+      out.facteurEfficaciteMparMinParBpm = actEF('Course', sok ? s : null);
+      out.decouplagePaHrPct = sok && s.vel && s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
+      if (fcMax && fcRest) { const v = estimateVo2maxFromRun(act, fcMax, fcRest); if (v) out.vo2maxEstime = v; }
+    }
+    const det = detectEfforts(act.sport, sok ? s : null);
+    if (det.groups.length) {
+      out.intervallesDetectes = det.groups.map(g => {
+        if (isBike) return { repetitions: g.n, dureeMin: g.durMin, wMoy: Math.round(g.value), wkg: weight ? Math.round((g.value / weight) * 100) / 100 : null, fcMoy: g.hr };
+        const paceMinKm = (1000 / g.value) / 60;
+        return { repetitions: g.n, dureeMin: g.durMin, allureMinKm: Math.round(paceMinKm * 100) / 100, fcMoy: g.hr };
+      });
+    } else if (det.efforts.length) {
+      out.intervallesDetectes = 'blocs irréguliers (' + det.efforts.length + ')';
+    }
+    return out;
+  }
+
   function buildCoachContext() {
     const last = pmcToday;
     const ramp = pmcSeries.length >= 8 ? Math.round((last.ctl - pmcSeries[pmcSeries.length - 8].ctl) * 10) / 10 : null;
     const nowMs = Date.now();
+    const wsMs = weekStart(new Date()).getTime();
     const win = data.filter(a => nowMs - a.date.getTime() < 28 * 86400000 && !a.planned);
     const rec = win.sort((a, b) => b.date - a.date).slice(0, 18)
       .map(a => ({ date: isoLocal(a.date), sport: a.sport, km: Math.round(a.dist * 10) / 10, min: a.time, dplus: a.elev, fcMoy: a.hr || null }));
+    const doneThisWeek = data
+      .filter(a => !a.planned && a.date.getTime() >= wsMs && a.date.getTime() <= nowMs)
+      .sort((a, b) => a.date - b.date)
+      .map(a => summarizeSession(a));
     const zones = {};
     if (profile.thresholdPace) zones.allureSeuilMinKm = Number(profile.thresholdPace);
     if (profile.fcMax) zones.fcMax = Number(profile.fcMax);
@@ -2849,7 +2986,9 @@ function App() {
     if (profile.ftp) zones.ftpVelo = Number(profile.ftp);
     return {
       date: isoLocal(new Date()),
-      semaineDebut: isoLocal(weekStart(new Date())),
+      jourSemaineActuel: ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'][new Date().getDay()],
+      semaineDebut: isoLocal(new Date(wsMs)),
+      semaineSuivanteDebut: isoLocal(new Date(wsMs + 7 * 86400000)),
       objectif: {
         type: race.type, date: race.date || null,
         semainesRestantes: race.date ? weeksLeft : null,
@@ -2861,6 +3000,8 @@ function App() {
       volumeMoyenMinParSemaine: Math.round(win.reduce((s, a) => s + a.time, 0) / 4),
       sportPrincipal: coachPrimarySport(),
       zones,
+      seancesDejaRealiseesCetteSemaine: doneThisWeek,
+      programmeActuel: coachPlan ? coachPlan.sessions : null,
       sortiesRecentes: rec,
     };
   }
@@ -2879,9 +3020,9 @@ function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           profileId: coachProfileId(),
-          messages: [{ role: 'user', content: 'Analyse mon profil (forme, fatigue, objectif, historique récent) et crée un programme d\'entraînement complet pour la semaine en cours. Fournis le champ "plan" avec toutes les séances.' }],
+          messages: [{ role: 'user', content: 'Analyse mon profil et crée le programme des DEUX prochaines semaines (semaine en cours + semaine suivante). Adapte les séances à venir de la semaine en cours en fonction de "seancesDejaRealiseesCetteSemaine" (garde ces séances passées telles quelles, marquées "done":true). Fournis "plan" avec "targets" et toutes les séances, chacune avec "focus" (ce qui est travaillé).' }],
           context: buildCoachContext(),
-          plan: null,
+          plan: coachPlan,
         }),
       });
       const raw = await r.text();
@@ -2898,9 +3039,11 @@ function App() {
         setCoachPlan({
           source: 'llm',
           weekStartISO: isoLocal(weekStart(new Date())),
+          weekNextISO: isoLocal(new Date(weekStart(new Date()).getTime() + 7 * 86400000)),
           generatedAt: new Date().toISOString(),
           rationale: j.plan.rationale || '',
           summary: j.reply || '',
+          targets: j.plan.targets || null,
           sessions: j.plan.sessions,
         });
       } else {
@@ -2914,6 +3057,44 @@ function App() {
     setCoachBusy(false);
   }
 
+  async function coachAnalyzeLastSession() {
+    if (coachBusy) return;
+    if (coachLeft <= 0) { setCoachErr('Limite quotidienne atteinte (' + COACH_LIMIT + ' analyses par jour).'); return; }
+    const last = data.filter(a => !a.planned).sort((a, b) => b.date - a.date)[0];
+    if (!last) { setCoachErr('Aucune séance à analyser.'); return; }
+    setCoachErr('');
+    setCoachBusy(true);
+    try { const q = coachLocalQuota(); q.count++; localStorage.setItem('bs_coach_lq', JSON.stringify(q)); } catch (e) {}
+    try {
+      const r = await fetch('/api/coach', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profileId: coachProfileId(),
+          messages: [{ role: 'user', content: 'Analyse UNIQUEMENT ma dernière séance ci-dessous en détail (W/kg, FC moyenne, répartition du temps par zone de FC, facteur d\'efficacité, découplage, intervalles détectés, VO2max) : ce qui a été travaillé, la qualité de l\'exécution, la fatigue induite, ce qu\'il faut retenir. Ne renvoie PAS de "plan" (mets-le à null).' }],
+          context: { ...buildCoachContext(), derniereSeance: summarizeSession(last) },
+          plan: null,
+        }),
+      });
+      const raw = await r.text();
+      let j = {};
+      try { j = raw ? JSON.parse(raw) : {}; } catch (e) {
+        setCoachErr(r.status === 504 ? 'Le coach a mis trop de temps à répondre. Réessaie.' : 'Réponse serveur invalide (' + r.status + ').');
+        setCoachBusy(false); return;
+      }
+      if (j.quota) setCoachQuota(j.quota);
+      if (!r.ok) { setCoachErr(j.error || 'Erreur serveur (' + r.status + ')'); setCoachBusy(false); return; }
+      setCoachLastAnalysis({
+        actId: last.id,
+        titre: (last.name || last.sport) + ' · ' + last.date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
+        texte: j.reply || 'Analyse indisponible.',
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      setCoachErr('Réseau indisponible : ' + e.message);
+    }
+    setCoachBusy(false);
+  }
+
   // Analyse + programme automatiques dès que les activités sont importées (une fois).
   useEffect(() => {
     if (coachAutoRef.current) return;
@@ -2923,6 +3104,17 @@ function App() {
     const t = setTimeout(() => coachFullAnalysis(), 400);
     return () => clearTimeout(t);
   }, [data.length, pmcToday, coachPlan]);
+
+  // Le calendrier montre les semaines à venir au-dessus : on cale la vue sur la
+  // semaine en cours à l'ouverture de l'onglet Programme (scroll vers le haut = à venir).
+  useEffect(() => {
+    if (tab !== 'programme' || !coachPlan) return;
+    const t = setTimeout(() => {
+      const el = document.getElementById('wk-current');
+      if (el) el.scrollIntoView({ block: 'start', behavior: 'auto' });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [tab, coachPlan]);
 
   const acts=actsWin(data);
   const curW=actsWin(data);
@@ -3431,12 +3623,12 @@ function App() {
         noData&&h('p',{style:{margin:0,padding:'28px 32px 32px',fontSize:'14px',color:'#605d5d'}},noDataMsg),
         h('section',null,
           data.length?buildWeeks().map((wk,wi)=>
-            h('div',{key:wi,style:wk.rowStyle},
+            h('div',{key:wi,id:wk.isCurrent?'wk-current':undefined,style:wk.rowStyle},
               h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'16px',padding:'14px 32px',borderBottom:'1px solid #d7d3d3'}},
                 h('div',{style:{display:'flex',alignItems:'baseline',gap:'14px'}},
                   h('span',{style:{fontSize:'14px',fontWeight:'800',letterSpacing:'-0.01em'}},wk.title),
                   h('span',{style:{fontSize:'12px',color:'#605d5d'}},wk.span),
-                  wk.isCurrent&&h('span',{style:wk.tagStyle},wk.tag)
+                  (wk.isCurrent||wk.isFuture)&&h('span',{style:wk.tagStyle},wk.tag)
                 ),
                 h('span',{style:{fontSize:'12px',color:'#605d5d'}},wk.blockNote)
               ),
@@ -3483,6 +3675,7 @@ function App() {
                       (day.planned||[]).map((p,pi)=>h('div',{key:'pl'+pi,style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px dashed #bab6b6',background:'transparent',color:'#8a8686'}},
                         h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.1'}},p.sport),
                         h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},p.title),
+                        p.focus&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',lineHeight:'1.25',overflowWrap:'anywhere'}},p.focus),
                         h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',letterSpacing:'0.04em',lineHeight:'1.3'}},'Prévu'+(p.time?' · '+p.time:''))
                       )),
                       day.empty&&h('span',{style:{display:'flex',alignItems:'center',height:'100%',fontSize:'12px',color:'#bab6b6'}},'Repos')
@@ -3526,30 +3719,67 @@ function App() {
                 )
           ),
           // ── Programme défini ─────────────────────────────────────────────
-          coachPlan&&h('div',null,
-            h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'12px'}},
-              h('h2',{style:{margin:0,fontSize:'18px',fontWeight:'800',letterSpacing:'-0.01em'}},'Ton programme de la semaine'),
-              coachPlan.generatedAt&&h('span',{style:{fontSize:'11px',color:'#605d5d'}},'créé le '+new Date(coachPlan.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})),
-              h('span',{style:{marginLeft:'auto',display:'flex',gap:'8px'}},
-                h('button',{type:'button',onClick:coachFullAnalysis,disabled:coachBusy||coachLeft<=0,style:{padding:'6px 12px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||coachLeft<=0)?'not-allowed':'pointer'}},coachBusy?'…':'Nouvelle analyse'),
-                h('button',{type:'button',onClick:()=>{if(confirm('Effacer le programme ?'))setCoachPlan(null);},style:{padding:'6px 12px',border:'2px solid #bab6b6',background:'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Effacer')
-              )
-            ),
-            coachErr&&h('p',{style:{margin:'0 0 12px',fontSize:'12px',color:'#ec3013'}},coachErr),
-            coachPlan.summary&&h('p',{style:{margin:'0 0 16px',fontSize:'13px',lineHeight:'1.5',color:'#201e1d',whiteSpace:'pre-wrap'}},coachPlan.summary),
-            coachPlan.sessions.slice().sort((a,b)=>a.date<b.date?-1:1).map((s,si)=>
-              h('div',{key:si,style:{display:'grid',gridTemplateColumns:'118px 1fr',gap:'14px',padding:'10px 0',borderTop:si?'1px solid #d7d3d3':'none'}},
-                h('div',null,
-                  h('span',{style:{display:'block',fontSize:'12px',fontWeight:'800'}},new Date(s.date+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'short'})),
-                  h('span',{style:{display:'block',fontSize:'11px',color:'#605d5d'}},s.sport)
+          coachPlan&&(()=>{
+            const wnISO=coachPlan.weekNextISO||isoLocal(new Date(new Date((coachPlan.weekStartISO||isoLocal(weekStart(new Date())))+'T12:00:00').getTime()+7*86400000));
+            const sorted=coachPlan.sessions.slice().sort((a,b)=>a.date<b.date?-1:1);
+            const g1=sorted.filter(s=>s.date<wnISO), g2=sorted.filter(s=>s.date>=wnISO);
+            const tg=coachPlan.targets||{};
+            const realSess=g1.filter(s=>s.sport&&s.sport!=='Repos');
+            const tgKm=tg.kmSemaine!=null?tg.kmSemaine:(realSess.reduce((x,s)=>x+(s.distanceKm||0),0)||null);
+            const tgH=tg.heuresSemaine!=null?tg.heuresSemaine:Math.round(realSess.reduce((x,s)=>x+(s.durationMin||0),0)/60*10)/10;
+            const tgN=tg.nbSeances!=null?tg.nbSeances:realSess.length;
+            const sessionRow=(s,si,first)=>h('div',{key:si,style:{display:'grid',gridTemplateColumns:'118px 1fr',gap:'14px',padding:'10px 0',borderTop:first?'none':'1px solid #d7d3d3',opacity:s.done?0.55:1}},
+              h('div',null,
+                h('span',{style:{display:'block',fontSize:'12px',fontWeight:'800'}},new Date(s.date+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'short'})),
+                h('span',{style:{display:'block',fontSize:'11px',color:'#605d5d'}},s.sport)
+              ),
+              h('div',null,
+                h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800'}},
+                  s.title+(s.durationMin?' · '+fmtDur(s.durationMin):'')+(s.distanceKm?' · '+s.distanceKm+' km':'')+(s.load!=null?' · '+s.load+' TSS':''),
+                  s.done&&h('span',{style:{marginLeft:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',background:'#eae9e9',color:'#605d5d'}},'réalisé')
                 ),
-                h('div',null,
-                  h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800'}},s.title+(s.durationMin?' · '+fmtDur(s.durationMin):'')+(s.load!=null?' · '+s.load+' TSS':'')),
-                  s.description&&h('span',{style:{display:'block',fontSize:'12px',color:'#3d3a3a',marginTop:'2px',lineHeight:'1.45'}},s.description)
-                )
+                s.focus&&h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',color:'#ec3013',marginTop:'2px'}},'À travailler : '+s.focus),
+                s.description&&h('span',{style:{display:'block',fontSize:'12px',color:'#3d3a3a',marginTop:'2px',lineHeight:'1.45'}},s.description)
               )
+            );
+            return h('div',null,
+              h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'14px'}},
+                h('h2',{style:{margin:0,fontSize:'18px',fontWeight:'800',letterSpacing:'-0.01em'}},'Ton programme'),
+                coachPlan.generatedAt&&h('span',{style:{fontSize:'11px',color:'#605d5d'}},'créé le '+new Date(coachPlan.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})),
+                h('span',{style:{marginLeft:'auto',display:'flex',gap:'8px'}},
+                  h('button',{type:'button',onClick:coachFullAnalysis,disabled:coachBusy||coachLeft<=0,style:{padding:'6px 12px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||coachLeft<=0)?'not-allowed':'pointer'}},coachBusy?'…':'Recalculer / adapter'),
+                  h('button',{type:'button',onClick:()=>{if(confirm('Effacer le programme ?'))setCoachPlan(null);},style:{padding:'6px 12px',border:'2px solid #bab6b6',background:'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Effacer')
+                )
+              ),
+              coachErr&&h('p',{style:{margin:'0 0 12px',fontSize:'12px',color:'#ec3013'}},coachErr),
+              // Objectifs de la semaine
+              h('div',{style:{display:'flex',flexWrap:'wrap',gap:'12px',marginBottom:'18px'}},
+                [['Distance visée',tgKm!=null?fmtNum(Math.round(tgKm),0)+' km':'—'],['Temps visé',tgH?fmtDur(Math.round(tgH*60)):'—'],['Séances',String(tgN)]].map(([lab,val])=>
+                  h('div',{key:lab,style:{flex:'1 1 140px',border:'2px solid #201e1d',padding:'12px 14px'}},
+                    h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},lab),
+                    h('span',{style:{display:'block',fontSize:'22px',fontWeight:'800',letterSpacing:'-0.02em',marginTop:'2px'}},val)
+                  )
+                )
+              ),
+              coachPlan.summary&&h('p',{style:{margin:'0 0 16px',fontSize:'13px',lineHeight:'1.5',color:'#201e1d',whiteSpace:'pre-wrap'}},coachPlan.summary),
+              h('h3',{style:{margin:'6px 0 2px',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:'#ec3013'}},'Cette semaine'),
+              g1.map((s,si)=>sessionRow(s,'a'+si,si===0)),
+              g2.length>0&&h('h3',{style:{margin:'20px 0 2px',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:'#ec3013'}},'Semaine suivante'),
+              g2.map((s,si)=>sessionRow(s,'b'+si,si===0)),
+              h('p',{style:{margin:'16px 0 0',fontSize:'11px',color:'#605d5d'}},'Ces séances apparaissent en gris pointillé sur le calendrier du Programme (scroll vers le haut pour la semaine suivante). Analyses restantes aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'.')
+            );
+          })(),
+          // ── Analyse de la dernière séance ────────────────────────────────
+          data.length>0&&h('div',{style:{marginTop:'32px',paddingTop:'24px',borderTop:'2px solid #201e1d'}},
+            h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'10px'}},
+              h('h2',{style:{margin:0,fontSize:'18px',fontWeight:'800',letterSpacing:'-0.01em'}},'Analyse de la dernière séance'),
+              h('button',{type:'button',onClick:coachAnalyzeLastSession,disabled:coachBusy||coachLeft<=0,style:{marginLeft:'auto',padding:'6px 12px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||coachLeft<=0)?'not-allowed':'pointer'}},coachBusy?'…':(coachLastAnalysis?'Réanalyser':'Analyser'))
             ),
-            h('p',{style:{margin:'14px 0 0',fontSize:'11px',color:'#605d5d'}},'Ces séances apparaissent en gris pointillé sur le calendrier du Programme. Analyses restantes aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'.')
+            !coachLastAnalysis&&h('p',{style:{margin:0,fontSize:'13px',color:'#605d5d'}},'Le coach détaille ta dernière séance : W/kg, FC moyenne, temps par zone de FC, facteur d’efficacité, intervalles détectés, VO2max.'),
+            coachLastAnalysis&&h('div',null,
+              h('span',{style:{display:'block',fontSize:'12px',fontWeight:'800',marginBottom:'6px'}},coachLastAnalysis.titre),
+              h('p',{style:{margin:0,fontSize:'13px',lineHeight:'1.5',color:'#201e1d',whiteSpace:'pre-wrap'}},coachLastAnalysis.texte)
+            )
           )
         )
       ),
