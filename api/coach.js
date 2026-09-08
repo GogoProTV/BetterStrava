@@ -1,13 +1,38 @@
 // Coach IA — proxy Gemini avec quota journalier par profil.
 // Variables d'environnement Vercel :
 //   GEMINI_API_KEY            (obligatoire)  clé Google AI Studio (gratuite)
+//   GEMINI_MODELS             (option) liste de modèles séparés par virgule, essayés dans l'ordre
 //   COACH_DAILY_LIMIT         (option, défaut 10)
 //   KV_REST_API_URL / KV_REST_API_TOKEN            (Vercel KV)      \ quota réellement
 //   UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN (Upstash)     / imposé si présent
 // Sans KV configuré, le quota retombe sur un compteur en mémoire (best effort).
 
-const MODEL = 'gemini-3.6-flash';
+// Essayés dans l'ordre ; on passe au suivant si le modèle est surchargé / indisponible.
+// Surchargeable via GEMINI_MODELS="modele1,modele2".
+const MODELS = (process.env.GEMINI_MODELS || 'gemini-3.6-flash,gemini-flash-latest,gemini-2.5-flash,gemini-2.5-flash-lite')
+  .split(',').map(s => s.trim()).filter(Boolean);
 const LIMIT = Number(process.env.COACH_DAILY_LIMIT) || 10;
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function callGemini(key, payload) {
+  let lastErr = 'inconnu';
+  for (const model of MODELS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key),
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+      );
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) return { j, model };
+      lastErr = (j.error && j.error.message) || ('HTTP ' + r.status);
+      // 503 surcharge / 429 quota modèle → on retente puis on change de modèle
+      if (r.status === 503 || r.status === 429 || r.status === 500) { await sleep(700 * (attempt + 1)); continue; }
+      break; // autre erreur (400, clé invalide…) : inutile d'insister
+    }
+  }
+  return { error: lastErr };
+}
 
 const KV_URL   = process.env.KV_REST_API_URL   || process.env.UPSTASH_REDIS_REST_URL   || null;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || null;
@@ -119,22 +144,15 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const gr = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/' + MODEL + ':generateContent?key=' + encodeURIComponent(key),
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM }] },
-          contents,
-          generationConfig: { temperature: 0.7, maxOutputTokens: 1600, responseMimeType: 'application/json' },
-        }),
-      }
-    );
-    const gj = await gr.json();
-    if (!gr.ok) {
-      return res.status(502).json({ error: 'Gemini : ' + (gj.error && gj.error.message || gr.status), quota });
+    const out = await callGemini(key, {
+      systemInstruction: { parts: [{ text: SYSTEM }] },
+      contents,
+      generationConfig: { temperature: 0.7, maxOutputTokens: 1600, responseMimeType: 'application/json' },
+    });
+    if (out.error) {
+      return res.status(502).json({ error: 'Gemini : ' + out.error, quota });
     }
+    const gj = out.j;
     const txt = ((gj.candidates && gj.candidates[0] && gj.candidates[0].content &&
       gj.candidates[0].content.parts || []).map(p => p.text || '').join('')).trim();
 
@@ -159,7 +177,7 @@ module.exports = async function handler(req, res) {
       }
     } catch (e) { /* garde le texte brut */ }
 
-    return res.status(200).json({ reply, plan, quota, source: 'llm' });
+    return res.status(200).json({ reply, plan, quota, source: 'llm', model: out.model });
   } catch (err) {
     return res.status(500).json({ error: err.message, quota });
   }
