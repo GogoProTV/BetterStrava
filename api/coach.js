@@ -73,27 +73,30 @@ SÉCURITÉ :
 - Charge prudente : jamais plus de +8 de CTL par semaine ; semaine de récupération toutes les 3 à 4 semaines ;
   si la Forme (TSB) est très négative, réduis le volume et privilégie la récupération.
 
-RÉPONSE — tu réponds STRICTEMENT avec un objet JSON de la forme :
+RÉPONSE — tu réponds STRICTEMENT avec un objet JSON valide et COMPLET de la forme :
 {
-  "reply": "ta réponse en français, concise, adressée à l'athlète",
+  "reply": "analyse + explication en français, en texte lisible (paragraphes courts ou puces). C'est le SEUL texte que verra l'athlète : mets-y ton analyse de la forme/fatigue/objectif et un résumé du programme. N'y mets jamais de JSON.",
   "plan": null
     | {
-        "rationale": "1 à 3 phrases sur la logique de la semaine",
+        "rationale": "1 phrase sur la logique de la semaine",
         "sessions": [
           {
             "date": "YYYY-MM-DD",
             "sport": "Course" | "Trail" | "Vélo" | "Natation" | "Repos",
-            "title": "nom court de la séance",
+            "title": "nom court",
             "durationMin": 60,
-            "description": "contenu détaillé : échauffement, corps de séance, allures/zones cibles",
+            "description": "échauffement + corps de séance + allures/zones cibles, 2 phrases maximum",
             "load": 55
           }
         ]
       }
 }
-Mets "plan" à null si l'athlète ne demande pas de créer ou modifier le plan.
-Quand tu fournis un "plan", il REMPLACE intégralement la semaine : renvoie toutes les séances,
-7 jours maximum, en te calant sur les jours disponibles indiqués dans le CONTEXTE.`;
+- Si l'athlète demande une analyse, un programme, ou un ajustement du programme → fournis TOUJOURS "plan"
+  avec TOUTES les séances de la semaine en cours (à partir de "semaineDebut", 7 jours max).
+- "plan" REMPLACE intégralement la semaine.
+- Si l'athlète pose juste une question sans toucher au programme → "plan" à null.
+- Reste CONCIS : descriptions de 2 phrases max, pas de blabla, pour que la réponse tienne en entier.
+- Déduis la disponibilité (nombre de jours, durée) de l'historique récent et de la charge moyenne du CONTEXTE.`;
 
 async function kvIncr(key) {
   const r = await fetch(KV_URL + '/pipeline', {
@@ -164,7 +167,7 @@ module.exports = async function handler(req, res) {
     const out = await callGemini(key, {
       systemInstruction: { parts: [{ text: SYSTEM }] },
       contents,
-      generationConfig: { temperature: 0.7, maxOutputTokens: 1600, responseMimeType: 'application/json' },
+      generationConfig: { temperature: 0.6, maxOutputTokens: 4096, responseMimeType: 'application/json' },
     });
     if (out.error) {
       return res.status(502).json({ error: 'Gemini : ' + out.error, quota });
@@ -173,26 +176,33 @@ module.exports = async function handler(req, res) {
     const txt = ((gj.candidates && gj.candidates[0] && gj.candidates[0].content &&
       gj.candidates[0].content.parts || []).map(p => p.text || '').join('')).trim();
 
-    let reply = txt, plan = null;
-    try {
-      const parsed = JSON.parse(txt.replace(/^```(?:json)?\s*|\s*```$/g, ''));
-      if (parsed && typeof parsed === 'object') {
-        reply = typeof parsed.reply === 'string' ? parsed.reply : txt;
-        if (parsed.plan && Array.isArray(parsed.plan.sessions)) {
-          plan = {
-            rationale: String(parsed.plan.rationale || ''),
-            sessions: parsed.plan.sessions.slice(0, 7).map(s => ({
-              date: String(s.date || '').slice(0, 10),
-              sport: String(s.sport || 'Course'),
-              title: String(s.title || 'Séance'),
-              durationMin: Math.max(0, Math.round(Number(s.durationMin) || 0)),
-              description: String(s.description || ''),
-              load: s.load == null ? null : Math.max(0, Math.round(Number(s.load) || 0)),
-            })).filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s.date)),
-          };
-        }
+    let reply = '', plan = null;
+    let parsed = null;
+    try { parsed = JSON.parse(txt.replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch (e) {}
+    if (!parsed) {
+      // Réponse tronquée ou non-JSON : on récupère au moins le champ "reply".
+      const m = txt.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      try { reply = m ? JSON.parse('"' + m[1] + '"') : ''; } catch (e2) { reply = ''; }
+      if (!reply) reply = 'Le coach a renvoyé une réponse incomplète. Réessaie dans un instant.';
+      return res.status(200).json({ reply, plan: null, quota, source: 'llm', model: out.model, truncated: true });
+    }
+    if (parsed && typeof parsed === 'object') {
+      reply = typeof parsed.reply === 'string' ? parsed.reply : '';
+      if (parsed.plan && Array.isArray(parsed.plan.sessions)) {
+        plan = {
+          rationale: String(parsed.plan.rationale || ''),
+          sessions: parsed.plan.sessions.slice(0, 7).map(s => ({
+            date: String(s.date || '').slice(0, 10),
+            sport: String(s.sport || 'Course'),
+            title: String(s.title || 'Séance'),
+            durationMin: Math.max(0, Math.round(Number(s.durationMin) || 0)),
+            description: String(s.description || ''),
+            load: s.load == null ? null : Math.max(0, Math.round(Number(s.load) || 0)),
+          })).filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s.date)),
+        };
       }
-    } catch (e) { /* garde le texte brut */ }
+    }
+    if (!reply) reply = 'Programme mis à jour.';
 
     return res.status(200).json({ reply, plan, quota, source: 'llm', model: out.model });
   } catch (err) {

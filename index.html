@@ -2803,13 +2803,9 @@ function App() {
     try { const s = localStorage.getItem('bs_coach_plan'); if (s) return JSON.parse(s); } catch (e) {}
     return null;
   });
-  const [coachAvail, setCoachAvail] = useState(() => {
-    try { const s = localStorage.getItem('bs_coach_avail'); if (s) return { days: 4, minutes: 75, longDay: 6, ...JSON.parse(s) }; } catch (e) {}
-    return { days: 4, minutes: 75, longDay: 6 };
-  });
-  useEffect(() => { try { localStorage.removeItem('bs_coach_chat'); } catch (e) {} }, []);
+  const coachAutoRef = useRef(false);
+  useEffect(() => { try { localStorage.removeItem('bs_coach_chat'); localStorage.removeItem('bs_coach_avail'); } catch (e) {} }, []);
   useEffect(() => { try { localStorage.setItem('bs_coach_plan', coachPlan ? JSON.stringify(coachPlan) : ''); } catch (e) {} }, [coachPlan]);
-  useEffect(() => { try { localStorage.setItem('bs_coach_avail', JSON.stringify(coachAvail)); } catch (e) {} }, [coachAvail]);
 
   function coachProfileId() {
     try {
@@ -2839,14 +2835,13 @@ function App() {
     if (rt.indexOf('Triathlon') >= 0 || rt === 'Ironman') return 'Triathlon';
     return 'Course';
   }
-  const COACH_DAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 
   function buildCoachContext() {
     const last = pmcToday;
     const ramp = pmcSeries.length >= 8 ? Math.round((last.ctl - pmcSeries[pmcSeries.length - 8].ctl) * 10) / 10 : null;
     const nowMs = Date.now();
-    const rec = data.filter(a => nowMs - a.date.getTime() < 21 * 86400000 && !a.planned)
-      .sort((a, b) => b.date - a.date).slice(0, 14)
+    const win = data.filter(a => nowMs - a.date.getTime() < 28 * 86400000 && !a.planned);
+    const rec = win.sort((a, b) => b.date - a.date).slice(0, 18)
       .map(a => ({ date: isoLocal(a.date), sport: a.sport, km: Math.round(a.dist * 10) / 10, min: a.time, dplus: a.elev, fcMoy: a.hr || null }));
     const zones = {};
     if (profile.thresholdPace) zones.allureSeuilMinKm = Number(profile.thresholdPace);
@@ -2864,25 +2859,22 @@ function App() {
         methodeProjection: projResult ? projResult.method : null,
       },
       forme: last ? { ctl: last.ctl, atl: last.atl, tsb: last.tsb, rampeCtl7j: ramp } : null,
-      disponibilite: {
-        joursParSemaine: coachAvail.days,
-        minutesParSeance: coachAvail.minutes,
-        jourSortieLongue: COACH_DAYS[coachAvail.longDay] || 'dimanche',
-      },
+      chargeMoyenneSeancesParSemaine: Math.round((win.length / 4) * 10) / 10,
+      volumeMoyenMinParSemaine: Math.round(win.reduce((s, a) => s + a.time, 0) / 4),
       sportPrincipal: coachPrimarySport(),
       zones,
       sortiesRecentes: rec,
     };
   }
 
-  async function coachSend() {
-    const text = coachInput.trim();
-    if (!text || coachBusy) return;
+  // Un seul point d'entrée : `visibleUser` = ce qui s'affiche à droite, `sent` = ce qu'on envoie au modèle.
+  async function coachAsk(sent, visibleUser) {
+    if (coachBusy) return;
     if (coachLeft <= 0) { setCoachErr('Limite quotidienne atteinte (' + COACH_LIMIT + ' échanges par jour).'); return; }
     setCoachErr('');
-    const nextChat = [...coachChat, { role: 'user', text }];
-    setCoachChat(nextChat);
-    setCoachInput('');
+    const history = coachChat.map(m => ({ role: m.role, content: m.text }));
+    const nextChat = visibleUser ? [...coachChat, { role: 'user', text: visibleUser }] : coachChat;
+    if (visibleUser) setCoachChat(nextChat);
     setCoachBusy(true);
     try { const q = coachLocalQuota(); q.count++; localStorage.setItem('bs_coach_lq', JSON.stringify(q)); } catch (e) {}
     try {
@@ -2890,7 +2882,7 @@ function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           profileId: coachProfileId(),
-          messages: nextChat.map(m => ({ role: m.role, content: m.text })),
+          messages: [...history, { role: 'user', content: sent }],
           context: buildCoachContext(),
           plan: coachPlan,
         }),
@@ -2905,13 +2897,14 @@ function App() {
       }
       if (j.quota) setCoachQuota(j.quota);
       if (!r.ok) { setCoachErr(j.error || 'Erreur serveur (' + r.status + ')'); setCoachBusy(false); return; }
-      setCoachChat(c => [...c, { role: 'coach', text: j.reply || '(réponse vide)' }]);
+      if (j.reply) setCoachChat(c => [...c, { role: 'coach', text: j.reply }]);
       if (j.plan && Array.isArray(j.plan.sessions) && j.plan.sessions.length) {
         setCoachPlan({
           source: 'llm',
           weekStartISO: isoLocal(weekStart(new Date())),
           generatedAt: new Date().toISOString(),
           rationale: j.plan.rationale || '',
+          summary: j.reply || '',
           sessions: j.plan.sessions,
         });
       }
@@ -2920,6 +2913,29 @@ function App() {
     }
     setCoachBusy(false);
   }
+
+  function coachSend() {
+    const text = coachInput.trim();
+    if (!text) return;
+    setCoachInput('');
+    coachAsk(text, text);
+  }
+  function coachFullAnalysis() {
+    coachAsk(
+      'Analyse mon profil (forme, fatigue, objectif, historique récent) et propose-moi un programme d\'entraînement complet pour la semaine en cours. Fournis le champ "plan" avec toutes les séances. Termine ta réponse par une phrase m\'invitant à te demander des ajustements.',
+      'Analyse complète et programme de la semaine'
+    );
+  }
+
+  // Analyse + programme automatiques dès que les activités sont importées (une fois).
+  useEffect(() => {
+    if (coachAutoRef.current) return;
+    if (!data.length || !pmcToday || coachPlan || coachBusy) return;
+    if (coachLeft <= 0) return;
+    coachAutoRef.current = true;
+    const t = setTimeout(() => coachFullAnalysis(), 400);
+    return () => clearTimeout(t);
+  }, [data.length, pmcToday, coachPlan]);
 
   const acts=actsWin(data);
   const curW=actsWin(data);
@@ -3500,35 +3516,22 @@ function App() {
             h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},'Plan & coach IA')
           )
         ),
-        // Disponibilité (contexte transmis au coach)
-        h('section',{style:{display:'flex',flexWrap:'wrap',alignItems:'flex-end',gap:'18px 28px',padding:'18px 32px',borderBottom:'2px solid #201e1d'}},
-          [['Jours / semaine','days',2,7,1],['Minutes / séance','minutes',20,240,5]].map(([lab,k,mn,mx,st])=>
-            h('div',{key:k,style:{display:'flex',flexDirection:'column',gap:'6px'}},
-              h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},lab),
-              h('input',{type:'number',min:mn,max:mx,step:st,value:coachAvail[k],onChange:e=>{const v=Math.max(mn,Math.min(mx,Number(e.target.value)||mn));setCoachAvail(a=>({...a,[k]:v}));},style:{width:'110px',padding:'9px 12px',border:'2px solid #201e1d',background:'#fff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600'}})
+        // Analyse & programme
+        h('section',{style:{padding:'22px 32px',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'10px'}},
+            h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Analyse & programme de la semaine'),
+            coachPlan&&coachPlan.generatedAt&&h('span',{style:{fontSize:'11px',color:'#605d5d'}},'maj '+new Date(coachPlan.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})),
+            h('span',{style:{marginLeft:'auto',display:'flex',gap:'8px'}},
+              h('button',{type:'button',onClick:coachFullAnalysis,disabled:coachBusy||coachLeft<=0||!data.length,style:{padding:'6px 12px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0||!data.length)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0||!data.length)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||coachLeft<=0||!data.length)?'not-allowed':'pointer'}},coachPlan?'Nouvelle analyse':'Lancer l’analyse'),
+              coachPlan&&h('button',{type:'button',onClick:()=>{if(confirm('Effacer le programme ?'))setCoachPlan(null);},style:{padding:'6px 12px',border:'2px solid #bab6b6',background:'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Effacer')
             )
           ),
-          h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
-            h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Jour sortie longue'),
-            h('select',{value:coachAvail.longDay,onChange:e=>setCoachAvail(a=>({...a,longDay:Number(e.target.value)})),style:{padding:'9px 12px',border:'2px solid #201e1d',background:'#fff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600',cursor:'pointer'}},
-              ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'].map((d,i)=>h('option',{key:i,value:i},d))
-            )
-          ),
-          h('span',{style:{fontSize:'11px',color:'#605d5d',maxWidth:'32ch',lineHeight:'1.4'}},'Ces infos sont transmises au coach. Demande-lui un plan dans le chat ci-dessous.')
-        ),
-        // Plan de la semaine
-        h('section',{style:{padding:'20px 32px',borderBottom:'2px solid #201e1d'}},
-          h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'8px'}},
-            h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Semaine en cours'),
-            coachPlan&&h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:'#7c4dbc'}},'Plan du coach'),
-            coachPlan&&coachPlan.generatedAt&&h('span',{style:{fontSize:'11px',color:'#605d5d'}},'maj '+new Date(coachPlan.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})),
-            coachPlan&&h('button',{type:'button',onClick:()=>{if(confirm('Effacer le plan en cours ?'))setCoachPlan(null);},style:{marginLeft:'auto',padding:'4px 10px',border:'2px solid #bab6b6',background:'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Effacer')
-          ),
-          !coachPlan&&h('p',{style:{margin:0,fontSize:'13px',color:'#605d5d'}},'Aucun plan enregistré. Demande-en un au coach dans le chat — il sera conservé jusqu’à ce que tu en demandes un nouveau.'),
-          coachPlan&&coachPlan.rationale&&h('p',{style:{margin:'0 0 12px',fontSize:'12px',color:'#605d5d'}},coachPlan.rationale),
+          !coachPlan&&coachBusy&&h('p',{style:{margin:0,fontSize:'13px',color:'#605d5d'}},'Le coach analyse tes données et prépare ton programme…'),
+          !coachPlan&&!coachBusy&&h('p',{style:{margin:0,fontSize:'13px',color:'#605d5d'}},data.length?'Clique sur « Lancer l’analyse » pour obtenir ton programme.':'Importe tes activités Strava : le coach lancera l’analyse automatiquement.'),
+          coachPlan&&coachPlan.summary&&h('p',{style:{margin:'0 0 14px',fontSize:'13px',lineHeight:'1.5',color:'#201e1d',whiteSpace:'pre-wrap'}},coachPlan.summary),
           coachPlan&&h('div',null,
             coachPlan.sessions.slice().sort((a,b)=>a.date<b.date?-1:1).map((s,si)=>
-              h('div',{key:si,style:{display:'grid',gridTemplateColumns:'110px 1fr',gap:'14px',padding:'10px 0',borderTop:si?'1px solid #d7d3d3':'none'}},
+              h('div',{key:si,style:{display:'grid',gridTemplateColumns:'118px 1fr',gap:'14px',padding:'10px 0',borderTop:si?'1px solid #d7d3d3':'none'}},
                 h('div',null,
                   h('span',{style:{display:'block',fontSize:'12px',fontWeight:'800'}},new Date(s.date+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'short'})),
                   h('span',{style:{display:'block',fontSize:'11px',color:'#605d5d'}},s.sport)
@@ -3542,21 +3545,21 @@ function App() {
           ),
           coachPlan&&h('p',{style:{margin:'12px 0 0',fontSize:'11px',color:'#605d5d'}},'Ces séances apparaissent en gris pointillé sur le calendrier du Programme.')
         ),
-        // Chat
+        // Adapter le programme
         h('section',{style:{padding:'20px 32px 36px'}},
-          h('h2',{style:{margin:'0 0 10px',fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Échange avec le coach'),
+          h('h2',{style:{margin:'0 0 10px',fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Adapter le programme'),
           h('div',{style:{border:'2px solid #201e1d',background:'#fff',padding:'14px',display:'flex',flexDirection:'column',gap:'10px',maxHeight:'420px',overflowY:'auto'}},
             coachChat.length
               ? coachChat.map((m,mi)=>h('div',{key:mi,style:{alignSelf:m.role==='user'?'flex-end':'flex-start',maxWidth:'82%',padding:'8px 12px',fontSize:'13px',lineHeight:'1.45',whiteSpace:'pre-wrap',background:m.role==='user'?'#ffe0d9':'#f3f2f2',color:'#201e1d'}},m.text))
-              : h('span',{style:{fontSize:'12px',color:'#605d5d'}},'Exemples : « fais-moi le plan de la semaine », « je suis fatigué, allège », « je pars 3 jours sans courir, adapte le plan », « pourquoi une séance de seuil ? »'),
+              : h('span',{style:{fontSize:'12px',color:'#605d5d'}},'Dis au coach ce qui change : « je pars 3 jours sans courir », « allège, je suis fatigué », « décale la séance de seuil à jeudi », « ajoute une séance de natation »…'),
             coachBusy&&h('span',{style:{fontSize:'12px',color:'#605d5d'}},'Le coach réfléchit…')
           ),
           coachErr&&h('p',{style:{margin:'8px 0 0',fontSize:'12px',color:'#ec3013'}},coachErr),
           h('div',{style:{display:'flex',gap:'8px',marginTop:'10px'}},
-            h('textarea',{value:coachInput,onChange:e=>setCoachInput(e.target.value),onKeyDown:e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();coachSend();}},rows:2,placeholder:'Écris au coach…',style:{flex:1,padding:'10px 12px',border:'2px solid #201e1d',background:'#fff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',resize:'vertical'}}),
-            h('button',{type:'button',onClick:coachSend,disabled:coachBusy||!coachInput.trim()||coachLeft<=0,style:{padding:'0 18px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||!coachInput.trim()||coachLeft<=0)?'not-allowed':'pointer'}},'Envoyer')
+            h('textarea',{value:coachInput,disabled:!coachPlan,onChange:e=>setCoachInput(e.target.value),onKeyDown:e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();coachSend();}},rows:2,placeholder:coachPlan?'Demande un ajustement au programme…':'Le programme n’est pas encore prêt.',style:{flex:1,padding:'10px 12px',border:'2px solid #201e1d',background:coachPlan?'#fff':'#f3f2f2',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',resize:'vertical'}}),
+            h('button',{type:'button',onClick:coachSend,disabled:coachBusy||!coachInput.trim()||coachLeft<=0||!coachPlan,style:{padding:'0 18px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0||!coachPlan)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0||!coachPlan)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||!coachInput.trim()||coachLeft<=0||!coachPlan)?'not-allowed':'pointer'}},'Envoyer')
           ),
-          h('p',{style:{margin:'8px 0 0',fontSize:'11px',color:'#605d5d'}},'Prompts restants aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'. Ton plan est conservé sur cet appareil ; la conversation n’est pas enregistrée.')
+          h('p',{style:{margin:'8px 0 0',fontSize:'11px',color:'#605d5d'}},'Prompts restants aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'. Ton programme est conservé sur cet appareil ; la conversation n’est pas enregistrée.')
         )
       ),
 
