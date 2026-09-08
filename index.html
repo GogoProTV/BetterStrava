@@ -42,6 +42,8 @@ function fmtPace(min) {
   return Math.floor(total / 60) + "'" + String(total % 60).padStart(2, '0') + '"';
 }
 function fmtH(min) { const h = Math.floor(min / 60); return h + 'h' + String(Math.round(min % 60)).padStart(2, '0'); }
+function fmtDur(min) { min = Math.round(min); return min >= 60 ? fmtH(min) : min + ' min'; }
+function isoLocal(dt) { const z = new Date(dt); return z.getFullYear() + '-' + String(z.getMonth() + 1).padStart(2, '0') + '-' + String(z.getDate()).padStart(2, '0'); }
 function btnStyle(active) {
   return {
     padding: '9px 14px', border: '2px solid ' + (active ? '#ec3013' : '#201e1d'),
@@ -1041,6 +1043,7 @@ function App() {
   function upsert(key, ref, cfg) { if (!ref.current) return; destroyChart(key); charts.current[key] = new Chart(ref.current, cfg); }
 
   function applyAthlete(a) {
+    try { if (a && a.id) localStorage.setItem('bs_athlete_id', String(a.id)); } catch (e) {}
     setProfile(p => ({
       ...p,
       name: [a.firstname, a.lastname].filter(Boolean).join(' ') || p.name,
@@ -2696,7 +2699,15 @@ function App() {
           return { sport:short[a.sport]||a.sport, time:fmtH(a.time), workout:a.name||'Donnée manquante', detail:a.dist?fmtNum(a.dist,1)+' km':'', charge, method, act:a, onClick:navToAct, style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px solid '+(charge!==null&&charge>=100?tssColor(charge):'#d7d3d3'),background:sessBg,color:'#201e1d',cursor:'pointer'} };
         });
         const isToday=d.toDateString()===today.toDateString();
-        return{dow,num:d.getDate(),sessions,empty:sessions.length===0,numStyle:{fontSize:'12px',fontWeight:'800',...(isToday?{padding:'1px 6px',background:'#201e1d',color:'#ffffff'}:{color:'#201e1d'})},cellStyle:{minWidth:0,padding:'8px 6px 8px',borderRight:'1px solid #d7d3d3',borderLeft:i>0?'0':undefined}};
+        const dISO=isoLocal(d), todayISO=isoLocal(today);
+        const planned=(coachPlan&&Array.isArray(coachPlan.sessions)&&dISO>=todayISO)
+          ? coachPlan.sessions.filter(p=>p.date===dISO&&p.sport&&p.sport!=='Repos').map(p=>({
+              sport:({Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'})[p.sport]||p.sport,
+              title:p.title||'Séance',
+              time:p.durationMin?fmtDur(p.durationMin):'',
+            }))
+          : [];
+        return{dow,num:d.getDate(),sessions,planned,empty:sessions.length===0&&planned.length===0,numStyle:{fontSize:'12px',fontWeight:'800',...(isToday?{padding:'1px 6px',background:'#201e1d',color:'#ffffff'}:{color:'#201e1d'})},cellStyle:{minWidth:0,padding:'8px 6px 8px',borderRight:'1px solid #d7d3d3',borderLeft:i>0?'0':undefined}};
       });
       const wkDate=new Date(s); const wkEnd=new Date(s.getTime()+6*86400000);
       const span=wkDate.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})+' \u2013 '+wkEnd.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
@@ -2779,6 +2790,191 @@ function App() {
     : (data.length ? 'Pas assez de données' : 'à calculer');
   const projMethodLabel = projResult ? (projResult.method === 'hrr' ? 'FC de réserve' : 'Riegel + Minetti') : '—';
   const projRefClick = projResult && projResult.refId != null ? () => openActivity(projResult.refId) : null;
+
+  // ── Coach : état ────────────────────────────────────────────────────────────
+  const COACH_LIMIT = 10;
+  const [coachChat, setCoachChat] = useState(() => {
+    try { const s = localStorage.getItem('bs_coach_chat'); if (s) return JSON.parse(s); } catch (e) {}
+    return [];
+  });
+  const [coachInput, setCoachInput] = useState('');
+  const [coachBusy, setCoachBusy] = useState(false);
+  const [coachErr, setCoachErr] = useState('');
+  const [coachQuota, setCoachQuota] = useState(null);
+  const [coachPlan, setCoachPlan] = useState(() => {
+    try { const s = localStorage.getItem('bs_coach_plan'); if (s) return JSON.parse(s); } catch (e) {}
+    return null;
+  });
+  const [coachAvail, setCoachAvail] = useState(() => {
+    try { const s = localStorage.getItem('bs_coach_avail'); if (s) return { days: 4, minutes: 75, longDay: 6, ...JSON.parse(s) }; } catch (e) {}
+    return { days: 4, minutes: 75, longDay: 6 };
+  });
+  useEffect(() => { try { localStorage.setItem('bs_coach_chat', JSON.stringify(coachChat.slice(-40))); } catch (e) {} }, [coachChat]);
+  useEffect(() => { try { localStorage.setItem('bs_coach_plan', coachPlan ? JSON.stringify(coachPlan) : ''); } catch (e) {} }, [coachPlan]);
+  useEffect(() => { try { localStorage.setItem('bs_coach_avail', JSON.stringify(coachAvail)); } catch (e) {} }, [coachAvail]);
+
+  function coachProfileId() {
+    try {
+      const aid = localStorage.getItem('bs_athlete_id');
+      if (aid) return 'a' + aid;
+      let x = localStorage.getItem('bs_coach_id');
+      if (!x) { x = 'c' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('bs_coach_id', x); }
+      return x;
+    } catch (e) { return 'anon'; }
+  }
+  function coachLocalQuota() {
+    const today = isoLocal(new Date());
+    let q = {};
+    try { q = JSON.parse(localStorage.getItem('bs_coach_lq') || '{}'); } catch (e) {}
+    if (q.date !== today) q = { date: today, count: 0 };
+    return q;
+  }
+  const coachLeft = coachQuota
+    ? Math.max(0, coachQuota.limit - coachQuota.used)
+    : Math.max(0, COACH_LIMIT - coachLocalQuota().count);
+
+  function coachPrimarySport() {
+    const rt = race.type || '';
+    if (rt.indexOf('Cyclo') >= 0 || rt.indexOf('montre vélo') >= 0) return 'Vélo';
+    if (rt.indexOf('Natation') >= 0) return 'Natation';
+    if (rt.toLowerCase().indexOf('trail') >= 0) return 'Trail';
+    if (rt.indexOf('Triathlon') >= 0 || rt === 'Ironman') return 'Triathlon';
+    return 'Course';
+  }
+  const COACH_DAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
+
+  function buildCoachContext() {
+    const last = pmcToday;
+    const ramp = pmcSeries.length >= 8 ? Math.round((last.ctl - pmcSeries[pmcSeries.length - 8].ctl) * 10) / 10 : null;
+    const nowMs = Date.now();
+    const rec = data.filter(a => nowMs - a.date.getTime() < 21 * 86400000 && !a.planned)
+      .sort((a, b) => b.date - a.date).slice(0, 14)
+      .map(a => ({ date: isoLocal(a.date), sport: a.sport, km: Math.round(a.dist * 10) / 10, min: a.time, dplus: a.elev, fcMoy: a.hr || null }));
+    const zones = {};
+    if (profile.thresholdPace) zones.allureSeuilMinKm = Number(profile.thresholdPace);
+    if (profile.fcMax) zones.fcMax = Number(profile.fcMax);
+    if (profile.fcRest) zones.fcRepos = Number(profile.fcRest);
+    if (profile.lthr) zones.lthr = Number(profile.lthr);
+    if (profile.ftp) zones.ftpVelo = Number(profile.ftp);
+    return {
+      date: isoLocal(new Date()),
+      semaineDebut: isoLocal(weekStart(new Date())),
+      objectif: {
+        type: race.type, date: race.date || null,
+        semainesRestantes: race.date ? weeksLeft : null,
+        tempsProjeteMin: projResult ? projResult.minutes : null,
+        methodeProjection: projResult ? projResult.method : null,
+      },
+      forme: last ? { ctl: last.ctl, atl: last.atl, tsb: last.tsb, rampeCtl7j: ramp } : null,
+      disponibilite: {
+        joursParSemaine: coachAvail.days,
+        minutesParSeance: coachAvail.minutes,
+        jourSortieLongue: COACH_DAYS[coachAvail.longDay] || 'dimanche',
+      },
+      sportPrincipal: coachPrimarySport(),
+      zones,
+      sortiesRecentes: rec,
+    };
+  }
+
+  // ── Coach : planificateur déterministe ────────────────────────────────────
+  function planWeek() {
+    if (!pmcToday) return null;
+    const ws = weekStart(new Date());
+    const wsMs = ws.getTime();
+    const tsb = pmcToday.tsb;
+    const wl = race.date ? weeksLeft : null;
+    const spRaw = coachPrimarySport();
+    const sport = spRaw === 'Triathlon' || spRaw === 'Natation' ? 'Course' : spRaw;
+    let phase = 'Entretien';
+    if (wl != null) {
+      if (wl <= 1) phase = 'Affûtage';
+      else if (wl <= 4) phase = 'Spécifique';
+      else if (wl <= 12) phase = 'Développement';
+      else phase = 'Base';
+    }
+    const highFatigue = tsb <= -20;
+    const nDays = Math.max(2, Math.min(7, Number(coachAvail.days) || 4));
+    const base = Math.max(30, Number(coachAvail.minutes) || 60);
+    const longDay = Math.max(0, Math.min(6, Number(coachAvail.longDay)));
+    const order = [longDay, 2, 4, 0, 6, 3, 1].filter((d, i, arr) => arr.indexOf(d) === i);
+    const dayIdx = order.slice(0, nDays).sort((a, b) => a - b);
+    const qualityByPhase = {
+      'Base': { title: 'Côtes', desc: 'Échauffement 15 min. 8 × 1 min en côte à allure soutenue, récup en trottinant à la descente. Retour au calme 10 min.' },
+      'Développement': { title: 'Seuil', desc: 'Échauffement 15 min. 3 × 8 min à allure seuil (environ allure semi-marathon), récup 2 min. Retour au calme 10 min.' },
+      'Spécifique': { title: 'Allure course', desc: 'Échauffement 15 min. 5 × 6 min à l’allure objectif de course, récup 90 s. Retour au calme 10 min.' },
+      'Affûtage': { title: 'Rappels courts', desc: 'Échauffement 15 min. 5 × 1 min à allure 10 km, récup 2 min. Retour au calme 10 min.' },
+      'Entretien': { title: 'Fractionné', desc: 'Échauffement 15 min. 8 × 400 m rapides, récup 1 min. Retour au calme 10 min.' },
+    };
+    const q = qualityByPhase[phase];
+    const longMin = Math.round((highFatigue ? 0.75 : 1) * Math.min(base * 2.3, phase === 'Affûtage' ? base * 1.4 : base * 2.4));
+    const sessions = dayIdx.map((di, i) => {
+      const date = isoLocal(new Date(wsMs + di * 86400000));
+      let s;
+      if (di === longDay) {
+        s = { sport, title: 'Sortie longue', durationMin: longMin, description: 'Endurance fondamentale, allure conversationnelle (65–75 % FCmax). Relief proche de celui de la course si possible.' };
+      } else if (!highFatigue && (i === 1 || (nDays >= 5 && i === 3))) {
+        s = { sport, title: q.title, durationMin: base, description: q.desc };
+      } else if (highFatigue && i === 0) {
+        s = { sport, title: 'Récupération', durationMin: Math.round(base * 0.6), description: 'Footing très lent ou repos actif — la Forme (TSB) est basse, priorité à la récupération.' };
+      } else {
+        s = { sport, title: 'Endurance', durationMin: Math.round(base * 0.9), description: 'Footing en endurance fondamentale, environ 70 % FCmax, aisance respiratoire complète.' };
+      }
+      s.date = date;
+      const f = s.title === 'Sortie longue' ? 1.05 : s.title === 'Récupération' ? 0.7 : s.title === q.title ? 1.35 : 0.95;
+      s.load = Math.round(s.durationMin * f);
+      return s;
+    });
+    const weekTSS = sessions.reduce((a, b) => a + (b.load || 0), 0);
+    const note = phase === 'Affûtage' ? 'réduction de charge (affûtage)' : highFatigue ? 'charge allégée (fatigue élevée)' : 'progression contrôlée';
+    return {
+      source: 'deterministic',
+      weekStartISO: isoLocal(ws),
+      generatedAt: new Date().toISOString(),
+      rationale: 'Phase : ' + phase + '. ' + (highFatigue ? 'Forme (TSB ' + tsb + ') basse → ' : '') + note + '. ≈ ' + weekTSS + ' TSS sur ' + nDays + ' séances.',
+      sessions,
+    };
+  }
+
+  async function coachSend() {
+    const text = coachInput.trim();
+    if (!text || coachBusy) return;
+    if (coachLeft <= 0) { setCoachErr('Limite quotidienne atteinte (' + COACH_LIMIT + ' échanges par jour).'); return; }
+    setCoachErr('');
+    const nextChat = [...coachChat, { role: 'user', text }];
+    setCoachChat(nextChat);
+    setCoachInput('');
+    setCoachBusy(true);
+    try { const q = coachLocalQuota(); q.count++; localStorage.setItem('bs_coach_lq', JSON.stringify(q)); } catch (e) {}
+    try {
+      const r = await fetch('/api/coach', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profileId: coachProfileId(),
+          messages: nextChat.map(m => ({ role: m.role, content: m.text })),
+          context: buildCoachContext(),
+          plan: coachPlan,
+        }),
+      });
+      const j = await r.json();
+      if (j.quota) setCoachQuota(j.quota);
+      if (!r.ok) { setCoachErr(j.error || 'Erreur serveur'); setCoachBusy(false); return; }
+      setCoachChat(c => [...c, { role: 'coach', text: j.reply || '(réponse vide)' }]);
+      if (j.plan && Array.isArray(j.plan.sessions) && j.plan.sessions.length) {
+        setCoachPlan({
+          source: 'llm',
+          weekStartISO: isoLocal(weekStart(new Date())),
+          generatedAt: new Date().toISOString(),
+          rationale: j.plan.rationale || '',
+          sessions: j.plan.sessions,
+        });
+      }
+    } catch (e) {
+      setCoachErr('Réseau indisponible : ' + e.message);
+    }
+    setCoachBusy(false);
+  }
+
   const acts=actsWin(data);
   const curW=actsWin(data);
   const prevW=actsPrev(data);
@@ -3215,6 +3411,7 @@ function App() {
       h('nav',{style:{display:'flex',flexDirection:'column',borderBottom:'1px solid #201e1d'}},
         h('button',{type:'button',onClick:()=>setTab('programme'),style:navStyle(tab==='programme'),onMouseEnter:e=>{if(tab!=='programme')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='programme')e.currentTarget.style.background='transparent';}},'Programme'),
         h('button',{type:'button',onClick:()=>setTab('activites'),style:navStyle(tab==='activites'),onMouseEnter:e=>{if(tab!=='activites')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='activites')e.currentTarget.style.background='transparent';}},'Activités'),
+        h('button',{type:'button',onClick:()=>setTab('coach'),style:navStyle(tab==='coach'),onMouseEnter:e=>{if(tab!=='coach')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='coach')e.currentTarget.style.background='transparent';}},'Coach'),
         athleteSections.map(s=>h('button',{key:s,type:'button',onClick:()=>{setAthleteSection(s);setTab('athlete');},style:navStyle(tab==='athlete'&&athleteSection===s),onMouseEnter:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='transparent';}},s))
       ),
       h('div',{style:{marginTop:'auto',padding:'20px 24px 8px'}},
@@ -3259,12 +3456,12 @@ function App() {
                 ),
                 h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'8px'}},
                   h('span',{style:{padding:'3px 8px',fontSize:'12px',fontWeight:'600',letterSpacing:'0.04em',background:k.good?'#ffe0d9':'#eae9e9',color:k.good?'#ae1800':'#605d5d'}},k.delta),
-                  !k.segNote&&h('span',{style:{fontSize:'12px',color:k.noteClick?'#ec3013':'#605d5d',cursor:k.noteClick?'pointer':'default',textDecoration:k.noteClick?'underline':'none'},onClick:k.noteClick||undefined,title:k.noteClick?'Analyser cette activité':undefined},k.note)
+                  !k.segNote&&h('span',{style:{fontSize:'12px',color:k.noteClick?'#ec3013':'#605d5d',cursor:k.noteClick?'pointer':'default',textDecoration:'none'},onClick:k.noteClick||undefined,title:k.noteClick?'Analyser cette activité':undefined},k.note)
                 ),
                 k.segNote&&h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginTop:'2px'}},
                   [k.segNote.swim&&{label:'Nat.',res:k.segNote.swim},k.segNote.bike&&{label:'Vélo',res:k.segNote.bike},k.segNote.run&&{label:'Course',res:k.segNote.run}].filter(Boolean).map(({label,res})=>{
                     const clk = res && res.refId != null ? () => openActivity(res.refId) : null;
-                    return h('span',{key:label,onClick:clk||undefined,title:clk?'Analyser cette activité':undefined,style:{fontSize:'11px',color:clk?'#ec3013':'#605d5d',cursor:clk?'pointer':'default',textDecoration:clk?'underline':'none'}},
+                    return h('span',{key:label,onClick:clk||undefined,title:clk?'Analyser cette activité':undefined,style:{fontSize:'11px',color:clk?'#ec3013':'#605d5d',cursor:clk?'pointer':'default'}},
                       h('span',{style:{fontWeight:'700',color:'#ec3013'}},label+' '),
                       fmtProjected(res.minutes)
                     );
@@ -3334,6 +3531,11 @@ function App() {
                           ),
                         );
                       }),
+                      (day.planned||[]).map((p,pi)=>h('div',{key:'pl'+pi,style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px dashed #bab6b6',background:'transparent',color:'#8a8686'}},
+                        h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.1'}},p.sport),
+                        h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},p.title),
+                        h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',letterSpacing:'0.04em',lineHeight:'1.3'}},'Prévu'+(p.time?' · '+p.time:''))
+                      )),
                       day.empty&&h('span',{style:{display:'flex',alignItems:'center',height:'100%',fontSize:'12px',color:'#bab6b6'}},'Repos')
                     )
                   ))
@@ -3341,6 +3543,72 @@ function App() {
               )
             )
           ):null
+        )
+      ),
+
+      // ── COACH ────────────────────────────────────────────────────────────
+      tab==='coach'&&h('div',null,
+        h('header',{style:{display:'flex',alignItems:'flex-end',justifyContent:'space-between',flexWrap:'wrap',gap:'24px',minHeight:'108px',boxSizing:'border-box',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
+            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.14em',textTransform:'uppercase',color:'#ec3013'}},'Coach'),
+            h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},'Plan & coach IA')
+          )
+        ),
+        // Disponibilité + génération
+        h('section',{style:{display:'flex',flexWrap:'wrap',alignItems:'flex-end',gap:'18px 28px',padding:'18px 32px',borderBottom:'2px solid #201e1d'}},
+          [['Jours / semaine','days',2,7,1],['Minutes / séance','minutes',20,240,5]].map(([lab,k,mn,mx,st])=>
+            h('div',{key:k,style:{display:'flex',flexDirection:'column',gap:'6px'}},
+              h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},lab),
+              h('input',{type:'number',min:mn,max:mx,step:st,value:coachAvail[k],onChange:e=>{const v=Math.max(mn,Math.min(mx,Number(e.target.value)||mn));setCoachAvail(a=>({...a,[k]:v}));},style:{width:'110px',padding:'9px 12px',border:'2px solid #201e1d',background:'#fff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600'}})
+            )
+          ),
+          h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
+            h('label',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Jour sortie longue'),
+            h('select',{value:coachAvail.longDay,onChange:e=>setCoachAvail(a=>({...a,longDay:Number(e.target.value)})),style:{padding:'9px 12px',border:'2px solid #201e1d',background:'#fff',color:'#201e1d',fontFamily:'inherit',fontSize:'14px',fontWeight:'600',cursor:'pointer'}},
+              ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'].map((d,i)=>h('option',{key:i,value:i},d))
+            )
+          ),
+          h('button',{type:'button',onClick:()=>{const p=planWeek();if(p)setCoachPlan(p);else setCoachErr('Charge tes activités Strava pour générer un plan.');},style:{padding:'10px 18px',border:'2px solid #ec3013',background:'#ec3013',color:'#fff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},coachPlan?'Régénérer (déterministe)':'Générer le plan')
+        ),
+        // Plan de la semaine
+        h('section',{style:{padding:'20px 32px',borderBottom:'2px solid #201e1d'}},
+          h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'8px'}},
+            h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Semaine en cours'),
+            coachPlan&&h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:coachPlan.source==='llm'?'#7c4dbc':'#605d5d'}},coachPlan.source==='llm'?'Ajusté par le coach IA':'Plan déterministe')
+          ),
+          !coachPlan&&h('p',{style:{margin:0,fontSize:'13px',color:'#605d5d'}},pmcToday?'Aucun plan. Renseigne ta disponibilité puis « Générer le plan ».':'Charge tes activités Strava pour générer un plan.'),
+          coachPlan&&h('p',{style:{margin:'0 0 12px',fontSize:'12px',color:'#605d5d'}},coachPlan.rationale),
+          coachPlan&&h('div',null,
+            coachPlan.sessions.slice().sort((a,b)=>a.date<b.date?-1:1).map((s,si)=>
+              h('div',{key:si,style:{display:'grid',gridTemplateColumns:'110px 1fr',gap:'14px',padding:'10px 0',borderTop:si?'1px solid #d7d3d3':'none'}},
+                h('div',null,
+                  h('span',{style:{display:'block',fontSize:'12px',fontWeight:'800'}},new Date(s.date+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'short'})),
+                  h('span',{style:{display:'block',fontSize:'11px',color:'#605d5d'}},s.sport)
+                ),
+                h('div',null,
+                  h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800'}},s.title+(s.durationMin?' · '+fmtDur(s.durationMin):'')+(s.load!=null?' · '+s.load+' TSS':'')),
+                  s.description&&h('span',{style:{display:'block',fontSize:'12px',color:'#3d3a3a',marginTop:'2px',lineHeight:'1.45'}},s.description)
+                )
+              )
+            )
+          ),
+          coachPlan&&h('p',{style:{margin:'12px 0 0',fontSize:'11px',color:'#605d5d'}},'Ces séances apparaissent en gris pointillé sur le calendrier du Programme.')
+        ),
+        // Chat
+        h('section',{style:{padding:'20px 32px 36px'}},
+          h('h2',{style:{margin:'0 0 10px',fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},'Échange avec le coach'),
+          h('div',{style:{border:'2px solid #201e1d',background:'#fff',padding:'14px',display:'flex',flexDirection:'column',gap:'10px',maxHeight:'420px',overflowY:'auto'}},
+            coachChat.length
+              ? coachChat.map((m,mi)=>h('div',{key:mi,style:{alignSelf:m.role==='user'?'flex-end':'flex-start',maxWidth:'82%',padding:'8px 12px',fontSize:'13px',lineHeight:'1.45',whiteSpace:'pre-wrap',background:m.role==='user'?'#ffe0d9':'#f3f2f2',color:'#201e1d'}},m.text))
+              : h('span',{style:{fontSize:'12px',color:'#605d5d'}},'Exemples : « je suis fatigué cette semaine, allège », « je pars 3 jours sans courir, adapte le plan », « pourquoi une séance de seuil ? »'),
+            coachBusy&&h('span',{style:{fontSize:'12px',color:'#605d5d'}},'Le coach réfléchit…')
+          ),
+          coachErr&&h('p',{style:{margin:'8px 0 0',fontSize:'12px',color:'#ec3013'}},coachErr),
+          h('div',{style:{display:'flex',gap:'8px',marginTop:'10px'}},
+            h('textarea',{value:coachInput,onChange:e=>setCoachInput(e.target.value),onKeyDown:e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();coachSend();}},rows:2,placeholder:'Écris au coach…',style:{flex:1,padding:'10px 12px',border:'2px solid #201e1d',background:'#fff',color:'#201e1d',fontFamily:'inherit',fontSize:'13px',resize:'vertical'}}),
+            h('button',{type:'button',onClick:coachSend,disabled:coachBusy||!coachInput.trim()||coachLeft<=0,style:{padding:'0 18px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||!coachInput.trim()||coachLeft<=0)?'not-allowed':'pointer'}},'Envoyer')
+          ),
+          h('p',{style:{margin:'8px 0 0',fontSize:'11px',color:'#605d5d'}},'Prompts restants aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'. Le coach IA peut écraser le plan déterministe.')
         )
       ),
 
@@ -4461,7 +4729,7 @@ function App() {
                       ),
                       h('div',{style:{marginTop:'4px',paddingTop:'4px',borderTop:'1px solid #d7d3d3',fontSize:'11px',color:'#605d5d'}},'Estimation par segment · total ' + fmtProjected(projResult.minutes))
                     )
-                  : projResult&&h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:projRefClick?'#ec3013':'#605d5d',cursor:projRefClick?'pointer':'default',textDecoration:projRefClick?'underline':'none'},onClick:projRefClick||undefined,title:projRefClick?'Analyser cette activité':undefined},projNote)
+                  : projResult&&h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:projRefClick?'#ec3013':'#605d5d',cursor:projRefClick?'pointer':'default'},onClick:projRefClick||undefined,title:projRefClick?'Analyser cette activité':undefined},projNote)
               )
             )
           )
