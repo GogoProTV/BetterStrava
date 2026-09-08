@@ -3262,12 +3262,13 @@ function App() {
                   !k.segNote&&h('span',{style:{fontSize:'12px',color:k.noteClick?'#ec3013':'#605d5d',cursor:k.noteClick?'pointer':'default',textDecoration:k.noteClick?'underline':'none'},onClick:k.noteClick||undefined,title:k.noteClick?'Analyser cette activité':undefined},k.note)
                 ),
                 k.segNote&&h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginTop:'2px'}},
-                  [k.segNote.swim&&{label:'Nat.',res:k.segNote.swim},k.segNote.bike&&{label:'Vélo',res:k.segNote.bike},k.segNote.run&&{label:'Course',res:k.segNote.run}].filter(Boolean).map(({label,res})=>
-                    h('span',{key:label,style:{fontSize:'11px',color:'#605d5d'}},
+                  [k.segNote.swim&&{label:'Nat.',res:k.segNote.swim},k.segNote.bike&&{label:'Vélo',res:k.segNote.bike},k.segNote.run&&{label:'Course',res:k.segNote.run}].filter(Boolean).map(({label,res})=>{
+                    const clk = res && res.refId != null ? () => openActivity(res.refId) : null;
+                    return h('span',{key:label,onClick:clk||undefined,title:clk?'Analyser cette activité':undefined,style:{fontSize:'11px',color:clk?'#ec3013':'#605d5d',cursor:clk?'pointer':'default',textDecoration:clk?'underline':'none'}},
                       h('span',{style:{fontWeight:'700',color:'#ec3013'}},label+' '),
                       fmtProjected(res.minutes)
-                    )
-                  )
+                    );
+                  })
                 )
               )
             )
@@ -4446,13 +4447,14 @@ function App() {
                         projResult.segments.swim && { label:'Nat.', res: projResult.segments.swim },
                         projResult.segments.bike && { label:'Vélo', res: projResult.segments.bike },
                         projResult.segments.run  && { label:'Course', res: projResult.segments.run },
-                      ].filter(Boolean).map(({label, res}) =>
-                        h('div',{key:label,style:{display:'flex',alignItems:'baseline',gap:'8px'}},
+                      ].filter(Boolean).map(({label, res}) => {
+                        const clk = res && res.refId != null ? () => openActivity(res.refId) : null;
+                        return h('div',{key:label,onClick:clk||undefined,title:clk?'Analyser cette activité':undefined,style:{display:'flex',alignItems:'baseline',gap:'8px',cursor:clk?'pointer':'default'}},
                           h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#ec3013',minWidth:'42px'}},label),
                           h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.01em'}},fmtProjected(res.minutes)),
                           h('span',{style:{fontSize:'11px',color:'#605d5d'}},res.refDist ? '\u00b7 d\'après ' + fmtNum(res.refDist,1) + ' km' : '')
-                        )
-                      ),
+                        );
+                      }),
                       projResult.transitions && h('div',{key:'trans',style:{display:'flex',alignItems:'baseline',gap:'8px',opacity:0.6}},
                         h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d',minWidth:'42px'}},'T1+T2'),
                         h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.01em'}},'+'+projResult.transitions+' min')
