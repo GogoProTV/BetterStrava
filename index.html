@@ -782,7 +782,21 @@ function bikeActsEstimatedPower(acts, totalMassKg) {
 }
 
 // ── Calculateur de temps projeté ────────────────────────────────────────────
-function projectRaceTime(activities, raceType, raceDist, raceElev, raceElevNeg) {
+// %FCR (fréquence cardiaque de réserve) qu'un coureur entraîné peut tenir selon
+// la durée de l'effort. %FCR ≈ %VO2R ≈ %vitesse en aérobie, d'où le modèle.
+function targetHRRforDuration(min) {
+  const pts = [[10,0.97],[20,0.94],[40,0.91],[60,0.89],[90,0.86],[120,0.83],[180,0.79],[240,0.76],[300,0.73],[360,0.71]];
+  if (min <= pts[0][0]) return pts[0][1];
+  if (min >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (min <= pts[i][0]) {
+      const [m0, h0] = pts[i - 1], [m1, h1] = pts[i];
+      return h0 + (h1 - h0) * (min - m0) / (m1 - m0);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+function projectRaceTime(activities, raceType, raceDist, raceElev, raceElevNeg, profile) {
   const runSports = ['Course', 'Trail'];
   const bikeSports = ['Vélo'];
   const swimSports = ['Natation'];
@@ -796,6 +810,62 @@ function projectRaceTime(activities, raceType, raceDist, raceElev, raceElevNeg) 
   );
   if (!candidates.length || !raceDist) return null;
 
+  const raceElevFactor = raceElev && raceDist ? 1 + (raceElev / (raceDist * 1000)) * 4.5 : 1;
+  const raceElevNegFactor = raceElevNeg && raceDist ? Math.max(0.85, 1 - (raceElevNeg / (raceDist * 1000)) * 1.5) : 1;
+  const raceEqDist = raceDist * raceElevFactor * raceElevNegFactor;
+
+  // ── Modèle FC de réserve (course uniquement, profil FC renseigné) ──────────
+  const fcMax  = Number(profile && profile.fcMax)  || null;
+  const fcRest = Number(profile && profile.fcRest) || null;
+  if (refSport === runSports && fcMax && fcRest && fcMax > fcRest + 20) {
+    const elevF = a => (a.elev && a.dist ? 1 + (a.elev / (a.dist * 1000)) * 4.5 : 1);
+    const nowMs = Date.now();
+    const raceElevPerKm = raceElev / Math.max(raceDist, 1);
+    const scored = candidates
+      .filter(a => a.hr && a.hr > fcRest + 5 && a.hr < fcMax + 5 && a.dist >= Math.min(raceDist * 0.35, 8))
+      .map(a => {
+        const hrr = (a.hr - fcRest) / (fcMax - fcRest);
+        const vFlat = 1 / (a.pace / elevF(a));                       // km/min à plat
+        const distSim = Math.exp(-Math.pow(Math.log(a.dist / raceDist), 2) / (2 * 0.45 * 0.45));
+        const elevSim = Math.exp(-Math.pow((a.elev / Math.max(a.dist, 1) - raceElevPerKm) / 15, 2));
+        const rec = Math.exp(-((nowMs - a.date.getTime()) / 86400000) / 150);
+        const w = distSim * (0.4 + 0.6 * elevSim) * (0.25 + 0.75 * rec);
+        return { a, hrr, vFlat, w };
+      })
+      .filter(s => s.hrr > 0.45 && s.hrr < 1.1 && isFinite(s.vFlat) && s.vFlat > 0 && s.w > 0.02);
+
+    if (scored.length >= 2) {
+      const sw = scored.reduce((s, x) => s + x.w, 0);
+      const vRef = scored.reduce((s, x) => s + x.w * x.vFlat, 0) / sw;   // vitesse plate moyenne pondérée
+      const hrrRef = scored.reduce((s, x) => s + x.w * x.hrr, 0) / sw;   // %FCR moyen pondéré
+      let durMin = raceEqDist / vRef;
+      let tHRR = 0;
+      for (let it = 0; it < 6; it++) {
+        tHRR = targetHRRforDuration(durMin);
+        const ratio = Math.min(tHRR / hrrRef, 1.4);                     // garde-fou physiologique
+        const vRace = vRef * ratio;
+        if (!(vRace > 0)) { durMin = 0; break; }
+        durMin = raceEqDist / vRace;
+      }
+      if (durMin > 0 && isFinite(durMin)) {
+        const ref = scored.reduce((p, c) => (c.w > p.w ? c : p), scored[0]).a;
+        return {
+          minutes: Math.round(durMin),
+          method: 'hrr',
+          targetHRR: Math.round(tHRR * 100),
+          refHRR: Math.round(hrrRef * 100),
+          nRef: scored.length,
+          refId: ref.id,
+          refName: ref.name || ref.sport,
+          refDist: ref.dist,
+          refPace: ref.pace,
+          refDate: ref.date,
+        };
+      }
+    }
+  }
+
+  // ── Repli : Riegel + Minetti sur la sortie la plus performante ────────────
   const minDist = Math.min(raceDist * 0.6, 10);
   const usable = candidates.filter(a => a.dist >= minDist);
   const pool = usable.length ? usable : candidates;
@@ -808,9 +878,6 @@ function projectRaceTime(activities, raceType, raceDist, raceElev, raceElevNeg) 
 
   const refElevFactor = ref.elev && ref.dist ? 1 + (ref.elev / (ref.dist * 1000)) * 4.5 : 1;
   const refPaceFlat = ref.pace / refElevFactor;
-  const raceElevFactor = raceElev && raceDist ? 1 + (raceElev / (raceDist * 1000)) * 4.5 : 1;
-  const raceElevNegFactor = raceElevNeg && raceDist ? Math.max(0.85, 1 - (raceElevNeg / (raceDist * 1000)) * 1.5) : 1;
-  const raceEqDist = raceDist * raceElevFactor * raceElevNegFactor;
   const refEqDist  = ref.dist  * refElevFactor;
   const riegelExp = 1.06;
   const projPaceFlat = refPaceFlat * Math.pow(raceEqDist / refEqDist, riegelExp - 1);
@@ -818,6 +885,7 @@ function projectRaceTime(activities, raceType, raceDist, raceElev, raceElevNeg) 
 
   return {
     minutes: Math.round(projMinutes),
+    method: 'riegel',
     refId: ref.id,
     refName: ref.name || ref.sport,
     refDist: ref.dist,
@@ -2151,7 +2219,7 @@ function App() {
               callbacks:{
                 title: items => { const m=PACE_DISTS_FINE[paceIdxMin+items[0].dataIndex]; return m>=1000?(m/1000%1===0?m/1000+' km':(m/1000).toFixed(1)+' km'):m+' m'; },
                 label: c => {
-                  const base = c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':fmtP(c.parsed.y)+' /km');
+                  const base = c.dataset.label+' · '+(c.parsed.y==null?'donnée manquante':(Math.round(c.parsed.y*100)/100).toFixed(2)+'"');
                   const arr = srcByLabel[c.dataset.label];
                   const id = arr ? arr[c.dataIndex] : null;
                   const act = id!=null ? data.find(x => String(x.id) === String(id)) : null;
@@ -2685,15 +2753,15 @@ function App() {
     if (!dist) return null;
     const isTriathlon = race.type.toLowerCase().includes('triathlon') || race.type === 'Ironman' || race.type === 'Triathlon 70.3';
     if (isTriathlon) {
-      const runRes  = f.run  ? projectRaceTime(data, 'Marathon', f.run,  f.runElev||0,  f.runElevNeg||0)  : null;
-      const bikeRes = f.bike ? projectRaceTime(data, 'Cyclosportive', f.bike, f.bikeElev||0, 0) : null;
-      const swimRes = f.swim ? projectRaceTime(data, 'Natation eau libre', f.swim, 0, 0) : null;
+      const runRes  = f.run  ? projectRaceTime(data, 'Marathon', f.run,  f.runElev||0,  f.runElevNeg||0, profile)  : null;
+      const bikeRes = f.bike ? projectRaceTime(data, 'Cyclosportive', f.bike, f.bikeElev||0, 0, profile) : null;
+      const swimRes = f.swim ? projectRaceTime(data, 'Natation eau libre', f.swim, 0, 0, profile) : null;
       const total = (runRes?.minutes||0) + (bikeRes?.minutes||0) + (swimRes?.minutes||0);
       const transitions = 5 + (f.bike ? 3 : 0);
       if (!total) return null;
       return { minutes: total + transitions, segTotal: total, transitions, segments: { run: runRes, bike: bikeRes, swim: swimRes } };
     }
-    return projectRaceTime(data, race.type, dist, f.runElev||f.bikeElev||0, f.runElevNeg||0);
+    return projectRaceTime(data, race.type, dist, f.runElev||f.bikeElev||0, f.runElevNeg||0, profile);
   })();
 
   function fmtProjected(min) {
@@ -2704,8 +2772,12 @@ function App() {
   const projDisplay = projResult ? fmtProjected(projResult.minutes) : 'Donnée manquante';
   const projRefDateStr = projResult && projResult.refDate ? projResult.refDate.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}) : '';
   const projNote = projResult
-    ? (projResult.segments ? 'Triathlon estimé segment par segment' : 'D\'après ' + (projResult.refName||'sortie') + ' · ' + fmtNum(projResult.refDist,1) + ' km · ' + fmtPace(projResult.refPace) + '/km' + (projRefDateStr ? ' · ' + projRefDateStr : ''))
+    ? (projResult.segments ? 'Triathlon estimé segment par segment'
+       : projResult.method === 'hrr'
+         ? 'FC de réserve · ' + projResult.nRef + ' sorties similaires · cible ' + projResult.targetHRR + ' % FCR · réf ' + (projResult.refName||'sortie') + ' (' + projResult.refHRR + ' % FCR' + (projRefDateStr ? ', ' + projRefDateStr : '') + ')'
+         : 'Riegel · d\'après ' + (projResult.refName||'sortie') + ' · ' + fmtNum(projResult.refDist,1) + ' km · ' + fmtPace(projResult.refPace) + '/km' + (projRefDateStr ? ' · ' + projRefDateStr : ''))
     : (data.length ? 'Pas assez de données' : 'à calculer');
+  const projMethodLabel = projResult ? (projResult.method === 'hrr' ? 'FC de réserve' : 'Riegel + Minetti') : '—';
   const projRefClick = projResult && projResult.refId != null ? () => openActivity(projResult.refId) : null;
   const acts=actsWin(data);
   const curW=actsWin(data);
@@ -3178,7 +3250,7 @@ function App() {
         ),
         h('section',{style:{display:'flex',flexWrap:'wrap',alignItems:'flex-start',justifyContent:'space-between',gap:'20px 44px',padding:'18px 32px',borderBottom:'2px solid #201e1d'}},
           h('div',{style:{display:'flex',flex:'1 1 520px',flexWrap:'wrap',gap:'20px 44px',minWidth:0}},
-            [{label:'Objectif',value:race.type,unit:'',delta:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}):'—',note:daysToRace===null?'':'J\u2212'+daysToRace,good:null,segNote:null},{label:'Temps projeté',value:projDisplay,unit:'',delta:projResult?'Riegel + Minetti':'—',note:projNote,good:projResult?true:null,segNote:projResult&&projResult.segments?projResult.segments:null,noteClick:projRefClick},{label:'Prêt · Readiness',value:data.length?String(ready):'Donnée manquante',unit:data.length?'%':'',delta:data.length?(ready>=75?'En bonne voie':'À consolider'):'—',note:race.type,good:data.length?ready>=75:null,segNote:null},{label:'Semaines restantes',value:raceDateObj?String(weeksLeft):'Donnée manquante',unit:raceDateObj?'sem.':'',delta:raceDateObj?"jusqu'à la course":'—',note:'',good:null,segNote:null}].map((k,i)=>
+            [{label:'Objectif',value:race.type,unit:'',delta:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}):'—',note:daysToRace===null?'':'J\u2212'+daysToRace,good:null,segNote:null},{label:'Temps projeté',value:projDisplay,unit:'',delta:projMethodLabel,note:projNote,good:projResult?true:null,segNote:projResult&&projResult.segments?projResult.segments:null,noteClick:projRefClick},{label:'Prêt · Readiness',value:data.length?String(ready):'Donnée manquante',unit:data.length?'%':'',delta:data.length?(ready>=75?'En bonne voie':'À consolider'):'—',note:race.type,good:data.length?ready>=75:null,segNote:null},{label:'Semaines restantes',value:raceDateObj?String(weeksLeft):'Donnée manquante',unit:raceDateObj?'sem.':'',delta:raceDateObj?"jusqu'à la course":'—',note:'',good:null,segNote:null}].map((k,i)=>
               h('div',{key:i,style:{display:'flex',flexDirection:'column',gap:'6px',minWidth:0}},
                 h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},k.label),
                 h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px'}},
@@ -4385,7 +4457,7 @@ function App() {
                         h('span',{style:{fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d',minWidth:'42px'}},'T1+T2'),
                         h('span',{style:{fontSize:'13px',fontWeight:'800',letterSpacing:'-0.01em'}},'+'+projResult.transitions+' min')
                       ),
-                      h('div',{style:{marginTop:'4px',paddingTop:'4px',borderTop:'1px solid #d7d3d3',fontSize:'11px',color:'#605d5d'}},'Riegel + Minetti · total ' + fmtProjected(projResult.minutes))
+                      h('div',{style:{marginTop:'4px',paddingTop:'4px',borderTop:'1px solid #d7d3d3',fontSize:'11px',color:'#605d5d'}},'Estimation par segment · total ' + fmtProjected(projResult.minutes))
                     )
                   : projResult&&h('span',{style:{display:'block',marginTop:'4px',fontSize:'11px',color:projRefClick?'#ec3013':'#605d5d',cursor:projRefClick?'pointer':'default',textDecoration:projRefClick?'underline':'none'},onClick:projRefClick||undefined,title:projRefClick?'Analyser cette activité':undefined},projNote)
               )
