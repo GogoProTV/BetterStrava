@@ -85,7 +85,7 @@ courants. N'écris JAMAIS le terme de gauche, dis celui de droite :
   découplage                         → « ta capacité à tenir l'allure jusqu'au bout »
   seuil / seuil lactique / LTHR       → « l'allure que tu tiens environ 1 h à fond »
   PMA / VMA                          → « ta vitesse maximale »
-  zones 1 à 5                        → « très facile / facile / soutenu / dur / très dur »
+  zones                             → écris « Z1 » à « Z5 » (Z1 = très facile, Z5 = très dur)
 Tu peux donner un chiffre en clair (« 3,1 watts par kilo », « 145 pulsations », « 172 pas par minute »)
 mais sans sigle et sans expliquer la notion.
 

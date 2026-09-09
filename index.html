@@ -19,6 +19,7 @@ a:hover { color: #ec3013; }
 button:focus-visible, [tabindex]:focus-visible { outline: 2px solid #ec3013; outline-offset: 2px; }
 input, select { font-family: inherit; }
 button { font-family: inherit; }
+@keyframes bsBar { 0% { left: -35%; } 100% { left: 100%; } }
 </style>
 </head>
 <body>
@@ -3311,7 +3312,7 @@ function App() {
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
   const athleteSections=['Condition physique','Puissance','Fréquence cardiaque','VO2 max','Efficacité'];
 
-  const ZONE_NAMES = ['', 'très facile', 'facile', 'soutenu', 'dur', 'très dur'];
+  const ZONE_NAMES = ['', 'Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
   function fmtStepDur(min) {
     if (min >= 60) return fmtDur(min);
     const m = Math.floor(min + 1e-6), s = Math.round((min - m) * 60);
@@ -3495,15 +3496,18 @@ function App() {
           const decoupl = sOk&&s.pow&&s.hr ? calcDecoupling('Vélo', s.pow, s.hr) : null;
           return [
             chargeVal!==null&&{ label:'Charge', value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
-              tooltip:{ main: tssData?.method==='TSS'?'TSS : puissance mesurée. 1h FTP = 100.':'HRSS : charge cardiaque. 1h LTHR = 100.', calc: tssData?.method==='TSS'?'(Durée × NP × IF) / (FTP × 3600) × 100.':'TRIMP normalisé s/s.' }},
+              tooltip:{ main: tssData?.method==='TSS'
+                ? 'La charge d’entraînement estime le coût physiologique de l’activité à partir de la puissance. Plus elle est élevée, plus la fatigue engendrée est importante. Elle repose sur la puissance normalisée et l’indice de fatigue (IF = NP / FTP). Référence : 1 h à la FTP = 100.'
+                : 'La charge d’entraînement estime le coût physiologique de l’activité à partir de la fréquence cardiaque. Plus elle est élevée, plus la fatigue engendrée est importante. Référence : 1 h à la FC seuil (LTHR) = 100.',
+                calc: tssData?.method==='TSS' ? 'Charge = (durée_s × NP × IF) / (FTP × 3600) × 100, avec IF = NP / FTP.' : 'Charge = TRIMP normalisé seconde par seconde ; 1 h à la LTHR = 100.' }},
             { label:'NP', value: np?np+' W':'—', unit:'', color: np?'#201e1d':'#bab6b6',
-              tooltip:{ main:'Puissance normalisée.', calc:'Fenêtre 30 s, puissance 4, racine quatrième.' }},
+              tooltip:{ main:'La puissance normalisée corrige les biais de la puissance moyenne pour refléter l’effort global de la sortie et comparer des parcours différents. Une sortie à 200 W constants a une NP plus basse qu’une sortie oscillant de 100 à 300 W : les pics d’effort coûtent physiologiquement plus cher. C’est un indicateur plus fidèle de l’effort réel, et la base du calcul de la charge.', calc:'Lissage de la puissance sur 30 s, élévation à la puissance 4, moyenne, puis racine quatrième.' }},
             { label:'VI', value: vi?String(vi):'—', unit:'', color: vi&&vi<1.05?'#22c55e':vi&&vi<1.1?'#f97a60':'#ec3013',
-              tooltip:{ main:'Variabilité. Proche 1.0 = effort lisse.', calc:'NP / puissance moy.' }},
+              tooltip:{ main:'L’indice de variabilité est le rapport entre la puissance normalisée et la puissance moyenne. Proche de 1 : effort régulier et constant, généralement plus économique sur le plan énergétique. Plus élevé : effort en dents de scie.', calc:'VI = NP / puissance moyenne.' }},
             { label:'EF', value: ef?String(ef):'—', unit: ef?'W/bpm':'', color: '#201e1d',
-              tooltip:{ main:'Efficacité aérobie : watts par battement.', calc:'NP / FC moy.' }},
+              tooltip:{ main:'Le facteur d’efficacité mesure la relation entre la puissance produite et le coût cardiaque : combien de watts tu génères pour chaque battement de cœur. Un EF élevé = beaucoup de puissance pour un effort cardiaque modéré, signe d’une bonne condition physique. Pertinent surtout pour comparer des sorties de même nature (même type d’effort, mêmes conditions), pour éviter les biais liés aux variations de FC.', calc:'EF = puissance normalisée / FC moyenne (W/bpm).' }},
             { label:'Pw:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'Découplage aérobie. < 5 % = stable.', calc:'EF 2ème / EF 1ère - 1 × 100.' }},
+              tooltip:{ main:'Le Pw:Hr (ratio puissance / fréquence cardiaque) mesure la dérive cardiaque sur un effort prolongé à intensité stable. Il compare l’évolution de la puissance normalisée et de la FC entre la 1re et la 2e moitié de la sortie. Proche de 0 : la FC est restée stable par rapport à la puissance, bonne résistance à la fatigue cardiovasculaire. Négatif (≈ −5 %) : dérive cardiaque, signe de fatigue ou de déshydratation. Très positif (+5 %) : souvent un échauffement progressif en début de sortie.', calc:'(EF 2e moitié / EF 1re moitié − 1) × 100, avec EF = puissance / FC.' }},
             ...pmcCells,
           ].filter(Boolean);
         })(),
@@ -3544,13 +3548,13 @@ function App() {
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
             chargeVal!==null&&{ label:'Charge', value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
-              tooltip:{ main:'HRSS : charge cardiaque. 1h LTHR = 100.', calc:'TRIMP normalisé s/s.' }},
+              tooltip:{ main:'La charge d’entraînement estime le coût physiologique de l’activité à partir de la fréquence cardiaque. Plus elle est élevée, plus la fatigue engendrée est importante. Référence : 1 h à la FC seuil (LTHR) = 100.', calc:'Charge = TRIMP normalisé seconde par seconde (pondéré par l’intensité de la FC) ; 1 h à la LTHR = 100.' }},
             { label:ifLabel, value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
               tooltip:{ main:'Intensité relative cardiaque.', calc:'√(TRIMP_par_min / y_LTHR).' }},
             { label:'EF', value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
-              tooltip:{ main:'Efficacité aérobie.', calc:'Vitesse (m/min) / FC moy.' }},
+              tooltip:{ main:'Le facteur d’efficacité mesure la relation entre la vitesse produite et le coût cardiaque : quelle vitesse tu produis pour chaque battement de cœur. Un EF élevé = beaucoup de vitesse pour un effort cardiaque modéré, signe d’une bonne condition physique. Pertinent surtout pour comparer des sorties de même nature (même type d’effort, mêmes conditions), pour éviter les biais liés aux variations de FC.', calc:'EF = vitesse moyenne (m/min) / FC moyenne.' }},
             { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'Découplage aérobie. < 5 % = stable.', calc:'EF 2ème / EF 1ère - 1 × 100.' }},
+              tooltip:{ main:'Le Pa:Hr (ratio allure / fréquence cardiaque) mesure la dérive cardiaque sur un effort prolongé à intensité stable. Il compare l’évolution de la vitesse et de la FC entre la 1re et la 2e moitié de la sortie. Proche de 0 : la FC est restée stable par rapport à l’allure, bonne résistance à la fatigue cardiovasculaire. Négatif (≈ −5 %) : dérive cardiaque, signe de fatigue ou de déshydratation. Très positif (+5 %) : souvent un échauffement progressif en début de sortie.', calc:'(EF 2e moitié / EF 1re moitié − 1) × 100, avec EF = vitesse / FC.' }},
             ...pmcCells,
           ].filter(Boolean);
         })(),
@@ -3593,13 +3597,13 @@ function App() {
           const decoupl = sOk&&s.vel&&s.hr ? calcDecoupling('Course', s.vel, s.hr) : null;
           return [
             chargeVal!==null&&{ label:'Charge', value: String(chargeVal), unit:'', color: tssColor(chargeVal), bold: true,
-              tooltip:{ main:'HRSS : charge cardiaque. 1h LTHR = 100.', calc:'TRIMP normalisé s/s.' }},
+              tooltip:{ main:'La charge d’entraînement estime le coût physiologique de l’activité à partir de la fréquence cardiaque. Plus elle est élevée, plus la fatigue engendrée est importante. Référence : 1 h à la FC seuil (LTHR) = 100.', calc:'Charge = TRIMP normalisé seconde par seconde (pondéré par l’intensité de la FC) ; 1 h à la LTHR = 100.' }},
             { label:ifLabel, value: ifVal?String(ifVal):'—', unit:'', color: ifVal?'#201e1d':'#bab6b6',
               tooltip:{ main:'Intensité relative cardiaque.', calc:'√(TRIMP_par_min / y_LTHR).' }},
             { label:'EF', value: ef?String(ef):'—', unit: ef?'m/min/bpm':'', color: '#201e1d',
-              tooltip:{ main:'Efficacité aérobie.', calc:'Vitesse (m/min) / FC moy.' }},
+              tooltip:{ main:'Le facteur d’efficacité mesure la relation entre la vitesse produite et le coût cardiaque : quelle vitesse tu produis pour chaque battement de cœur. Un EF élevé = beaucoup de vitesse pour un effort cardiaque modéré, signe d’une bonne condition physique. Pertinent surtout pour comparer des sorties de même nature (même type d’effort, mêmes conditions), pour éviter les biais liés aux variations de FC.', calc:'EF = vitesse moyenne (m/min) / FC moyenne.' }},
             { label:'Pa:Hr', value: decoupl!==null?decoupl+'%':'—', unit:'', color: decoupl!==null&&Math.abs(decoupl)<5?'#22c55e':'#ec3013',
-              tooltip:{ main:'Découplage aérobie. < 5 % = stable.', calc:'EF 2ème / EF 1ère - 1 × 100.' }},
+              tooltip:{ main:'Le Pa:Hr (ratio allure / fréquence cardiaque) mesure la dérive cardiaque sur un effort prolongé à intensité stable. Il compare l’évolution de la vitesse et de la FC entre la 1re et la 2e moitié de la sortie. Proche de 0 : la FC est restée stable par rapport à l’allure, bonne résistance à la fatigue cardiovasculaire. Négatif (≈ −5 %) : dérive cardiaque, signe de fatigue ou de déshydratation. Très positif (+5 %) : souvent un échauffement progressif en début de sortie.', calc:'(EF 2e moitié / EF 1re moitié − 1) × 100, avec EF = vitesse / FC.' }},
             ...pmcCells,
           ].filter(Boolean);
         })(),
@@ -3653,7 +3657,7 @@ function App() {
                   style:{
                     position:'absolute', bottom:'calc(100% + 6px)', left:'0', zIndex:200,
                     background:'#201e1d', color:'#ffffff',
-                    padding:'12px 14px', width:'240px', pointerEvents:'none',
+                    padding:'12px 14px', width:'320px', maxWidth:'80vw', pointerEvents:'none',
                     boxShadow:'0 4px 16px rgba(0,0,0,0.3)',
                   }
                 },
@@ -3669,6 +3673,8 @@ function App() {
           ),
           h('div', { style:{ display:'flex', flexDirection:'column', alignItems:'center', gap:'10px', marginBottom:'12px', paddingRight:'28px' } },
             h('span', { style:{ fontSize:'12px', fontWeight:'700', letterSpacing:'0.06em', textTransform:'uppercase' } }, 'Données seconde par seconde'),
+            h('div', { style:{ display:'flex', width:'100%', gap:'12px', flexWrap:'wrap', alignItems:'center' } },
+            h('div', { style:{ flex:'1 1 0', minWidth:0 } }),
             h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap', alignItems:'center', justifyContent:'center' } },
             h('button', {
               type:'button',
@@ -3731,15 +3737,24 @@ function App() {
               style:{ padding:'7px 14px', border:'2px solid #605d5d', background:'transparent', color:'#605d5d', fontFamily:'inherit', fontSize:'11px', fontWeight:'700', letterSpacing:'0.1em', textTransform:'uppercase', cursor:'pointer' },
               onMouseEnter: e => { e.currentTarget.style.borderColor='#201e1d'; e.currentTarget.style.color='#201e1d'; },
               onMouseLeave: e => { e.currentTarget.style.borderColor='#605d5d'; e.currentTarget.style.color='#605d5d'; }
-            }, 'Export CSV'),
-            serieBtns.length > 0 && h('div', { style:{ display:'flex', gap:'8px' } }, serieBtns.map(serBtn))
+            }, 'Export CSV')
+            ),
+            serieBtns.length > 0
+              ? h('div', { style:{ flex:'1 1 0', minWidth:0, display:'flex', gap:'8px', flexWrap:'wrap', justifyContent:'flex-end' } }, serieBtns.map(serBtn))
+              : h('div', { style:{ flex:'1 1 0' } })
             )
           ),
           // ── Texte d'analyse de l'activité par le coach IA (déroulant) ────
           (() => {
             const an = coachActAnalyses[act.id];
-            if (!an || (!an.texte && !an.err)) return null;
+            if (!an) return null;
             return h('div', { style:{ marginBottom:'16px', paddingRight:'32px' } },
+              an.loading && h('div', null,
+                h('span', { style:{ display:'block', fontSize:'12px', color:'#605d5d', marginBottom:'6px' } }, 'Le coach analyse la séance…'),
+                h('div', { style:{ position:'relative', height:'4px', background:'#eae9e9', overflow:'hidden' } },
+                  h('div', { style:{ position:'absolute', top:0, bottom:0, width:'35%', background:'#ec3013', animation:'bsBar 1.1s ease-in-out infinite' } })
+                )
+              ),
               an.err && h('p', { style:{ margin:0, fontSize:'12px', color:'#ec3013' } }, an.err),
               an.texte && an.generatedAt && h('span', { style:{ display:'block', fontSize:'11px', color:'#605d5d', marginBottom:'6px' } }, 'Analyse du coach IA · ' + new Date(an.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})),
               an.texte && h('p', { style:{ margin:0, fontSize:'13px', lineHeight:'1.55', color:'#201e1d', whiteSpace:'pre-wrap' } }, an.texte)
@@ -3884,12 +3899,24 @@ function App() {
                   s.description&&h('p',{style:{margin:'0 0 4px',fontSize:'12px',color:'#3d3a3a',lineHeight:'1.45'}},s.description),
                   (()=>{ const sum=stepsSummary(s.steps); return sum?h('p',{style:{margin:'0 0 4px',fontSize:'12px',fontWeight:'700',color:'#201e1d'}},'Déroulé : '+sum):null; })(),
                   (()=>{
-                    const thr=Number(profile.thresholdPace)||thresholdPaceEstimated||0;
-                    if(!thr||(s.sport!=='Course'&&s.sport!=='Trail')) return null;
-                    const mult={1:1.34,2:1.20,3:1.09,4:1.00,5:0.93};
                     const zs=[...new Set((s.steps||[]).map(b=>b&&b.zone).filter(Boolean))].sort();
                     if(!zs.length) return null;
-                    return h('p',{style:{margin:'0 0 8px',fontSize:'11px',color:'#605d5d'}},'Allures visées : '+zs.map(z=>(ZONE_NAMES[z]||('Z'+z))+' ≈ '+fmtPace(thr*(mult[z]||1.15))+'/km').join(' · '));
+                    const isRun=s.sport==='Course'||s.sport==='Trail';
+                    const isBike=s.sport==='Vélo';
+                    if(isRun){
+                      const thr=Number(profile.thresholdPace)||thresholdPaceEstimated||0;
+                      if(!thr) return null;
+                      const mult={1:1.34,2:1.20,3:1.09,4:1.00,5:0.93};
+                      return h('p',{style:{margin:'0 0 8px',fontSize:'11px',color:'#605d5d'}},'Allures visées : '+zs.map(z=>(ZONE_NAMES[z]||('Z'+z))+' ≈ '+fmtPace(thr*(mult[z]||1.15))+'/km').join(' · '));
+                    }
+                    if(isBike){
+                      const ftp=Number(profile.ftp)||ftpEstimated||0;
+                      const wkg=Number(profile.weight)||0;
+                      if(!ftp||!wkg) return null;
+                      const pct={1:0.55,2:0.70,3:0.83,4:0.95,5:1.15};
+                      return h('p',{style:{margin:'0 0 8px',fontSize:'11px',color:'#605d5d'}},'Puissance visée : '+zs.map(z=>(ZONE_NAMES[z]||('Z'+z))+' ≈ '+(Math.round(ftp*(pct[z]||0.75))+' W · '+(Math.round(ftp*(pct[z]||0.75)/wkg*100)/100)+' W/kg')).join(' · '));
+                    }
+                    return null;
                   })(),
                   h(WorkoutProfile,{session:s})
                 );
@@ -3969,24 +3996,12 @@ function App() {
           // ── Texte explicatif ───────────────────────────────────────────────
           h('section',{style:{padding:'16px 32px 24px',borderTop:'2px solid #201e1d',flexShrink:0,marginTop:'12px'}},
             h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'24px 40px'}},
+              h('div',null),
               h('div',null,
-                h('p',{style:{margin:'0 0 4px',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Comment c\'est calculé'),
-                h('p',{style:{margin:0,fontSize:'11px',color:'#605d5d',lineHeight:'1.6'}},
-                  'CTL (Condition physique) = moyenne exponentielle du TSS sur 42 jours. ATL (Fatigue) = moyenne exponentielle sur 7 jours. TSB (Forme) = CTL − ATL de la veille. TSS vélo : NP/FTP si capteur puissance, sinon HRSS. TSS course : rTSS si allure seuil renseignée, sinon HRSS. HRSS = TRIMP normalisé : 1h à la LTHR = 100 pts. Configure LTHR dans le Profil.'
-                )
+                h('p',{style:{margin:'0 0 4px',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Comment lire ce graphique'),
+                h('p',{style:{margin:0,fontSize:'11px',color:'#605d5d',lineHeight:'1.6'}},'La ligne orange montre la condition physique. Il s’agit d’une moyenne mobile pondérée exponentiellement de 42 jours de votre charge d’entraînement. La ligne en pointillé montre la fatigue. Il s’agit d’une moyenne mobile pondérée exponentiellement sur 7 jours de votre charge d’entraînement. Pour améliorer votre forme, vous devez créer du stress en augmentant la charge d’entraînement, c’est-à-dire en maintenant la ligne en pointillé au-dessus de la ligne orange. Votre forme est votre forme physique moins la fatigue. Lorsque votre forme est dans la zone d’entraînement optimale, vous gagnez en forme. Lorsque votre forme est fraîche et que vous êtes en forme, vous êtes prêt à courir. Évitez de rester longtemps dans la zone à haut risque, car vous risquez de vous surentraîner. Vous devez inclure des semaines de repos périodiques dans votre entraînement afin de récupérer de la fatigue et d’être au mieux de votre forme pour les épreuves à objectifs.')
               ),
-              h('div',null,
-                h('p',{style:{margin:'0 0 4px',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Comment lire le graphique'),
-                h('p',{style:{margin:0,fontSize:'11px',color:'#605d5d',lineHeight:'1.6'}},
-                  'CTL qui monte = bloc de construction. ATL > CTL = surcharge récente. TSB positif = tu es frais. TSB négatif = tu accumules de la fatigue. Les points sur la courbe CTL représentent tes activités. Survole-les pour voir le détail.'
-                )
-              ),
-              h('div',null,
-                h('p',{style:{margin:'0 0 4px',fontSize:'10px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Zones TSB & action'),
-                h('p',{style:{margin:0,fontSize:'11px',color:'#605d5d',lineHeight:'1.6'}},
-                  'Transition (> +20) : trop frais, force ou reprends. Frais (+5 à +20) : idéal avant compétition. Zone grise (-10 à +5) : entraînement normal. Optimal (-10 à -30) : charge élevée mais contrôlée, tu progresses. Surentraînement (< -30) : récupère, risque de blessure.'
-                )
-              )
+              h('div',null)
             )
           )
         ),
@@ -4226,7 +4241,7 @@ function App() {
               );
             })(),
             h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:'8px 16px',marginBottom:'10px'}},
-              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},powSport==='Vélo'?'Courbe de puissance':powSport==='Trail'?'Allure VAP — Trail':'Meilleure allure — Course'),
+              h('h2',{style:{margin:0,fontSize:'16px',fontWeight:'800',letterSpacing:'-0.01em'}},powSport==='Vélo'?'Courbe de meilleure puissance':powSport==='Trail'?'Allure VAP — Trail':'Meilleure allure — Course'),
               h('div',{style:{display:'flex',alignItems:'baseline',gap:'14px'}},
                 h('span',{style:{fontSize:'11px',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'fenêtre glissante s/s')
               )
