@@ -143,10 +143,11 @@ RÉPONSE — tu réponds STRICTEMENT avec un objet JSON valide et COMPLET de la 
 }
 - "steps" = le déroulé de la séance dans l'ordre : une suite de blocs. Chaque bloc a "zone" de 1 à 5
   (1 = très facile, 2 = facile, 3 = soutenu, 4 = dur, 5 = très dur) et "durationMin" (minutes à tenir
-  cette zone). Développe les répétitions : « 3 fois 10 min dur » = 3 blocs zone 4 séparés par des blocs
-  zone 1 de récupération. Inclus l'échauffement et le retour au calme (zone 1). Fournis "steps" pour
-  CHAQUE séance qui n'est pas du repos ; pour un footing continu, un seul bloc (zone 2). La somme des
-  durées doit être proche de "durationMin". Reste bref sur "description" pour que tout le JSON tienne.
+  cette zone ; décimales autorisées, 1.5 = 1 min 30). Développe TOUTES les répétitions bloc par bloc :
+  « 5 fois 3 min dur avec 1 min 30 de récup » = 3 zone4, 1.5 zone1, 3 zone4, 1.5 zone1, 3 zone4,
+  1.5 zone1, 3 zone4, 1.5 zone1, 3 zone4. Inclus l'échauffement et le retour au calme (zone 1). Fournis
+  "steps" pour CHAQUE séance qui n'est pas du repos ; pour un footing continu, un seul bloc (zone 2). La
+  somme des durées doit être proche de "durationMin". Reste bref sur "description" pour que le JSON tienne.
 - Quand l'athlète demande une analyse / un programme / un ajustement → fournis TOUJOURS "plan".
 - Le "plan" couvre DEUX semaines : la semaine en cours (à partir de "semaineDebut") ET la semaine suivante
   (à partir de "semaineSuivanteDebut"). "targets" concerne la semaine en cours.

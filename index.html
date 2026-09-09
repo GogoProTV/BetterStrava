@@ -3311,52 +3311,71 @@ function App() {
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
   const athleteSections=['Condition physique','Puissance','Fréquence cardiaque','VO2 max','Efficacité'];
 
-  // Graphique « à la Runna » d'une séance prévue : chaque bloc = une barre dont la
-  // LARGEUR = le temps à tenir, la HAUTEUR = l'allure projetée (course) ou l'intensité
-  // (autres sports), la couleur = la zone. Trait pointillé = allure moyenne visée.
-  function PlannedRunnaChart({ session, thresholdPace }) {
+  const ZONE_NAMES = ['', 'très facile', 'facile', 'soutenu', 'dur', 'très dur'];
+  function fmtStepDur(min) {
+    if (min >= 60) return fmtDur(min);
+    const m = Math.floor(min + 1e-6), s = Math.round((min - m) * 60);
+    return s ? (m ? m + ' min ' + s : s + ' s') : m + ' min';
+  }
+
+  // Résumé lisible du déroulé : « 20 min facile · 5 × (3 min dur / 1 min 30 très facile) · 10 min facile ».
+  function stepsSummary(rawSteps) {
+    const steps = (rawSteps || []).filter(b => b && b.durationMin > 0);
+    if (!steps.length) return '';
+    const eq = (a, b) => a.zone === b.zone && Math.abs(a.durationMin - b.durationMin) < 0.25;
+    const fmt = b => fmtStepDur(b.durationMin) + ' ' + (ZONE_NAMES[b.zone] || ('Z' + b.zone));
+    const parts = [];
+    let i = 0;
+    while (i < steps.length) {
+      if (i + 3 < steps.length) {
+        const a = steps[i], b = steps[i + 1];
+        let reps = 0, j = i;
+        while (j + 1 < steps.length && eq(steps[j], a) && eq(steps[j + 1], b)) { reps++; j += 2; }
+        if (reps >= 2) { parts.push(reps + ' × (' + fmt(a) + ' / ' + fmt(b) + ')'); i = j; continue; }
+      }
+      let k = i, reps = 1;
+      while (k + 1 < steps.length && eq(steps[k + 1], steps[i])) { reps++; k++; }
+      parts.push((reps > 1 ? reps + ' × ' : '') + fmt(steps[i]));
+      i = k + 1;
+    }
+    return parts.join(' · ');
+  }
+
+  // Graphique du déroulé d'une séance prévue : abscisse = temps de la séance,
+  // chaque bloc = un rectangle de LARGEUR = sa durée et de HAUTEUR = sa zone (1..5).
+  function WorkoutProfile({ session }) {
     const steps = (session.steps || []).filter(b => b && b.durationMin > 0);
     if (!steps.length) return null;
-    const isRun = session.sport === 'Course' || session.sport === 'Trail';
-    const thr = Number(thresholdPace) || 0;
-    const usePace = isRun && thr > 0;
     const total = steps.reduce((s, b) => s + b.durationMin, 0) || 1;
-    const zp = z => thr * ({ 1: 1.34, 2: 1.20, 3: 1.09, 4: 1.00, 5: 0.93 }[z] || 1.15);
-    const vals = steps.map(b => usePace ? zp(b.zone) : b.zone);
-    const W = 100, H = 96, PAD = 3;
-    let lo, hi; // lo = valeur en haut du graphe, hi = valeur en bas
-    if (usePace) { lo = Math.min.apply(null, vals) - 0.12; hi = Math.max.apply(null, vals) + 0.20; }
-    else { lo = 5.4; hi = 0.6; }
-    const yOf = v => ((v - lo) / (hi - lo)) * (H - PAD * 2) + PAD;
+    const W = 1000, H = 100;
     let cum = 0;
     const bars = steps.map((b, i) => {
       const x = (cum / total) * W, w = (b.durationMin / total) * W;
       cum += b.durationMin;
-      const yt = yOf(vals[i]);
+      const bh = (b.zone / 5) * H;
       const col = (COACH_ZONES[b.zone] || {}).color || '#605d5d';
       return h('g', { key: i },
-        h('rect', { x: x + 0.5, y: yt, width: Math.max(0.8, w - 1), height: Math.max(2, H - PAD - yt), fill: col, rx: 1.4, ry: 1.4 }),
-        h('title', null, (usePace ? fmtPace(vals[i]) + ' /km' : ((COACH_ZONES[b.zone] || {}).label || 'Zone ' + b.zone)) + ' · ' + fmtDur(b.durationMin))
+        h('rect', { x: x, y: H - bh, width: Math.max(1, w), height: bh, fill: col, stroke: '#ffffff', strokeWidth: 1, vectorEffect: 'non-scaling-stroke' }),
+        h('title', null, (ZONE_NAMES[b.zone] || ('Z' + b.zone)) + ' · ' + fmtStepDur(b.durationMin))
       );
     });
-    const avg = vals.reduce((s, v, i) => s + v * steps[i].durationMin, 0) / total;
-    const avgLine = h('line', { x1: 0, x2: W, y1: yOf(avg), y2: yOf(avg), stroke: '#201e1d', strokeWidth: 1, strokeDasharray: '3 2', vectorEffect: 'non-scaling-stroke' });
-    const ticks = usePace
-      ? [0, 0.33, 0.66, 1].map(f => { const v = lo + (hi - lo) * f; return { yPct: (yOf(v) / H) * 100, label: fmtPace(v) }; })
-      : [5, 4, 3, 2, 1].map(z => ({ yPct: (yOf(z) / H) * 100, label: (COACH_ZONES[z] || {}).label || ('Z' + z) }));
+    const grid = [1, 2, 3, 4].map(z => h('line', { key: z, x1: 0, x2: W, y1: H - (z / 5) * H, y2: H - (z / 5) * H, stroke: 'rgba(32,30,29,0.16)', strokeWidth: 1, vectorEffect: 'non-scaling-stroke' }));
+    const stepMin = total <= 30 ? 5 : total <= 90 ? 15 : 30;
+    const xticks = [];
+    for (let m = 0; m <= total + 0.01; m += stepMin) xticks.push(Math.round(m));
+    if (xticks[xticks.length - 1] < total - 1) xticks.push(Math.round(total));
     return h('div', { style: { marginTop: '10px' } },
       h('div', { style: { display: 'flex', gap: '8px' } },
-        h('div', { style: { flex: '0 0 ' + (usePace ? '54px' : '78px'), position: 'relative', height: H + 'px', fontSize: '9px', fontWeight: '700', color: '#605d5d' } },
-          ticks.map((t, i) => h('span', { key: i, style: { position: 'absolute', right: 0, top: t.yPct + '%', transform: 'translateY(-50%)', whiteSpace: 'nowrap' } }, t.label))
+        h('div', { style: { flex: '0 0 64px', position: 'relative', height: H + 'px', fontSize: '9px', fontWeight: '700', color: '#605d5d' } },
+          [1, 2, 3, 4, 5].map(z => h('span', { key: z, style: { position: 'absolute', right: 0, top: ((1 - (z - 0.5) / 5) * 100) + '%', transform: 'translateY(-50%)', whiteSpace: 'nowrap' } }, ZONE_NAMES[z]))
         ),
         h('div', { style: { flex: 1, minWidth: 0 } },
-          h('svg', { viewBox: '0 0 ' + W + ' ' + H, preserveAspectRatio: 'none', style: { width: '100%', height: H + 'px', display: 'block', background: '#f3f2f2', border: '1px solid #d7d3d3' } }, avgLine, bars),
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#605d5d', marginTop: '2px' } },
-            h('span', null, '0'), h('span', null, fmtDur(Math.round(total)))
+          h('svg', { viewBox: '0 0 ' + W + ' ' + H, preserveAspectRatio: 'none', style: { width: '100%', height: H + 'px', display: 'block', background: '#f3f2f2', border: '1px solid #d7d3d3' } }, grid, bars),
+          h('div', { style: { position: 'relative', height: '14px', marginTop: '3px', fontSize: '10px', color: '#605d5d' } },
+            xticks.map((m, i) => h('span', { key: i, style: { position: 'absolute', left: (m / total * 100) + '%', transform: i === 0 ? 'translateX(0)' : i === xticks.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)', whiteSpace: 'nowrap' } }, m >= 60 ? fmtDur(m) : (m + ' min')))
           )
         )
-      ),
-      usePace && h('div', { style: { fontSize: '11px', color: '#605d5d', marginTop: '4px' } }, 'Allure moyenne visée ≈ ' + fmtPace(avg) + ' /km')
+      )
     );
   }
 
@@ -3862,8 +3881,17 @@ function App() {
                     h('button',{type:'button',onClick:()=>setPlannedOpen(null),style:{marginLeft:'auto',border:'0',background:'transparent',color:'#605d5d',fontSize:'15px',fontWeight:'800',cursor:'pointer',lineHeight:1}},'✕')
                   ),
                   h('p',{style:{margin:'0 0 4px',fontSize:'13px',fontWeight:'700'}},'Objectif : '+(s.focus||s.title||'—')),
-                  s.description&&h('p',{style:{margin:'0 0 6px',fontSize:'12px',color:'#3d3a3a',lineHeight:'1.45'}},s.description),
-                  h(PlannedRunnaChart,{session:s,thresholdPace:Number(profile.thresholdPace)||thresholdPaceEstimated||null})
+                  s.description&&h('p',{style:{margin:'0 0 4px',fontSize:'12px',color:'#3d3a3a',lineHeight:'1.45'}},s.description),
+                  (()=>{ const sum=stepsSummary(s.steps); return sum?h('p',{style:{margin:'0 0 4px',fontSize:'12px',fontWeight:'700',color:'#201e1d'}},'Déroulé : '+sum):null; })(),
+                  (()=>{
+                    const thr=Number(profile.thresholdPace)||thresholdPaceEstimated||0;
+                    if(!thr||(s.sport!=='Course'&&s.sport!=='Trail')) return null;
+                    const mult={1:1.34,2:1.20,3:1.09,4:1.00,5:0.93};
+                    const zs=[...new Set((s.steps||[]).map(b=>b&&b.zone).filter(Boolean))].sort();
+                    if(!zs.length) return null;
+                    return h('p',{style:{margin:'0 0 8px',fontSize:'11px',color:'#605d5d'}},'Allures visées : '+zs.map(z=>(ZONE_NAMES[z]||('Z'+z))+' ≈ '+fmtPace(thr*(mult[z]||1.15))+'/km').join(' · '));
+                  })(),
+                  h(WorkoutProfile,{session:s})
                 );
               })()
             )
