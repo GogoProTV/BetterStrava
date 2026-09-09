@@ -3196,6 +3196,19 @@ function App() {
             coachErr && h('p', { style: { margin: '12px 0 0', fontSize: '12px', color: '#ec3013' } }, coachErr)
           );
     } else {
+      const wnISO = coachPlan.weekNextISO || isoLocal(new Date(new Date((coachPlan.weekStartISO || isoLocal(weekStart(new Date()))) + 'T12:00:00').getTime() + 7 * 86400000));
+      const sorted = coachPlan.sessions.slice().sort((a, b) => a.date < b.date ? -1 : 1).filter(s => s.sport && s.sport !== 'Repos');
+      const g1 = sorted.filter(s => s.date < wnISO), g2 = sorted.filter(s => s.date >= wnISO);
+      const sessionCard = (s, i, first) => h('div', { key: i, style: { padding: '12px 0', borderTop: first ? 'none' : '1px solid #d7d3d3', opacity: s.done ? 0.55 : 1 } },
+        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
+          h('span', { style: { fontSize: '12px', fontWeight: '800' } }, new Date(s.date + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit' })),
+          h('span', { style: { fontSize: '11px', color: '#605d5d' } }, s.sport),
+          h('span', { style: { fontSize: '13px', fontWeight: '800' } }, s.title + (s.durationMin ? ' · ' + fmtDur(s.durationMin) : '') + (s.distanceKm ? ' · ' + s.distanceKm + ' km' : '')),
+          s.done && h('span', { style: { padding: '1px 6px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.06em', textTransform: 'uppercase', background: '#eae9e9', color: '#605d5d' } }, 'fait'),
+          s.focus && h('span', { style: { fontSize: '11px', color: '#605d5d' } }, '— ' + s.focus)
+        ),
+        h(SessionProfile, { session: s })
+      );
       body = h('div', null,
         h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' } },
           h('h2', { style: { margin: 0, fontSize: '18px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Analyse du coach'),
@@ -3206,8 +3219,12 @@ function App() {
           )
         ),
         coachErr && h('p', { style: { margin: '0 0 12px', fontSize: '12px', color: '#ec3013' } }, coachErr),
-        coachPlan.summary && h('p', { style: { margin: '0 0 14px', fontSize: '13px', lineHeight: '1.55', color: '#201e1d', whiteSpace: 'pre-wrap' } }, coachPlan.summary),
-        h('p', { style: { margin: 0, fontSize: '11px', color: '#605d5d' } }, 'Les séances prévues sont sur le calendrier ci-dessous (gris pointillé). Analyses restantes aujourd’hui : ' + coachLeft + ' / ' + COACH_LIMIT + '.')
+        coachPlan.summary && h('p', { style: { margin: '0 0 16px', fontSize: '13px', lineHeight: '1.55', color: '#201e1d', whiteSpace: 'pre-wrap' } }, coachPlan.summary),
+        h('h3', { style: { margin: '6px 0 2px', fontSize: '12px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#ec3013' } }, 'Séances de la semaine'),
+        g1.length ? g1.map((s, i) => sessionCard(s, 'a' + i, i === 0)) : h('p', { style: { margin: '4px 0 0', fontSize: '12px', color: '#605d5d' } }, 'Aucune séance planifiée.'),
+        g2.length > 0 && h('h3', { style: { margin: '22px 0 2px', fontSize: '12px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#ec3013' } }, 'Semaine projetée'),
+        g2.map((s, i) => sessionCard(s, 'b' + i, i === 0)),
+        h('p', { style: { margin: '16px 0 0', fontSize: '11px', color: '#605d5d' } }, 'Chaque barre : sa largeur = le temps à tenir, sa hauteur/couleur = l’intensité visée (très facile → très dur). Séances aussi en gris pointillé sur le calendrier. Analyses restantes aujourd’hui : ' + coachLeft + ' / ' + COACH_LIMIT + '.')
       );
     }
     return h('section', { style: { borderBottom: '2px solid #201e1d' } },
@@ -3306,53 +3323,38 @@ function App() {
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
   const athleteSections=['Condition physique','Puissance','Fréquence cardiaque','VO2 max','Efficacité'];
 
-  // Graphique d'une séance projetée : abscisse = temps (min) ou distance (km),
-  // ordonnée = zone d'intensité cible (1..5), tracé en marches.
-  function PlannedSessionChart({ session }) {
-    const cv = useRef(null);
-    const inst = useRef(null);
-    const steps = (session.steps || []).filter(b => b && (b.durationMin || b.distanceKm));
-    const useKm = steps.length > 0 && steps.every(b => b.distanceKm != null && !b.durationMin);
-    useEffect(() => {
-      if (!cv.current || !steps.length) return;
-      chartDefaults();
-      let cum = 0;
-      const pts = [];
-      const segColors = [];
-      steps.forEach(b => {
-        const len = useKm ? b.distanceKm : b.durationMin;
-        pts.push({ x: cum, y: b.zone });
-        cum += len;
-        pts.push({ x: cum, y: b.zone });
-        segColors.push((COACH_ZONES[b.zone] || {}).color || '#605d5d');
-      });
-      inst.current = new Chart(cv.current, {
-        type: 'line',
-        data: { datasets: [{
-          data: pts, borderWidth: 4, pointRadius: 0, tension: 0, borderColor: '#605d5d',
-          segment: { borderColor: ctx => segColors[Math.floor(ctx.p0DataIndex / 2)] || '#605d5d' },
-          fill: false,
-        }] },
-        options: {
-          responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
-          plugins: { legend: { display: false },
-            tooltip: { enabled: true, backgroundColor: 'rgba(32,30,29,0.9)', displayColors: false,
-              callbacks: {
-                title: items => { let c = 0; for (const b of steps) { const l = useKm ? b.distanceKm : b.durationMin; if (items[0].parsed.x <= c + l + 0.001) return (b.label || COACH_ZONES[b.zone].label); c += l; } return ''; },
-                label: it => COACH_ZONES[Math.round(it.parsed.y)] ? COACH_ZONES[Math.round(it.parsed.y)].label : '',
-              } } },
-          scales: {
-            x: { type: 'linear', min: 0, grid: { display: false }, title: { display: true, text: useKm ? 'Distance (km)' : 'Durée (min)', color: '#605d5d' } },
-            y: { min: 0.5, max: 5.5, grid: { color: 'rgba(32,30,29,0.1)', drawTicks: false }, border: { display: false },
-              ticks: { stepSize: 1, callback: v => (COACH_ZONES[Math.round(v)] ? COACH_ZONES[Math.round(v)].label : '') },
-              title: { display: true, text: 'Zone d\'intensité', color: '#605d5d' } },
-          },
-        },
-      });
-      return () => { if (inst.current) { inst.current.destroy(); inst.current = null; } };
-    }, [session]);
-    if (!steps.length) return h('p', { style: { margin: '8px 0 0', fontSize: '12px', color: '#605d5d' } }, session.description || 'Déroulé détaillé non fourni pour cette séance.');
-    return h('div', { style: { height: '150px', marginTop: '8px' } }, h('canvas', { ref: cv }));
+  // Profil simplifié d'une séance prévue : chaque bloc est une barre dont la LARGEUR
+  // = temps à tenir, et la HAUTEUR / couleur = zone d'intensité cible (1..5).
+  function SessionProfile({ session }) {
+    const steps = (session.steps || []).filter(b => b && b.durationMin > 0);
+    if (!steps.length) return null;
+    const total = steps.reduce((s, b) => s + b.durationMin, 0) || 1;
+    const H = 64, W = 100;
+    let cum = 0;
+    const rects = steps.map((b, i) => {
+      const x = (cum / total) * W;
+      const w = (b.durationMin / total) * W;
+      cum += b.durationMin;
+      const zh = (b.zone / 5) * H;
+      const col = (COACH_ZONES[b.zone] || {}).color || '#605d5d';
+      return h('g', { key: i },
+        h('rect', { x: x, y: H - zh, width: Math.max(0.4, w), height: zh, fill: col, stroke: '#ffffff', strokeWidth: 0.6, vectorEffect: 'non-scaling-stroke' }),
+        h('title', null, (COACH_ZONES[b.zone] ? COACH_ZONES[b.zone].label : 'Zone ' + b.zone) + ' · ' + fmtDur(b.durationMin))
+      );
+    });
+    const grid = [1, 2, 3, 4].map(z => h('line', { key: 'g' + z, x1: 0, x2: W, y1: H - (z / 5) * H, y2: H - (z / 5) * H, stroke: 'rgba(32,30,29,0.14)', strokeWidth: 0.6, vectorEffect: 'non-scaling-stroke' }));
+    return h('div', { style: { marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'flex-start' } },
+      h('div', { style: { flex: '0 0 52px', height: H + 'px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: '8.5px', fontWeight: '700', letterSpacing: '0.02em', color: '#605d5d', textAlign: 'right', lineHeight: '1' } },
+        h('span', null, 'TRÈS DUR'), h('span', null, 'DUR'), h('span', null, 'SOUTENU'), h('span', null, 'FACILE'), h('span', null, 'TRÈS FACILE')
+      ),
+      h('div', { style: { flex: 1, minWidth: 0 } },
+        h('svg', { viewBox: '0 0 ' + W + ' ' + H, preserveAspectRatio: 'none', style: { width: '100%', height: H + 'px', display: 'block', background: '#f3f2f2', border: '1px solid #d7d3d3' } }, grid, rects),
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#605d5d', marginTop: '2px' } },
+          h('span', null, '0 min'),
+          h('span', null, fmtDur(Math.round(total)))
+        )
+      )
+    );
   }
 
   function RowDetail({ act, id }) {

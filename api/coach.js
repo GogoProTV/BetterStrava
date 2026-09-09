@@ -129,11 +129,24 @@ RÉPONSE — tu réponds STRICTEMENT avec un objet JSON valide et COMPLET de la 
             "distanceKm": 10,
             "load": 55,
             "description": "1 à 2 phrases simples : ce que tu fais concrètement (échauffement, corps de séance, retour au calme), sans jargon",
-            "done": false
+            "done": false,
+            "steps": [
+              { "zone": 1, "durationMin": 15 },
+              { "zone": 4, "durationMin": 10 },
+              { "zone": 1, "durationMin": 3 },
+              { "zone": 4, "durationMin": 10 },
+              { "zone": 1, "durationMin": 10 }
+            ]
           }
         ]
       }
 }
+- "steps" = le déroulé de la séance dans l'ordre : une suite de blocs. Chaque bloc a "zone" de 1 à 5
+  (1 = très facile, 2 = facile, 3 = soutenu, 4 = dur, 5 = très dur) et "durationMin" (minutes à tenir
+  cette zone). Développe les répétitions : « 3 fois 10 min dur » = 3 blocs zone 4 séparés par des blocs
+  zone 1 de récupération. Inclus l'échauffement et le retour au calme (zone 1). Fournis "steps" pour
+  CHAQUE séance qui n'est pas du repos ; pour un footing continu, un seul bloc (zone 2). La somme des
+  durées doit être proche de "durationMin". Reste bref sur "description" pour que tout le JSON tienne.
 - Quand l'athlète demande une analyse / un programme / un ajustement → fournis TOUJOURS "plan".
 - Le "plan" couvre DEUX semaines : la semaine en cours (à partir de "semaineDebut") ET la semaine suivante
   (à partir de "semaineSuivanteDebut"). "targets" concerne la semaine en cours.
@@ -215,7 +228,7 @@ module.exports = async function handler(req, res) {
     const out = await callGemini(key, {
       systemInstruction: { parts: [{ text: SYSTEM }] },
       contents,
-      generationConfig: { temperature: 0.6, maxOutputTokens: 8192, responseMimeType: 'application/json' },
+      generationConfig: { temperature: 0.6, maxOutputTokens: 16384, responseMimeType: 'application/json' },
     });
     if (out.error) {
       return res.status(502).json({ error: 'Gemini : ' + out.error, quota });
