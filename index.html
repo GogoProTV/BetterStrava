@@ -2804,6 +2804,14 @@ function App() {
       const wkDate=new Date(s); const wkEnd=new Date(s.getTime()+6*86400000);
       const wkStartMs=s.getTime(), wkEndMs=s.getTime()+7*86400000;
       const plannedSessions=planIndexed.filter(x=>{ const t=new Date(x.p.date+'T12:00:00').getTime(); return t>=wkStartMs&&t<wkEndMs&&x.p.sport&&x.p.sport!=='Repos'; });
+      // Somme réalisée + visée par type d'activité sur la semaine.
+      const SPLIT_ORDER=['Course','Trail','Vélo','Natation'];
+      const splitMap={};
+      cur.list.forEach(a=>{ const k=a.sport; (splitMap[k]=splitMap[k]||{min:0,km:0,tMin:0,tKm:0}); splitMap[k].min+=a.time; splitMap[k].km+=a.dist; });
+      plannedSessions.forEach(x=>{ const k=x.p.sport; (splitMap[k]=splitMap[k]||{min:0,km:0,tMin:0,tKm:0}); splitMap[k].tMin+=x.p.durationMin||0; splitMap[k].tKm+=x.p.distanceKm||0; });
+      const sportSplit=Object.keys(splitMap)
+        .sort((a,b)=>{const ia=SPLIT_ORDER.indexOf(a),ib=SPLIT_ORDER.indexOf(b);return (ia<0?9:ia)-(ib<0?9:ib);})
+        .map(k=>({sport:k,min:splitMap[k].min,km:splitMap[k].km,tMin:splitMap[k].tMin,tKm:splitMap[k].tKm}));
       const span=wkDate.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})+' \u2013 '+wkEnd.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
       const wkNum=(()=>{const d=new Date(s);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-(d.getDay()+6)%7);const w=new Date(d.getFullYear(),0,4);return 1+Math.round(((d.getTime()-w.getTime())/86400000-3+(w.getDay()+6)%7)/7);})();
       const neutralChip={padding:'3px 8px',fontSize:'12px',fontWeight:'600',background:'#eae9e9',color:'#605d5d'};
@@ -2829,7 +2837,7 @@ function App() {
         if(spk.length>1) perSportLine=spk.map(k=>k+' '+(bySport[k].km?fmtNum(Math.round(bySport[k].km),0)+' km':fmtH(bySport[k].min))).join(' · ');
       }
       return {
-        isCurrent, isFuture, objective, perSportLine, plannedSessions, hidePrev:(isCurrent&&!!coachPlan)||isFuture,
+        isCurrent, isFuture, objective, perSportLine, plannedSessions, sportSplit, hidePrev:(isCurrent&&!!coachPlan)||isFuture,
         rowStyle:{borderTop:isCurrent?'2px solid #ec3013':undefined,borderBottom:'2px solid #201e1d',borderLeft:isCurrent?'6px solid #ec3013':isFuture?'6px solid #d7d3d3':undefined,background:isCurrent?'#fdf1ee':undefined},
         title:'Semaine '+wkNum,span,tag:isCurrent?'En cours':isFuture?'À venir':'',
         tagStyle:{padding:'2px 8px',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',background:isCurrent?'#ec3013':'#bab6b6',color:'#fff',display:(isCurrent||isFuture)?undefined:'none'},
@@ -3830,9 +3838,9 @@ function App() {
                   h('span',{style:{fontSize:'12px',color:'#605d5d'}},wk.blockNote)
                 )
               ),
-              h('div',{style:{display:'grid',gridTemplateColumns:'calc(100% / 4) minmax(0, 1fr)'}},
-                h('div',{style:{minWidth:0,padding:'16px 14px 20px',borderRight:'1px solid #d7d3d3'}},
-                  h('div',{style:{display:'flex',flexDirection:'column',gap:'12px'}},
+              h('div',{style:{display:'grid',gridTemplateColumns:'minmax(230px, 30%) minmax(0, 1fr)'}},
+                h('div',{style:{minWidth:0,padding:'16px 14px 20px',borderRight:'1px solid #d7d3d3',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px 14px'}},
+                  h('div',{style:{display:'flex',flexDirection:'column',gap:'12px',minWidth:0}},
                     wk.stats.map((st,si)=>h('div',{key:si},
                       h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},st.label),
                       h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'4px'}},
@@ -3843,11 +3851,21 @@ function App() {
                       !wk.hidePrev&&h('div',{style:{display:'flex',alignItems:'baseline',gap:'6px',marginTop:'3px'}},
                         h('span',{style:{fontSize:'10px',color:'#3d3a3a',fontVariantNumeric:'tabular-nums'}},'S\u22121 : '+st.prevVal)
                       )
-                    )),
-                    wk.perSportLine&&h('div',{style:{marginTop:'4px'}},
-                      h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Par sport'),
-                      h('span',{style:{display:'block',fontSize:'12px',color:'#3d3a3a',marginTop:'2px'}},wk.perSportLine)
-                    )
+                    ))
+                  ),
+                  h('div',{style:{display:'flex',flexDirection:'column',gap:'10px',minWidth:0}},
+                    h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Par activit\u00e9'),
+                    (wk.sportSplit&&wk.sportSplit.length)
+                      ? wk.sportSplit.map(sp=>{
+                          const hasAct=sp.min>0||sp.km>0;
+                          const hasTgt=sp.tMin>0||sp.tKm>0;
+                          return h('div',{key:sp.sport},
+                            h('span',{style:{display:'block',fontSize:'11px',fontWeight:'800',letterSpacing:'-0.01em'}},sp.sport),
+                            hasAct&&h('span',{style:{display:'block',fontSize:'12px',fontWeight:'700',fontVariantNumeric:'tabular-nums'}},fmtH(sp.min)+(sp.km?' \u00b7 '+fmtNum(Math.round(sp.km*10)/10,1)+' km':'')),
+                            hasTgt&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',color:'#605d5d',fontVariantNumeric:'tabular-nums'}},'vis\u00e9 '+(sp.tMin?fmtH(sp.tMin):'')+(sp.tKm?(sp.tMin?' \u00b7 ':'')+fmtNum(Math.round(sp.tKm),0)+' km':''))
+                          );
+                        })
+                      : h('span',{style:{fontSize:'11px',color:'#bab6b6'}},'\u2014')
                   )
                 ),
                 h('div',{style:{display:'grid',gridTemplateColumns:'repeat(7, minmax(0, 1fr))'}},
