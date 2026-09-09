@@ -2752,6 +2752,8 @@ function App() {
     const today=new Date(); today.setHours(0,0,0,0);
     const agg=s=>{ const end=s.getTime()+7*86400000; const list=data.filter(a=>a.date.getTime()>=s.getTime()&&a.date.getTime()<end&&!a.planned); return {list,min:sum(list,'time'),km:sum(list,'dist'),elev:sum(list,'elev'),n:list.length}; };
     const plannedAgg=s=>{ const end=s.getTime()+7*86400000; const list=((coachPlan&&coachPlan.sessions)||[]).filter(p=>{const t=new Date(p.date+'T12:00:00').getTime();return t>=s.getTime()&&t<end&&p.sport&&p.sport!=='Repos';}); return {min:list.reduce((x,p)=>x+(p.durationMin||0),0),km:list.reduce((x,p)=>x+(p.distanceKm||0),0),n:list.length}; };
+    const planIndexed=(coachPlan&&Array.isArray(coachPlan.sessions))
+      ? coachPlan.sessions.map((p,gi)=>({p,key:'ps'+gi})) : [];
     return starts.map(s=>{
       const cur=agg(s); const prev=agg(new Date(s.getTime()-7*86400000));
       const isCurrent=s.getTime()===thisWeek.getTime();
@@ -2787,17 +2789,20 @@ function App() {
         });
         const isToday=d.toDateString()===today.toDateString();
         const dISO=isoLocal(d), todayISO=isoLocal(today);
-        const planned=(coachPlan&&Array.isArray(coachPlan.sessions)&&dISO>=todayISO)
-          ? coachPlan.sessions.filter(p=>p.date===dISO&&p.sport&&p.sport!=='Repos'&&!p.done).map(p=>({
-              sport:({Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'})[p.sport]||p.sport,
-              title:p.title||'Séance',
-              time:p.durationMin?fmtDur(p.durationMin):'',
-              focus:p.focus||'',
+        const planned=(dISO>=todayISO)
+          ? planIndexed.filter(x=>x.p.date===dISO&&x.p.sport&&x.p.sport!=='Repos'&&!x.p.done).map(x=>({
+              key:x.key,
+              sport:({Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'})[x.p.sport]||x.p.sport,
+              title:x.p.title||'Séance',
+              time:x.p.durationMin?fmtDur(x.p.durationMin):'',
+              focus:x.p.focus||'',
             }))
           : [];
         return{dow,num:d.getDate(),sessions,planned,empty:sessions.length===0&&planned.length===0,numStyle:{fontSize:'12px',fontWeight:'800',...(isToday?{padding:'1px 6px',background:'#201e1d',color:'#ffffff'}:{color:'#201e1d'})},cellStyle:{minWidth:0,padding:'8px 6px 8px',borderRight:'1px solid #d7d3d3',borderLeft:i>0?'0':undefined}};
       });
       const wkDate=new Date(s); const wkEnd=new Date(s.getTime()+6*86400000);
+      const wkStartMs=s.getTime(), wkEndMs=s.getTime()+7*86400000;
+      const plannedSessions=planIndexed.filter(x=>{ const t=new Date(x.p.date+'T12:00:00').getTime(); return t>=wkStartMs&&t<wkEndMs&&x.p.sport&&x.p.sport!=='Repos'; });
       const span=wkDate.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})+' \u2013 '+wkEnd.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
       const wkNum=(()=>{const d=new Date(s);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-(d.getDay()+6)%7);const w=new Date(d.getFullYear(),0,4);return 1+Math.round(((d.getTime()-w.getTime())/86400000-3+(w.getDay()+6)%7)/7);})();
       const neutralChip={padding:'3px 8px',fontSize:'12px',fontWeight:'600',background:'#eae9e9',color:'#605d5d'};
@@ -2823,7 +2828,7 @@ function App() {
         if(spk.length>1) perSportLine=spk.map(k=>k+' '+(bySport[k].km?fmtNum(Math.round(bySport[k].km),0)+' km':fmtH(bySport[k].min))).join(' · ');
       }
       return {
-        isCurrent, isFuture, objective, perSportLine, hidePrev:(isCurrent&&!!coachPlan)||isFuture,
+        isCurrent, isFuture, objective, perSportLine, plannedSessions, hidePrev:(isCurrent&&!!coachPlan)||isFuture,
         rowStyle:{borderTop:isCurrent?'2px solid #ec3013':undefined,borderBottom:'2px solid #201e1d',borderLeft:isCurrent?'6px solid #ec3013':isFuture?'6px solid #d7d3d3':undefined,background:isCurrent?'#fdf1ee':undefined},
         title:'Semaine '+wkNum,span,tag:isCurrent?'En cours':isFuture?'À venir':'',
         tagStyle:{padding:'2px 8px',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',background:isCurrent?'#ec3013':'#bab6b6',color:'#fff',display:(isCurrent||isFuture)?undefined:'none'},
@@ -2934,7 +2939,7 @@ function App() {
     return {};
   });
   useEffect(() => { try { localStorage.setItem('bs_coach_actan', JSON.stringify(coachActAnalyses)); } catch (e) {} }, [coachActAnalyses]);
-  const [coachOpenSess, setCoachOpenSess] = useState(null); // clé de la séance projetée dépliée
+  const [plannedOpen, setPlannedOpen] = useState(null); // clé de la séance prévue dépliée dans le calendrier
   const coachAutoRef = useRef(false);
   useEffect(() => { try { localStorage.removeItem('bs_coach_chat'); localStorage.removeItem('bs_coach_avail'); localStorage.removeItem('bs_coach_lastseance'); } catch (e) {} }, []);
   useEffect(() => { try { localStorage.setItem('bs_coach_plan', coachPlan ? JSON.stringify(coachPlan) : ''); } catch (e) {} }, [coachPlan]);
@@ -3196,19 +3201,6 @@ function App() {
             coachErr && h('p', { style: { margin: '12px 0 0', fontSize: '12px', color: '#ec3013' } }, coachErr)
           );
     } else {
-      const wnISO = coachPlan.weekNextISO || isoLocal(new Date(new Date((coachPlan.weekStartISO || isoLocal(weekStart(new Date()))) + 'T12:00:00').getTime() + 7 * 86400000));
-      const sorted = coachPlan.sessions.slice().sort((a, b) => a.date < b.date ? -1 : 1).filter(s => s.sport && s.sport !== 'Repos');
-      const g1 = sorted.filter(s => s.date < wnISO), g2 = sorted.filter(s => s.date >= wnISO);
-      const sessionCard = (s, i, first) => h('div', { key: i, style: { padding: '12px 0', borderTop: first ? 'none' : '1px solid #d7d3d3', opacity: s.done ? 0.55 : 1 } },
-        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' } },
-          h('span', { style: { fontSize: '12px', fontWeight: '800' } }, new Date(s.date + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit' })),
-          h('span', { style: { fontSize: '11px', color: '#605d5d' } }, s.sport),
-          h('span', { style: { fontSize: '13px', fontWeight: '800' } }, s.title + (s.durationMin ? ' · ' + fmtDur(s.durationMin) : '') + (s.distanceKm ? ' · ' + s.distanceKm + ' km' : '')),
-          s.done && h('span', { style: { padding: '1px 6px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.06em', textTransform: 'uppercase', background: '#eae9e9', color: '#605d5d' } }, 'fait'),
-          s.focus && h('span', { style: { fontSize: '11px', color: '#605d5d' } }, '— ' + s.focus)
-        ),
-        h(SessionProfile, { session: s })
-      );
       body = h('div', null,
         h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' } },
           h('h2', { style: { margin: 0, fontSize: '18px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Analyse du coach'),
@@ -3219,12 +3211,8 @@ function App() {
           )
         ),
         coachErr && h('p', { style: { margin: '0 0 12px', fontSize: '12px', color: '#ec3013' } }, coachErr),
-        coachPlan.summary && h('p', { style: { margin: '0 0 16px', fontSize: '13px', lineHeight: '1.55', color: '#201e1d', whiteSpace: 'pre-wrap' } }, coachPlan.summary),
-        h('h3', { style: { margin: '6px 0 2px', fontSize: '12px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#ec3013' } }, 'Séances de la semaine'),
-        g1.length ? g1.map((s, i) => sessionCard(s, 'a' + i, i === 0)) : h('p', { style: { margin: '4px 0 0', fontSize: '12px', color: '#605d5d' } }, 'Aucune séance planifiée.'),
-        g2.length > 0 && h('h3', { style: { margin: '22px 0 2px', fontSize: '12px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#ec3013' } }, 'Semaine projetée'),
-        g2.map((s, i) => sessionCard(s, 'b' + i, i === 0)),
-        h('p', { style: { margin: '16px 0 0', fontSize: '11px', color: '#605d5d' } }, 'Chaque barre : sa largeur = le temps à tenir, sa hauteur/couleur = l’intensité visée (très facile → très dur). Séances aussi en gris pointillé sur le calendrier. Analyses restantes aujourd’hui : ' + coachLeft + ' / ' + COACH_LIMIT + '.')
+        coachPlan.summary && h('p', { style: { margin: '0 0 14px', fontSize: '13px', lineHeight: '1.55', color: '#201e1d', whiteSpace: 'pre-wrap' } }, coachPlan.summary),
+        h('p', { style: { margin: 0, fontSize: '11px', color: '#605d5d' } }, 'Les séances prévues sont sur le calendrier ci-dessous (gris pointillé) — clique dessus pour voir l’objectif et l’allure visée. Analyses restantes aujourd’hui : ' + coachLeft + ' / ' + COACH_LIMIT + '.')
       );
     }
     return h('section', { style: { borderBottom: '2px solid #201e1d' } },
@@ -3323,37 +3311,52 @@ function App() {
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
   const athleteSections=['Condition physique','Puissance','Fréquence cardiaque','VO2 max','Efficacité'];
 
-  // Profil simplifié d'une séance prévue : chaque bloc est une barre dont la LARGEUR
-  // = temps à tenir, et la HAUTEUR / couleur = zone d'intensité cible (1..5).
-  function SessionProfile({ session }) {
+  // Graphique « à la Runna » d'une séance prévue : chaque bloc = une barre dont la
+  // LARGEUR = le temps à tenir, la HAUTEUR = l'allure projetée (course) ou l'intensité
+  // (autres sports), la couleur = la zone. Trait pointillé = allure moyenne visée.
+  function PlannedRunnaChart({ session, thresholdPace }) {
     const steps = (session.steps || []).filter(b => b && b.durationMin > 0);
     if (!steps.length) return null;
+    const isRun = session.sport === 'Course' || session.sport === 'Trail';
+    const thr = Number(thresholdPace) || 0;
+    const usePace = isRun && thr > 0;
     const total = steps.reduce((s, b) => s + b.durationMin, 0) || 1;
-    const H = 64, W = 100;
+    const zp = z => thr * ({ 1: 1.34, 2: 1.20, 3: 1.09, 4: 1.00, 5: 0.93 }[z] || 1.15);
+    const vals = steps.map(b => usePace ? zp(b.zone) : b.zone);
+    const W = 100, H = 96, PAD = 3;
+    let lo, hi; // lo = valeur en haut du graphe, hi = valeur en bas
+    if (usePace) { lo = Math.min.apply(null, vals) - 0.12; hi = Math.max.apply(null, vals) + 0.20; }
+    else { lo = 5.4; hi = 0.6; }
+    const yOf = v => ((v - lo) / (hi - lo)) * (H - PAD * 2) + PAD;
     let cum = 0;
-    const rects = steps.map((b, i) => {
-      const x = (cum / total) * W;
-      const w = (b.durationMin / total) * W;
+    const bars = steps.map((b, i) => {
+      const x = (cum / total) * W, w = (b.durationMin / total) * W;
       cum += b.durationMin;
-      const zh = (b.zone / 5) * H;
+      const yt = yOf(vals[i]);
       const col = (COACH_ZONES[b.zone] || {}).color || '#605d5d';
       return h('g', { key: i },
-        h('rect', { x: x, y: H - zh, width: Math.max(0.4, w), height: zh, fill: col, stroke: '#ffffff', strokeWidth: 0.6, vectorEffect: 'non-scaling-stroke' }),
-        h('title', null, (COACH_ZONES[b.zone] ? COACH_ZONES[b.zone].label : 'Zone ' + b.zone) + ' · ' + fmtDur(b.durationMin))
+        h('rect', { x: x + 0.5, y: yt, width: Math.max(0.8, w - 1), height: Math.max(2, H - PAD - yt), fill: col, rx: 1.4, ry: 1.4 }),
+        h('title', null, (usePace ? fmtPace(vals[i]) + ' /km' : ((COACH_ZONES[b.zone] || {}).label || 'Zone ' + b.zone)) + ' · ' + fmtDur(b.durationMin))
       );
     });
-    const grid = [1, 2, 3, 4].map(z => h('line', { key: 'g' + z, x1: 0, x2: W, y1: H - (z / 5) * H, y2: H - (z / 5) * H, stroke: 'rgba(32,30,29,0.14)', strokeWidth: 0.6, vectorEffect: 'non-scaling-stroke' }));
-    return h('div', { style: { marginTop: '8px', display: 'flex', gap: '8px', alignItems: 'flex-start' } },
-      h('div', { style: { flex: '0 0 52px', height: H + 'px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: '8.5px', fontWeight: '700', letterSpacing: '0.02em', color: '#605d5d', textAlign: 'right', lineHeight: '1' } },
-        h('span', null, 'TRÈS DUR'), h('span', null, 'DUR'), h('span', null, 'SOUTENU'), h('span', null, 'FACILE'), h('span', null, 'TRÈS FACILE')
-      ),
-      h('div', { style: { flex: 1, minWidth: 0 } },
-        h('svg', { viewBox: '0 0 ' + W + ' ' + H, preserveAspectRatio: 'none', style: { width: '100%', height: H + 'px', display: 'block', background: '#f3f2f2', border: '1px solid #d7d3d3' } }, grid, rects),
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#605d5d', marginTop: '2px' } },
-          h('span', null, '0 min'),
-          h('span', null, fmtDur(Math.round(total)))
+    const avg = vals.reduce((s, v, i) => s + v * steps[i].durationMin, 0) / total;
+    const avgLine = h('line', { x1: 0, x2: W, y1: yOf(avg), y2: yOf(avg), stroke: '#201e1d', strokeWidth: 1, strokeDasharray: '3 2', vectorEffect: 'non-scaling-stroke' });
+    const ticks = usePace
+      ? [0, 0.33, 0.66, 1].map(f => { const v = lo + (hi - lo) * f; return { yPct: (yOf(v) / H) * 100, label: fmtPace(v) }; })
+      : [5, 4, 3, 2, 1].map(z => ({ yPct: (yOf(z) / H) * 100, label: (COACH_ZONES[z] || {}).label || ('Z' + z) }));
+    return h('div', { style: { marginTop: '10px' } },
+      h('div', { style: { display: 'flex', gap: '8px' } },
+        h('div', { style: { flex: '0 0 ' + (usePace ? '54px' : '78px'), position: 'relative', height: H + 'px', fontSize: '9px', fontWeight: '700', color: '#605d5d' } },
+          ticks.map((t, i) => h('span', { key: i, style: { position: 'absolute', right: 0, top: t.yPct + '%', transform: 'translateY(-50%)', whiteSpace: 'nowrap' } }, t.label))
+        ),
+        h('div', { style: { flex: 1, minWidth: 0 } },
+          h('svg', { viewBox: '0 0 ' + W + ' ' + H, preserveAspectRatio: 'none', style: { width: '100%', height: H + 'px', display: 'block', background: '#f3f2f2', border: '1px solid #d7d3d3' } }, avgLine, bars),
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#605d5d', marginTop: '2px' } },
+            h('span', null, '0'), h('span', null, fmtDur(Math.round(total)))
+          )
         )
-      )
+      ),
+      usePace && h('div', { style: { fontSize: '11px', color: '#605d5d', marginTop: '4px' } }, 'Allure moyenne visée ≈ ' + fmtPace(avg) + ' /km')
     );
   }
 
@@ -3837,17 +3840,32 @@ function App() {
                           ),
                         );
                       }),
-                      (day.planned||[]).map((p,pi)=>h('div',{key:'pl'+pi,style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px dashed #bab6b6',background:'transparent',color:'#8a8686'}},
+                      (day.planned||[]).map((p,pi)=>h('div',{key:'pl'+pi,onClick:()=>setPlannedOpen(k=>k===p.key?null:p.key),style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px dashed '+(plannedOpen===p.key?'#ec3013':'#bab6b6'),background:plannedOpen===p.key?'#fdf1ee':'transparent',color:plannedOpen===p.key?'#ec3013':'#8a8686',cursor:'pointer'}},
                         h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.1'}},p.sport),
                         h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},p.title),
                         p.focus&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',lineHeight:'1.25',overflowWrap:'anywhere'}},p.focus),
-                        h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',letterSpacing:'0.04em',lineHeight:'1.3'}},'Prévu'+(p.time?' · '+p.time:''))
+                        h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',letterSpacing:'0.04em',lineHeight:'1.3'}},(plannedOpen===p.key?'▾ ':'')+'Prévu'+(p.time?' · '+p.time:''))
                       )),
                       day.empty&&h('span',{style:{display:'flex',alignItems:'center',height:'100%',fontSize:'12px',color:'#bab6b6'}},'Repos')
                     )
                   ))
                 )
-              )
+              ),
+              (()=>{
+                const op=(wk.plannedSessions||[]).find(x=>x.key===plannedOpen);
+                if(!op) return null;
+                const s=op.p;
+                return h('div',{style:{padding:'16px 32px 22px',borderTop:'2px solid #ec3013',background:'#fdf7f5'}},
+                  h('div',{style:{display:'flex',alignItems:'baseline',gap:'10px',flexWrap:'wrap',marginBottom:'6px'}},
+                    h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:'#ec3013'}},new Date(s.date+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'short'})+' · '+s.sport),
+                    h('span',{style:{fontSize:'14px',fontWeight:'800'}},s.title+(s.durationMin?' · '+fmtDur(s.durationMin):'')+(s.distanceKm?' · '+s.distanceKm+' km':'')),
+                    h('button',{type:'button',onClick:()=>setPlannedOpen(null),style:{marginLeft:'auto',border:'0',background:'transparent',color:'#605d5d',fontSize:'15px',fontWeight:'800',cursor:'pointer',lineHeight:1}},'✕')
+                  ),
+                  h('p',{style:{margin:'0 0 4px',fontSize:'13px',fontWeight:'700'}},'Objectif : '+(s.focus||s.title||'—')),
+                  s.description&&h('p',{style:{margin:'0 0 6px',fontSize:'12px',color:'#3d3a3a',lineHeight:'1.45'}},s.description),
+                  h(PlannedRunnaChart,{session:s,thresholdPace:Number(profile.thresholdPace)||thresholdPaceEstimated||null})
+                );
+              })()
             )
           ):null
         ),
