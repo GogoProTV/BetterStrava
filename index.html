@@ -980,7 +980,7 @@ function App() {
   const [tab, setTab] = useState('programme');
   const [athleteOpen, setAthleteOpen] = useState(false);
   const [athleteSection, setAthleteSection] = useState('Condition physique');
-  const [view, setView] = useState(8);
+  const [weeksShown, setWeeksShown] = useState(8);
   const [sport, setSport] = useState('Tous');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [range, setRange] = useState(90);
@@ -2742,7 +2742,7 @@ function App() {
     const thisWeek=weekStart(new Date());
     const oldest=data.length?weekStart(data[data.length-1].date):thisWeek;
     const allWeeks=Math.max(1,Math.round((thisWeek.getTime()-oldest.getTime())/(7*86400000))+1);
-    const n=view==='saison'?allWeeks:Math.min(allWeeks,view);
+    const n=Math.min(allWeeks,Math.max(1,weeksShown));
     const starts=[];
     for(let i=n-1;i>=0;i--) starts.push(new Date(thisWeek.getTime()-i*7*86400000));
     // Une seule semaine projetée (programme du coach) — visible en scrollant vers le haut.
@@ -2843,6 +2843,12 @@ function App() {
         days:daysList,
       };
     }).reverse();
+  }
+  function totalWeeksAvailable() {
+    if (!data.length) return 0;
+    const tw = weekStart(new Date()).getTime();
+    const ow = weekStart(data[data.length-1].date).getTime();
+    return Math.max(1, Math.round((tw-ow)/(7*86400000))+1);
   }
 
   const sportCounts={};
@@ -3145,6 +3151,99 @@ function App() {
       setCoachActAnalyses(m => ({ ...m, [act.id]: { err: 'Réseau indisponible : ' + e.message } }));
     }
     setCoachBusy(false);
+  }
+
+  // Bande « coach » en tête de l'onglet Programme : objectif + programme de la semaine.
+  function renderCoachBand() {
+    const wsMs = weekStart(new Date()).getTime();
+    const seDone = data.filter(a => !a.planned && a.date.getTime() >= wsMs && a.date.getTime() <= Date.now() && a.sport !== 'Repos').length;
+    const seTarget = coachPlan && coachPlan.targets && coachPlan.targets.nbSeances != null
+      ? coachPlan.targets.nbSeances
+      : (coachPlan ? coachPlan.sessions.filter(s => { const t = new Date(s.date + 'T12:00:00').getTime(); return t >= wsMs && t < wsMs + 7 * 86400000 && s.sport && s.sport !== 'Repos'; }).length : null);
+    const tiles = [
+      { label: 'Objectif visé', value: race.type, note: raceDateObj ? raceDateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: '2-digit' }) + (daysToRace != null ? ' · J−' + daysToRace : '') : 'date à renseigner' },
+      { label: 'Temps estimé', value: projDisplay, note: projResult ? projMethodLabel : (data.length ? 'données insuffisantes' : '—') },
+      { label: 'Prêt · Readiness', value: data.length ? String(ready) : '—', unit: data.length ? '%' : '', note: data.length ? (ready >= 75 ? 'en bonne voie' : 'à consolider') : '' },
+      { label: 'Séances / semaine', value: seTarget != null ? (seDone + ' / ' + seTarget) : String(seDone), note: seTarget != null ? 'réalisées / visées' : 'lance une analyse' },
+    ];
+    const tileRow = h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '16px 40px', padding: '16px 32px', borderBottom: '1px solid #d7d3d3' } },
+      tiles.map((k, i) => h('div', { key: i, style: { display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 } },
+        h('span', { style: { fontSize: '10px', fontWeight: '600', letterSpacing: '0.12em', textTransform: 'uppercase', color: '#605d5d' } }, k.label),
+        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '6px' } },
+          h('span', { style: { fontSize: String(k.value).length > 16 ? '15px' : '18px', fontWeight: '800', letterSpacing: '-0.02em' } }, k.value),
+          k.unit && h('span', { style: { fontSize: '12px', fontWeight: '600', color: '#605d5d' } }, k.unit)
+        ),
+        k.note && h('span', { style: { fontSize: '11px', color: '#605d5d' } }, k.note)
+      ))
+    );
+
+    let body;
+    if (!coachPlan) {
+      body = coachBusy
+        ? h('div', null,
+            h('h2', { style: { margin: '0 0 14px', fontSize: '16px', fontWeight: '800' } }, 'Ton coach travaille…'),
+            [[1, 'Analyse de ta forme, ta fatigue et ton historique'], [2, 'Création de ton programme']].map(([n, lab]) =>
+              h('div', { key: n, style: { display: 'flex', alignItems: 'center', gap: '12px', padding: '9px 0', borderTop: n > 1 ? '1px solid #d7d3d3' : 'none' } },
+                h('span', { style: { flex: '0 0 20px', height: '20px', borderRadius: '50%', border: '2px solid ' + (coachPhase >= n ? '#ec3013' : '#d7d3d3'), background: coachPhase > n ? '#ec3013' : 'transparent', color: '#fff', fontSize: '11px', fontWeight: '800', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, coachPhase > n ? '✓' : ''),
+                h('span', { style: { fontSize: '13px', fontWeight: coachPhase === n ? '800' : '600', color: coachPhase >= n ? '#201e1d' : '#bab6b6' } }, lab + (coachPhase === n ? ' …' : ''))
+              )
+            )
+          )
+        : h('div', { style: { maxWidth: '640px' } },
+            h('p', { style: { margin: '0 0 14px', fontSize: '13px', lineHeight: '1.5', color: '#605d5d' } },
+              data.length ? 'Le coach va analyser ta forme et créer ton programme de la semaine.' : 'Importe tes activités Strava, puis lance l’analyse.'),
+            h('button', { type: 'button', onClick: coachFullAnalysis, disabled: coachLeft <= 0 || !data.length, style: { padding: '15px 24px', border: '2px solid #ec3013', background: (coachLeft <= 0 || !data.length) ? '#f3f2f2' : '#ec3013', color: (coachLeft <= 0 || !data.length) ? '#bab6b6' : '#fff', fontFamily: 'inherit', fontSize: '14px', fontWeight: '800', letterSpacing: '0.04em', textTransform: 'uppercase', cursor: (coachLeft <= 0 || !data.length) ? 'not-allowed' : 'pointer' } }, 'Analyser & créer mon programme'),
+            coachErr && h('p', { style: { margin: '12px 0 0', fontSize: '12px', color: '#ec3013' } }, coachErr)
+          );
+    } else {
+      const wnISO = coachPlan.weekNextISO || isoLocal(new Date(new Date((coachPlan.weekStartISO || isoLocal(weekStart(new Date()))) + 'T12:00:00').getTime() + 7 * 86400000));
+      const sorted = coachPlan.sessions.slice().sort((a, b) => a.date < b.date ? -1 : 1);
+      const g1 = sorted.filter(s => s.date < wnISO), g2 = sorted.filter(s => s.date >= wnISO);
+      const sessionRow = (s, si, first) => {
+        const open = coachOpenSess === si;
+        const clickable = !!((s.steps && s.steps.length) || s.description);
+        return h('div', { key: si, style: { padding: '10px 0', borderTop: first ? 'none' : '1px solid #d7d3d3', opacity: s.done ? 0.55 : 1 } },
+          h('div', { style: { display: 'grid', gridTemplateColumns: '118px 1fr', gap: '14px', cursor: clickable ? 'pointer' : 'default' }, onClick: clickable ? () => setCoachOpenSess(open ? null : si) : undefined },
+            h('div', null,
+              h('span', { style: { display: 'block', fontSize: '12px', fontWeight: '800' } }, new Date(s.date + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' })),
+              h('span', { style: { display: 'block', fontSize: '11px', color: '#605d5d' } }, s.sport)
+            ),
+            h('div', null,
+              h('span', { style: { display: 'block', fontSize: '13px', fontWeight: '800' } },
+                (clickable ? (open ? '▾ ' : '▸ ') : '') + s.title + (s.durationMin ? ' · ' + fmtDur(s.durationMin) : '') + (s.distanceKm ? ' · ' + s.distanceKm + ' km' : '') + (s.load != null ? ' · ' + s.load + ' TSS' : ''),
+                s.done && h('span', { style: { marginLeft: '8px', padding: '1px 6px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.06em', textTransform: 'uppercase', background: '#eae9e9', color: '#605d5d' } }, 'réalisé')
+              ),
+              s.focus && h('span', { style: { display: 'block', fontSize: '11px', fontWeight: '700', color: '#ec3013', marginTop: '2px' } }, 'À travailler : ' + s.focus)
+            )
+          ),
+          open && h('div', { style: { marginTop: '6px' } },
+            s.description && h('p', { style: { margin: '0 0 4px', fontSize: '12px', color: '#3d3a3a', lineHeight: '1.45' } }, s.description),
+            h(PlannedSessionChart, { session: s })
+          )
+        );
+      };
+      body = h('div', null,
+        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' } },
+          h('h2', { style: { margin: 0, fontSize: '18px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Ton programme'),
+          coachPlan.generatedAt && h('span', { style: { fontSize: '11px', color: '#605d5d' } }, 'créé le ' + new Date(coachPlan.generatedAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })),
+          h('span', { style: { marginLeft: 'auto', display: 'flex', gap: '8px' } },
+            h('button', { type: 'button', onClick: coachFullAnalysis, disabled: coachBusy || coachLeft <= 0, style: { padding: '7px 14px', border: '2px solid #ec3013', background: (coachBusy || coachLeft <= 0) ? '#f3f2f2' : '#ec3013', color: (coachBusy || coachLeft <= 0) ? '#bab6b6' : '#fff', fontFamily: 'inherit', fontSize: '10px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', cursor: (coachBusy || coachLeft <= 0) ? 'not-allowed' : 'pointer' } }, coachBusy ? '…' : 'Réanalyser'),
+            h('button', { type: 'button', onClick: () => { if (confirm('Effacer le programme ?')) setCoachPlan(null); }, style: { padding: '7px 14px', border: '2px solid #bab6b6', background: 'transparent', color: '#605d5d', fontFamily: 'inherit', fontSize: '10px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', cursor: 'pointer' } }, 'Effacer')
+          )
+        ),
+        coachErr && h('p', { style: { margin: '0 0 12px', fontSize: '12px', color: '#ec3013' } }, coachErr),
+        coachPlan.summary && h('p', { style: { margin: '0 0 16px', fontSize: '13px', lineHeight: '1.5', color: '#201e1d', whiteSpace: 'pre-wrap' } }, coachPlan.summary),
+        h('h3', { style: { margin: '6px 0 2px', fontSize: '12px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#ec3013' } }, 'Cette semaine'),
+        g1.map((s, si) => sessionRow(s, 'a' + si, si === 0)),
+        g2.length > 0 && h('h3', { style: { margin: '20px 0 2px', fontSize: '12px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#ec3013' } }, 'Semaine projetée'),
+        g2.map((s, si) => sessionRow(s, 'b' + si, si === 0)),
+        h('p', { style: { margin: '16px 0 0', fontSize: '11px', color: '#605d5d' } }, 'Clique sur une séance pour son déroulé (zones × durée). Séances prévues en gris pointillé sur le calendrier. Analyses restantes aujourd’hui : ' + coachLeft + ' / ' + COACH_LIMIT + '.')
+      );
+    }
+    return h('section', { style: { borderBottom: '2px solid #201e1d' } },
+      tileRow,
+      h('div', { style: { padding: '22px 32px' } }, body)
+    );
   }
 
   // Analyse + programme automatiques dès que les activités sont importées (une fois).
@@ -3574,8 +3673,9 @@ function App() {
               );
             })
           ),
-          h('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'16px', marginBottom:'12px', paddingRight:'32px' } },
+          h('div', { style:{ display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap', marginBottom:'12px', paddingRight:'32px' } },
             h('span', { style:{ fontSize:'12px', fontWeight:'700', letterSpacing:'0.06em', textTransform:'uppercase' } }, 'Données seconde par seconde'),
+            h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap', alignItems:'center', marginLeft:'auto' } },
             h('button', {
               type:'button',
               onClick: () => {
@@ -3591,13 +3691,19 @@ function App() {
                 setTab('athlete');
               },
               style:{
-                padding:'7px 18px', border:'2px solid #ec3013', background:'#ec3013', color:'#ffffff',
-                fontFamily:'inherit', fontSize:'11px', fontWeight:'800', letterSpacing:'0.12em',
+                padding:'7px 16px', border:'2px solid #ec3013', background:'transparent', color:'#ec3013',
+                fontFamily:'inherit', fontSize:'11px', fontWeight:'800', letterSpacing:'0.1em',
                 textTransform:'uppercase', cursor:'pointer'
               },
-              onMouseEnter: e => { e.currentTarget.style.background='#ae1800'; e.currentTarget.style.borderColor='#ae1800'; },
-              onMouseLeave: e => { e.currentTarget.style.background='#ec3013'; e.currentTarget.style.borderColor='#ec3013'; }
+              onMouseEnter: e => { e.currentTarget.style.background='#fdf1ee'; },
+              onMouseLeave: e => { e.currentTarget.style.background='transparent'; }
             }, 'Comparer'),
+            (() => { const an = coachActAnalyses[act.id]; const busy = coachBusy || coachLeft <= 0; return h('button', {
+              type:'button', onClick: () => coachAnalyzeActivity(act), disabled: busy,
+              style:{ padding:'7px 16px', border:'2px solid '+(busy?'#bab6b6':'#ec3013'), background:'transparent', color:busy?'#bab6b6':'#ec3013', fontFamily:'inherit', fontSize:'11px', fontWeight:'800', letterSpacing:'0.1em', textTransform:'uppercase', cursor:busy?'not-allowed':'pointer' },
+              onMouseEnter: e => { if(!busy) e.currentTarget.style.background='#fdf1ee'; },
+              onMouseLeave: e => { e.currentTarget.style.background='transparent'; }
+            }, (an && an.loading) ? 'Analyse…' : ((an && an.texte) ? 'Ré-analyser' : 'Analyser l\'activité')); })(),
             hasData && h('button', {
               type: 'button',
               onClick: () => {
@@ -3633,23 +3739,16 @@ function App() {
               onMouseLeave: e => { e.currentTarget.style.borderColor='#605d5d'; e.currentTarget.style.color='#605d5d'; }
             }, 'Export CSV'),
             serieBtns.length > 0 && h('div', { style:{ display:'flex', gap:'8px' } }, serieBtns.map(serBtn))
+            )
           ),
-          // ── Analyse de l'activité par le coach IA (déroulante) ──────────
+          // ── Texte d'analyse de l'activité par le coach IA (déroulant) ────
           (() => {
             const an = coachActAnalyses[act.id];
-            const loading = an && an.loading;
+            if (!an || (!an.texte && !an.err)) return null;
             return h('div', { style:{ marginBottom:'16px', paddingRight:'32px' } },
-              h('div', { style:{ display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap' } },
-                h('button', { type:'button',
-                  onClick: () => coachAnalyzeActivity(act),
-                  disabled: coachBusy || coachLeft <= 0,
-                  style:{ padding:'7px 16px', border:'2px solid #7c4dbc', background:(coachBusy||coachLeft<=0)?'#f3f2f2':'#7c4dbc', color:(coachBusy||coachLeft<=0)?'#bab6b6':'#fff', fontFamily:'inherit', fontSize:'11px', fontWeight:'800', letterSpacing:'0.1em', textTransform:'uppercase', cursor:(coachBusy||coachLeft<=0)?'not-allowed':'pointer' } },
-                  loading ? 'Analyse en cours…' : (an && an.texte ? 'Ré-analyser l\'activité' : 'Analyser l\'activité')
-                ),
-                an && an.texte && an.generatedAt && h('span', { style:{ fontSize:'11px', color:'#605d5d' } }, 'coach IA · ' + new Date(an.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}))
-              ),
-              an && an.err && h('p', { style:{ margin:'8px 0 0', fontSize:'12px', color:'#ec3013' } }, an.err),
-              an && an.texte && h('p', { style:{ margin:'10px 0 0', fontSize:'13px', lineHeight:'1.55', color:'#201e1d', whiteSpace:'pre-wrap' } }, an.texte)
+              an.err && h('p', { style:{ margin:0, fontSize:'12px', color:'#ec3013' } }, an.err),
+              an.texte && an.generatedAt && h('span', { style:{ display:'block', fontSize:'11px', color:'#605d5d', marginBottom:'6px' } }, 'Analyse du coach IA · ' + new Date(an.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})),
+              an.texte && h('p', { style:{ margin:0, fontSize:'13px', lineHeight:'1.55', color:'#201e1d', whiteSpace:'pre-wrap' } }, an.texte)
             );
           })(),
           isLoading && h('div', { style:{ height:'400px', display:'flex', alignItems:'center', fontSize:'12px', color:'#605d5d' } }, 'Chargement des streams Strava…'),
@@ -3672,7 +3771,6 @@ function App() {
       ),
       h('nav',{style:{display:'flex',flexDirection:'column',borderBottom:'1px solid #201e1d'}},
         h('button',{type:'button',onClick:()=>setTab('programme'),style:navStyle(tab==='programme'),onMouseEnter:e=>{if(tab!=='programme')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='programme')e.currentTarget.style.background='transparent';}},'Programme'),
-        h('button',{type:'button',onClick:()=>setTab('coach'),style:navStyle(tab==='coach'),onMouseEnter:e=>{if(tab!=='coach')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='coach')e.currentTarget.style.background='transparent';}},'Coach'),
         h('button',{type:'button',onClick:()=>setTab('activites'),style:navStyle(tab==='activites'),onMouseEnter:e=>{if(tab!=='activites')e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(tab!=='activites')e.currentTarget.style.background='transparent';}},'Activités'),
         athleteSections.map(s=>h('button',{key:s,type:'button',onClick:()=>{setAthleteSection(s);setTab('athlete');},style:navStyle(tab==='athlete'&&athleteSection===s),onMouseEnter:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{if(!(tab==='athlete'&&athleteSection===s))e.currentTarget.style.background='transparent';}},s))
       ),
@@ -3707,16 +3805,7 @@ function App() {
             h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},'Calendrier par semaine')
           )
         ),
-        h('section',{style:{display:'flex',flexWrap:'wrap',alignItems:'flex-end',justifyContent:'flex-end',gap:'12px',padding:'14px 32px',borderBottom:'2px solid #201e1d'}},
-          h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
-            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},'Affichage'),
-            h('div',{style:{display:'flex',flexWrap:'wrap',gap:'8px'}},
-              [{label:'Saison',value:'saison'},{label:'4 sem.',value:4},{label:'8 sem.',value:8}].map(o=>
-                h('button',{key:o.label,type:'button',onClick:()=>setView(o.value),style:btnStyle(view===o.value),onMouseEnter:e=>{if(view!==o.value)e.currentTarget.style.background='#ffe0d9';},onMouseLeave:e=>{e.currentTarget.style.background=view===o.value?'#ec3013':'transparent';}},o.label)
-              )
-            )
-          )
-        ),
+        renderCoachBand(),
         noData&&h('p',{style:{margin:0,padding:'28px 32px 32px',fontSize:'14px',color:'#605d5d'}},noDataMsg),
         h('section',null,
           data.length?buildWeeks().map((wk,wi)=>
@@ -3789,109 +3878,9 @@ function App() {
               )
             )
           ):null
-        )
-      ),
-
-      // ── COACH ────────────────────────────────────────────────────────────
-      tab==='coach'&&h('div',null,
-        h('header',{style:{display:'flex',alignItems:'flex-end',justifyContent:'space-between',flexWrap:'wrap',gap:'24px',minHeight:'108px',boxSizing:'border-box',padding:'24px 32px',borderBottom:'2px solid #201e1d'}},
-          h('div',{style:{display:'flex',flexDirection:'column',gap:'4px'}},
-            h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.14em',textTransform:'uppercase',color:'#ec3013'}},'Coach'),
-            h('h1',{style:{margin:0,fontSize:'30px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1'}},'Plan & coach IA')
-          )
         ),
-        // ── Grande barre : objectif · temps estimé · readiness · séances ────
-        (()=>{
-          const wsMs=weekStart(new Date()).getTime();
-          const seDone=data.filter(a=>!a.planned&&a.date.getTime()>=wsMs&&a.date.getTime()<=Date.now()&&a.sport!=='Repos').length;
-          const seTarget=coachPlan&&coachPlan.targets&&coachPlan.targets.nbSeances!=null
-            ? coachPlan.targets.nbSeances
-            : (coachPlan?coachPlan.sessions.filter(s=>{const t=new Date(s.date+'T12:00:00').getTime();return t>=wsMs&&t<wsMs+7*86400000&&s.sport&&s.sport!=='Repos';}).length:null);
-          const tiles=[
-            {label:'Objectif visé',value:race.type,unit:'',note:raceDateObj?raceDateObj.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'})+(daysToRace!=null?' · J−'+daysToRace:''):'date à renseigner'},
-            {label:'Temps estimé',value:projDisplay,unit:'',note:projResult?projMethodLabel:(data.length?'données insuffisantes':'—')},
-            {label:'Prêt · Readiness',value:data.length?String(ready):'—',unit:data.length?'%':'',note:data.length?(ready>=75?'en bonne voie':'à consolider'):''},
-            {label:'Séances dans la semaine',value:seTarget!=null?(seDone+' / '+seTarget):String(seDone),unit:'',note:seTarget!=null?'réalisées / visées':'lance une analyse'},
-          ];
-          return h('section',{style:{display:'flex',flexWrap:'wrap',gap:'20px 44px',padding:'18px 32px',borderBottom:'2px solid #201e1d'}},
-            tiles.map((k,i)=>h('div',{key:i,style:{display:'flex',flexDirection:'column',gap:'6px',minWidth:0}},
-              h('span',{style:{fontSize:'11px',fontWeight:'600',letterSpacing:'0.12em',textTransform:'uppercase',color:'#605d5d'}},k.label),
-              h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px'}},
-                h('span',{style:{fontSize:String(k.value).length>16?'16px':'20px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.05'}},k.value),
-                k.unit&&h('span',{style:{fontSize:'13px',fontWeight:'600',color:'#605d5d'}},k.unit)
-              ),
-              k.note&&h('span',{style:{fontSize:'12px',color:'#605d5d'}},k.note)
-            ))
-          );
-        })(),
-        h('section',{style:{padding:'32px'}},
-          // ── Pas encore de programme : gros bouton / progression ───────────
-          !coachPlan&&h('div',{style:{maxWidth:'620px'}},
-            coachBusy
-              ? h('div',null,
-                  h('h2',{style:{margin:'0 0 20px',fontSize:'18px',fontWeight:'800',letterSpacing:'-0.01em'}},'Ton coach travaille…'),
-                  [[1,'Analyse de ta forme, ta fatigue et ton historique'],[2,'Création de ton programme de la semaine']].map(([n,lab])=>
-                    h('div',{key:n,style:{display:'flex',alignItems:'center',gap:'12px',padding:'12px 0',borderTop:n>1?'1px solid #d7d3d3':'none'}},
-                      h('span',{style:{flex:'0 0 22px',height:'22px',borderRadius:'50%',border:'2px solid '+(coachPhase>n?'#ec3013':coachPhase===n?'#ec3013':'#d7d3d3'),background:coachPhase>n?'#ec3013':'transparent',color:'#fff',fontSize:'12px',fontWeight:'800',display:'flex',alignItems:'center',justifyContent:'center'}},coachPhase>n?'✓':''),
-                      h('span',{style:{fontSize:'14px',fontWeight:coachPhase===n?'800':'600',color:coachPhase>=n?'#201e1d':'#bab6b6'}},lab+(coachPhase===n?' …':''))
-                    )
-                  )
-                )
-              : h('div',null,
-                  h('p',{style:{margin:'0 0 20px',fontSize:'14px',lineHeight:'1.5',color:'#605d5d'}},
-                    data.length
-                      ? 'Le coach va analyser ta forme, ta fatigue et ton objectif, puis créer ton programme de la semaine.'
-                      : 'Importe tes activités Strava, puis lance l’analyse.'),
-                  h('button',{type:'button',onClick:coachFullAnalysis,disabled:coachLeft<=0||!data.length,style:{width:'100%',padding:'22px',border:'2px solid #ec3013',background:(coachLeft<=0||!data.length)?'#f3f2f2':'#ec3013',color:(coachLeft<=0||!data.length)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'16px',fontWeight:'800',letterSpacing:'0.04em',textTransform:'uppercase',cursor:(coachLeft<=0||!data.length)?'not-allowed':'pointer'}},'Analyser & créer mon programme'),
-                  coachErr&&h('p',{style:{margin:'12px 0 0',fontSize:'12px',color:'#ec3013'}},coachErr)
-                )
-          ),
-          // ── Programme défini ─────────────────────────────────────────────
-          coachPlan&&(()=>{
-            const wnISO=coachPlan.weekNextISO||isoLocal(new Date(new Date((coachPlan.weekStartISO||isoLocal(weekStart(new Date())))+'T12:00:00').getTime()+7*86400000));
-            const sorted=coachPlan.sessions.slice().sort((a,b)=>a.date<b.date?-1:1);
-            const g1=sorted.filter(s=>s.date<wnISO), g2=sorted.filter(s=>s.date>=wnISO);
-            const sessionRow=(s,si,first)=>{
-              const open=coachOpenSess===si;
-              const clickable=!!((s.steps&&s.steps.length)||s.description);
-              return h('div',{key:si,style:{padding:'10px 0',borderTop:first?'none':'1px solid #d7d3d3',opacity:s.done?0.55:1}},
-                h('div',{style:{display:'grid',gridTemplateColumns:'118px 1fr',gap:'14px',cursor:clickable?'pointer':'default'},onClick:clickable?()=>setCoachOpenSess(open?null:si):undefined},
-                  h('div',null,
-                    h('span',{style:{display:'block',fontSize:'12px',fontWeight:'800'}},new Date(s.date+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'short'})),
-                    h('span',{style:{display:'block',fontSize:'11px',color:'#605d5d'}},s.sport)
-                  ),
-                  h('div',null,
-                    h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800'}},
-                      (clickable?(open?'▾ ':'▸ '):'')+s.title+(s.durationMin?' · '+fmtDur(s.durationMin):'')+(s.distanceKm?' · '+s.distanceKm+' km':'')+(s.load!=null?' · '+s.load+' TSS':''),
-                      s.done&&h('span',{style:{marginLeft:'8px',padding:'1px 6px',fontSize:'10px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',background:'#eae9e9',color:'#605d5d'}},'réalisé')
-                    ),
-                    s.focus&&h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',color:'#ec3013',marginTop:'2px'}},'À travailler : '+s.focus)
-                  )
-                ),
-                open&&h('div',{style:{marginTop:'6px'}},
-                  s.description&&h('p',{style:{margin:'0 0 4px',fontSize:'12px',color:'#3d3a3a',lineHeight:'1.45'}},s.description),
-                  h(PlannedSessionChart,{session:s})
-                )
-              );
-            };
-            return h('div',null,
-              h('div',{style:{display:'flex',alignItems:'baseline',gap:'12px',flexWrap:'wrap',marginBottom:'14px'}},
-                h('h2',{style:{margin:0,fontSize:'18px',fontWeight:'800',letterSpacing:'-0.01em'}},'Ton programme'),
-                coachPlan.generatedAt&&h('span',{style:{fontSize:'11px',color:'#605d5d'}},'créé le '+new Date(coachPlan.generatedAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})),
-                h('span',{style:{marginLeft:'auto',display:'flex',gap:'8px'}},
-                  h('button',{type:'button',onClick:coachFullAnalysis,disabled:coachBusy||coachLeft<=0,style:{padding:'6px 12px',border:'2px solid #ec3013',background:(coachBusy||coachLeft<=0)?'#f3f2f2':'#ec3013',color:(coachBusy||coachLeft<=0)?'#bab6b6':'#fff',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:(coachBusy||coachLeft<=0)?'not-allowed':'pointer'}},coachBusy?'…':'Recalculer / adapter'),
-                  h('button',{type:'button',onClick:()=>{if(confirm('Effacer le programme ?'))setCoachPlan(null);},style:{padding:'6px 12px',border:'2px solid #bab6b6',background:'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'}},'Effacer')
-                )
-              ),
-              coachErr&&h('p',{style:{margin:'0 0 12px',fontSize:'12px',color:'#ec3013'}},coachErr),
-              coachPlan.summary&&h('p',{style:{margin:'0 0 16px',fontSize:'13px',lineHeight:'1.5',color:'#201e1d',whiteSpace:'pre-wrap'}},coachPlan.summary),
-              h('h3',{style:{margin:'6px 0 2px',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:'#ec3013'}},'Cette semaine'),
-              g1.map((s,si)=>sessionRow(s,'a'+si,si===0)),
-              g2.length>0&&h('h3',{style:{margin:'20px 0 2px',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:'#ec3013'}},'Semaine projetée'),
-              g2.map((s,si)=>sessionRow(s,'b'+si,si===0)),
-              h('p',{style:{margin:'16px 0 0',fontSize:'11px',color:'#605d5d'}},'Clique sur une séance pour voir son déroulé (zones × durée). Elles apparaissent en gris pointillé sur le calendrier du Programme (scroll vers le haut pour la semaine projetée). Analyses restantes aujourd’hui : '+coachLeft+' / '+COACH_LIMIT+'.')
-            );
-          })()
+        data.length>0&&weeksShown<totalWeeksAvailable()&&h('div',{style:{padding:'20px 32px 40px',borderTop:'1px solid #d7d3d3'}},
+          h('button',{type:'button',onClick:()=>setWeeksShown(w=>w+8),style:{padding:'12px 20px',border:'2px solid #201e1d',background:'transparent',color:'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',cursor:'pointer'},onMouseEnter:e=>{e.currentTarget.style.background='#ffe0d9';e.currentTarget.style.borderColor='#ec3013';},onMouseLeave:e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.borderColor='#201e1d';}},'Afficher plus de semaines')
         )
       ),
 
