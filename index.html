@@ -3085,7 +3085,7 @@ function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           profileId: coachProfileId(),
-          messages: [{ role: 'user', content: 'Analyse mon profil et crée le programme des DEUX prochaines semaines (semaine en cours + semaine suivante). Adapte les séances à venir de la semaine en cours en fonction de "seancesDejaRealiseesCetteSemaine" (garde ces séances passées telles quelles, marquées "done":true). Fournis "plan" avec "targets" et toutes les séances, chacune avec "focus" (ce qui est travaillé).' }],
+          messages: [{ role: 'user', content: 'Analyse mon état de forme et crée le programme des DEUX prochaines semaines (semaine en cours + semaine suivante). Adapte les séances à venir de la semaine en cours selon "seancesDejaRealiseesCetteSemaine" (garde les séances déjà faites telles quelles, "done":true). Fournis "plan" avec "targets" et toutes les séances, chacune avec "focus". Respecte la règle : aucun terme technique, mots simples uniquement, dans "reply" comme dans les titres et "focus".' }],
           context: buildCoachContext(),
           plan: coachPlan,
         }),
@@ -3133,7 +3133,7 @@ function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           profileId: coachProfileId(),
-          messages: [{ role: 'user', content: 'Analyse UNIQUEMENT la séance "seanceAAnalyser" du contexte : ce qui a été travaillé, la qualité de l\'exécution, la fatigue induite, ce qu\'il faut retenir. Passe en revue CHAQUE donnée présente (W/kg, FC moyenne, répartition du temps par zone de FC, facteur d\'efficacité, découplage, intervalles détectés, VO2max, pas par minute) en l\'EXPLIQUANT : jamais un chiffre nu, toujours [ce que c\'est] → [ta valeur] → [ce que ça signifie]. Ne renvoie PAS de "plan" (mets-le à null). Ignore la structure en 4 sections.' }],
+          messages: [{ role: 'user', content: 'Analyse UNIQUEMENT la séance "seanceAAnalyser" du contexte. Pour chaque donnée présente (rendement, effort du cœur, temps passé facile / dur, tenue de l\'allure, fractionnés détectés, pas par minute…), NE l\'EXPLIQUE PAS : donne directement la conclusion en une phrase, en mots simples et sans jargon. Termine par un résumé de 2-3 phrases : qualité de la séance, ce qu\'elle t\'a coûté, ce qu\'il faut retenir. Ne renvoie PAS de "plan" (mets-le à null). Pas de structure en 4 sections ici.' }],
           context: { ...buildCoachContext(), seanceAAnalyser: summarizeSession(act) },
           plan: null,
         }),
@@ -3196,35 +3196,9 @@ function App() {
             coachErr && h('p', { style: { margin: '12px 0 0', fontSize: '12px', color: '#ec3013' } }, coachErr)
           );
     } else {
-      const wnISO = coachPlan.weekNextISO || isoLocal(new Date(new Date((coachPlan.weekStartISO || isoLocal(weekStart(new Date()))) + 'T12:00:00').getTime() + 7 * 86400000));
-      const sorted = coachPlan.sessions.slice().sort((a, b) => a.date < b.date ? -1 : 1);
-      const g1 = sorted.filter(s => s.date < wnISO), g2 = sorted.filter(s => s.date >= wnISO);
-      const sessionRow = (s, si, first) => {
-        const open = coachOpenSess === si;
-        const clickable = !!((s.steps && s.steps.length) || s.description);
-        return h('div', { key: si, style: { padding: '10px 0', borderTop: first ? 'none' : '1px solid #d7d3d3', opacity: s.done ? 0.55 : 1 } },
-          h('div', { style: { display: 'grid', gridTemplateColumns: '118px 1fr', gap: '14px', cursor: clickable ? 'pointer' : 'default' }, onClick: clickable ? () => setCoachOpenSess(open ? null : si) : undefined },
-            h('div', null,
-              h('span', { style: { display: 'block', fontSize: '12px', fontWeight: '800' } }, new Date(s.date + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' })),
-              h('span', { style: { display: 'block', fontSize: '11px', color: '#605d5d' } }, s.sport)
-            ),
-            h('div', null,
-              h('span', { style: { display: 'block', fontSize: '13px', fontWeight: '800' } },
-                (clickable ? (open ? '▾ ' : '▸ ') : '') + s.title + (s.durationMin ? ' · ' + fmtDur(s.durationMin) : '') + (s.distanceKm ? ' · ' + s.distanceKm + ' km' : '') + (s.load != null ? ' · ' + s.load + ' TSS' : ''),
-                s.done && h('span', { style: { marginLeft: '8px', padding: '1px 6px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.06em', textTransform: 'uppercase', background: '#eae9e9', color: '#605d5d' } }, 'réalisé')
-              ),
-              s.focus && h('span', { style: { display: 'block', fontSize: '11px', fontWeight: '700', color: '#ec3013', marginTop: '2px' } }, 'À travailler : ' + s.focus)
-            )
-          ),
-          open && h('div', { style: { marginTop: '6px' } },
-            s.description && h('p', { style: { margin: '0 0 4px', fontSize: '12px', color: '#3d3a3a', lineHeight: '1.45' } }, s.description),
-            h(PlannedSessionChart, { session: s })
-          )
-        );
-      };
       body = h('div', null,
         h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' } },
-          h('h2', { style: { margin: 0, fontSize: '18px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Ton programme'),
+          h('h2', { style: { margin: 0, fontSize: '18px', fontWeight: '800', letterSpacing: '-0.01em' } }, 'Analyse du coach'),
           coachPlan.generatedAt && h('span', { style: { fontSize: '11px', color: '#605d5d' } }, 'créé le ' + new Date(coachPlan.generatedAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })),
           h('span', { style: { marginLeft: 'auto', display: 'flex', gap: '8px' } },
             h('button', { type: 'button', onClick: coachFullAnalysis, disabled: coachBusy || coachLeft <= 0, style: { padding: '7px 14px', border: '2px solid #ec3013', background: (coachBusy || coachLeft <= 0) ? '#f3f2f2' : '#ec3013', color: (coachBusy || coachLeft <= 0) ? '#bab6b6' : '#fff', fontFamily: 'inherit', fontSize: '10px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', cursor: (coachBusy || coachLeft <= 0) ? 'not-allowed' : 'pointer' } }, coachBusy ? '…' : 'Réanalyser'),
@@ -3232,12 +3206,8 @@ function App() {
           )
         ),
         coachErr && h('p', { style: { margin: '0 0 12px', fontSize: '12px', color: '#ec3013' } }, coachErr),
-        coachPlan.summary && h('p', { style: { margin: '0 0 16px', fontSize: '13px', lineHeight: '1.5', color: '#201e1d', whiteSpace: 'pre-wrap' } }, coachPlan.summary),
-        h('h3', { style: { margin: '6px 0 2px', fontSize: '12px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#ec3013' } }, 'Cette semaine'),
-        g1.map((s, si) => sessionRow(s, 'a' + si, si === 0)),
-        g2.length > 0 && h('h3', { style: { margin: '20px 0 2px', fontSize: '12px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#ec3013' } }, 'Semaine projetée'),
-        g2.map((s, si) => sessionRow(s, 'b' + si, si === 0)),
-        h('p', { style: { margin: '16px 0 0', fontSize: '11px', color: '#605d5d' } }, 'Clique sur une séance pour son déroulé (zones × durée). Séances prévues en gris pointillé sur le calendrier. Analyses restantes aujourd’hui : ' + coachLeft + ' / ' + COACH_LIMIT + '.')
+        coachPlan.summary && h('p', { style: { margin: '0 0 14px', fontSize: '13px', lineHeight: '1.55', color: '#201e1d', whiteSpace: 'pre-wrap' } }, coachPlan.summary),
+        h('p', { style: { margin: 0, fontSize: '11px', color: '#605d5d' } }, 'Les séances prévues sont sur le calendrier ci-dessous (gris pointillé). Analyses restantes aujourd’hui : ' + coachLeft + ' / ' + COACH_LIMIT + '.')
       );
     }
     return h('section', { style: { borderBottom: '2px solid #201e1d' } },
@@ -3673,9 +3643,9 @@ function App() {
               );
             })
           ),
-          h('div', { style:{ display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap', marginBottom:'12px', paddingRight:'32px' } },
+          h('div', { style:{ display:'flex', flexDirection:'column', alignItems:'center', gap:'10px', marginBottom:'12px', paddingRight:'28px' } },
             h('span', { style:{ fontSize:'12px', fontWeight:'700', letterSpacing:'0.06em', textTransform:'uppercase' } }, 'Données seconde par seconde'),
-            h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap', alignItems:'center', marginLeft:'auto' } },
+            h('div', { style:{ display:'flex', gap:'8px', flexWrap:'wrap', alignItems:'center', justifyContent:'center' } },
             h('button', {
               type:'button',
               onClick: () => {
@@ -3700,10 +3670,10 @@ function App() {
             }, 'Comparer'),
             (() => { const an = coachActAnalyses[act.id]; const busy = coachBusy || coachLeft <= 0; return h('button', {
               type:'button', onClick: () => coachAnalyzeActivity(act), disabled: busy,
-              style:{ padding:'7px 16px', border:'2px solid '+(busy?'#bab6b6':'#ec3013'), background:'transparent', color:busy?'#bab6b6':'#ec3013', fontFamily:'inherit', fontSize:'11px', fontWeight:'800', letterSpacing:'0.1em', textTransform:'uppercase', cursor:busy?'not-allowed':'pointer' },
-              onMouseEnter: e => { if(!busy) e.currentTarget.style.background='#fdf1ee'; },
-              onMouseLeave: e => { e.currentTarget.style.background='transparent'; }
-            }, (an && an.loading) ? 'Analyse…' : ((an && an.texte) ? 'Ré-analyser' : 'Analyser l\'activité')); })(),
+              style:{ padding:'7px 16px', border:'2px solid '+(busy?'#bab6b6':'#ec3013'), background:busy?'#f3f2f2':'#ec3013', color:busy?'#bab6b6':'#ffffff', fontFamily:'inherit', fontSize:'11px', fontWeight:'800', letterSpacing:'0.1em', textTransform:'uppercase', cursor:busy?'not-allowed':'pointer' },
+              onMouseEnter: e => { if(!busy){ e.currentTarget.style.background='#ae1800'; e.currentTarget.style.borderColor='#ae1800'; } },
+              onMouseLeave: e => { if(!busy){ e.currentTarget.style.background='#ec3013'; e.currentTarget.style.borderColor='#ec3013'; } }
+            }, (an && an.loading) ? 'Analyse…' : ((an && an.texte) ? 'Ré-analyser' : 'Analyser')); })(),
             hasData && h('button', {
               type: 'button',
               onClick: () => {
