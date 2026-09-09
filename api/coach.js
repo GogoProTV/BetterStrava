@@ -118,11 +118,23 @@ RÉPONSE — tu réponds STRICTEMENT avec un objet JSON valide et COMPLET de la 
             "distanceKm": 10,
             "load": 55,
             "description": "échauffement + corps de séance + allures/zones/watts cibles, 2 phrases max",
-            "done": false
+            "done": false,
+            "steps": [
+              { "label": "échauffement", "zone": 1, "durationMin": 15 },
+              { "label": "seuil", "zone": 4, "durationMin": 10 },
+              { "label": "récup", "zone": 1, "durationMin": 2 },
+              { "label": "retour au calme", "zone": 1, "durationMin": 10 }
+            ]
           }
         ]
       }
 }
+- "steps" = déroulé chronologique de la séance : une liste de blocs, "zone" de 1 à 5
+  (1 récup, 2 endurance, 3 tempo, 4 seuil, 5 VMA/PMA), et "durationMin" OU "distanceKm".
+  Développe les répétitions (3×10 min seuil = 3 blocs zone 4 séparés par des blocs de récup zone 1).
+  Fournis "steps" pour les séances avec intensité de la SEMAINE EN COURS en priorité ; pour un footing
+  continu ou la semaine projetée, "steps" peut valoir [] (un seul bloc endurance suffit). Reste bref
+  pour que tout le JSON tienne en entier.
 - Quand l'athlète demande une analyse / un programme / un ajustement → fournis TOUJOURS "plan".
 - Le "plan" couvre DEUX semaines : la semaine en cours (à partir de "semaineDebut") ET la semaine suivante
   (à partir de "semaineSuivanteDebut"). "targets" concerne la semaine en cours.
@@ -244,6 +256,12 @@ module.exports = async function handler(req, res) {
             description: String(s.description || ''),
             load: s.load == null ? null : Math.max(0, Math.round(Number(s.load) || 0)),
             done: s.done === true,
+            steps: Array.isArray(s.steps) ? s.steps.slice(0, 40).map(b => ({
+              label: b.label ? String(b.label).slice(0, 40) : '',
+              zone: Math.min(5, Math.max(1, Math.round(Number(b.zone) || 1))),
+              durationMin: b.durationMin == null ? null : Math.max(0, Math.round((Number(b.durationMin) || 0) * 10) / 10),
+              distanceKm: b.distanceKm == null ? null : Math.max(0, Math.round((Number(b.distanceKm) || 0) * 100) / 100),
+            })).filter(b => b.durationMin || b.distanceKm) : [],
           })).filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s.date)),
         };
       }
