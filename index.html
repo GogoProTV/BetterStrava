@@ -45,6 +45,10 @@ function fmtPace(min) {
 function fmtH(min) { const h = Math.floor(min / 60); return h + 'h' + String(Math.round(min % 60)).padStart(2, '0'); }
 function fmtDur(min) { min = Math.round(min); return min >= 60 ? fmtH(min) : min + ' min'; }
 function isoLocal(dt) { const z = new Date(dt); return z.getFullYear() + '-' + String(z.getMonth() + 1).padStart(2, '0') + '-' + String(z.getDate()).padStart(2, '0'); }
+// Les dates d'activité viennent de start_date_local (heure locale lue comme de l'UTC).
+// Pour les comparer à « maintenant », on décale l'instant courant de la même façon,
+// sinon une activité faite plus tôt aujourd'hui paraît « dans le futur » et disparaît des listes.
+function nowLocalMs() { const d = new Date(); return d.getTime() - d.getTimezoneOffset() * 60000; }
 function btnStyle(active) {
   return {
     padding: '9px 14px', border: '2px solid ' + (active ? '#ec3013' : '#201e1d'),
@@ -1321,18 +1325,18 @@ function App() {
   }
 
   function filtered(d, rangeDays, sp) {
-    const cutoff = Date.now() - rangeDays * 86400000;
+    const cutoff = nowLocalMs() - rangeDays * 86400000;
     return d.filter(a => a.date.getTime() >= cutoff && (sp === 'Tous' || a.sport === sp));
   }
   function window2(d, offset, rangeDays, sp) {
-    const end = Date.now() - offset * rangeDays * 86400000;
+    const end = nowLocalMs() - offset * rangeDays * 86400000;
     const start = end - rangeDays * 86400000;
     return d.filter(a => a.date.getTime() >= start && a.date.getTime() < end && (sp === 'Tous' || a.sport === sp));
   }
 
   // ── Page Activités : période sélectionnée (boutons) + période de comparaison ─
   // Comparaison = période de MÊME durée, immédiatement avant.
-  const winEnd = Date.now();
+  const winEnd = nowLocalMs();
   const winStart = winEnd - range * 86400000;
   const winDur = range * 86400000;
   const prevEnd = winStart;
@@ -2457,7 +2461,7 @@ function App() {
     const hrRest = Number(profile.fcRest)||null;
     const wKg = Number(profile.weight)||null;
     const isVeloVo2 = vo2Sport === 'Vélo';
-    const winEnd = Date.now(), winStart = winEnd - vo2Range * 86400000;
+    const winEnd = nowLocalMs(), winStart = winEnd - vo2Range * 86400000;
     const runs = data.filter(a => (isVeloVo2 ? a.sport==='Vélo' : (a.sport==='Course'||a.sport==='Trail')) && a.date.getTime()>=winStart && a.date.getTime()<winEnd);
     const pts = runs
       .map(a => ({ date:a.date, act:a, v: isVeloVo2
@@ -2538,7 +2542,7 @@ function App() {
     if (tab!=='athlete'||athleteSection!=='Efficacité') return;
     chartDefaults();
     const isBike = effSport==='Vélo';
-    const winEnd = Date.now(), winStart = winEnd - effRange * 86400000;
+    const winEnd = nowLocalMs(), winStart = winEnd - effRange * 86400000;
     const acts = data.filter(a => (isBike ? a.sport==='Vélo' : (a.sport==='Course'||a.sport==='Trail')) && a.date.getTime()>=winStart && a.date.getTime()<winEnd);
     const pts = acts
       .map(a => ({ date:a.date, act:a, v:activityEF(a, actStreams[a.id]) }))
@@ -3032,7 +3036,7 @@ function App() {
   function buildCoachContext() {
     const last = pmcToday;
     const ramp = pmcSeries.length >= 8 ? Math.round((last.ctl - pmcSeries[pmcSeries.length - 8].ctl) * 10) / 10 : null;
-    const nowMs = Date.now();
+    const nowMs = nowLocalMs();
     const wsMs = weekStart(new Date()).getTime();
     const win = data.filter(a => nowMs - a.date.getTime() < 28 * 86400000 && !a.planned);
     const rec = win.sort((a, b) => b.date - a.date).slice(0, 18)
@@ -3170,7 +3174,7 @@ function App() {
   // Bande « coach » en tête de l'onglet Programme : objectif + programme de la semaine.
   function renderCoachBand() {
     const wsMs = weekStart(new Date()).getTime();
-    const seDone = data.filter(a => !a.planned && a.date.getTime() >= wsMs && a.date.getTime() <= Date.now() && a.sport !== 'Repos').length;
+    const seDone = data.filter(a => !a.planned && a.date.getTime() >= wsMs && a.date.getTime() <= nowLocalMs() && a.sport !== 'Repos').length;
     const seTarget = coachPlan && coachPlan.targets && coachPlan.targets.nbSeances != null
       ? coachPlan.targets.nbSeances
       : (coachPlan ? coachPlan.sessions.filter(s => { const t = new Date(s.date + 'T12:00:00').getTime(); return t >= wsMs && t < wsMs + 7 * 86400000 && s.sport && s.sport !== 'Repos'; }).length : null);
@@ -4548,7 +4552,7 @@ function App() {
             const isVeloVo2 = vo2Sport==='Vélo';
             if (!hrMax||!hrRest) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Renseigne FC max et FC repos dans le Profil pour activer l’estimation du VO2max.');
             if (isVeloVo2 && !wKg) return h('div',{style:{padding:'24px 32px',fontSize:'12px',color:'#605d5d'}},'Renseigne le poids dans le Profil pour l’estimation VO2max vélo.');
-            const winEnd = Date.now(), winStart = winEnd - vo2Range * 86400000;
+            const winEnd = nowLocalMs(), winStart = winEnd - vo2Range * 86400000;
             const winMonths = Math.round(vo2Range / 30);
             const runs = data.filter(a=>(isVeloVo2?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&a.date.getTime()>=winStart&&a.date.getTime()<winEnd);
             const pts = runs.map(a=>({date:a.date,act:a,v: isVeloVo2
@@ -4624,7 +4628,7 @@ function App() {
           (()=>{
             const isBike = effSport==='Vélo';
             const unit = isBike ? 'W/bpm' : 'm/min/bpm';
-            const winEnd = Date.now(), winStart = winEnd - effRange * 86400000;
+            const winEnd = nowLocalMs(), winStart = winEnd - effRange * 86400000;
             const winMonths = Math.round(effRange / 30);
             const acts = data.filter(a=>(isBike?a.sport==='Vélo':(a.sport==='Course'||a.sport==='Trail'))&&a.date.getTime()>=winStart&&a.date.getTime()<winEnd);
             const pts = acts.map(a=>({date:a.date,act:a,v:activityEF(a,actStreams[a.id])})).filter(p=>p.v!==null).sort((a,b)=>a.date-b.date);
