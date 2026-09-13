@@ -49,6 +49,25 @@ function isoLocal(dt) { const z = new Date(dt); return z.getFullYear() + '-' + S
 // Pour les comparer à « maintenant », on décale l'instant courant de la même façon,
 // sinon une activité faite plus tôt aujourd'hui paraît « dans le futur » et disparaît des listes.
 function nowLocalMs() { const d = new Date(); return d.getTime() - d.getTimezoneOffset() * 60000; }
+
+// Petite tuile avec infobulle au survol (utilisée pour les seuils LT1/LT2 estimés).
+function LTTile({ label, value, unit, sub, tooltip }) {
+  const [show, setShow] = useState(false);
+  return h('div', { style:{ position:'relative', border:'2px solid #201e1d', padding:'12px 14px', cursor: tooltip?'help':'default', flex:'1 1 160px', minWidth:0 },
+      onMouseEnter:()=>setShow(true), onMouseLeave:()=>setShow(false) },
+    h('span', { style:{ display:'flex', alignItems:'center', gap:'4px', fontSize:'10px', fontWeight:'700', letterSpacing:'0.1em', textTransform:'uppercase', color:'#605d5d' } },
+      label, tooltip && h('span',{style:{fontSize:'9px',color:'#bab6b6'}},'?')
+    ),
+    h('div', { style:{ display:'flex', alignItems:'baseline', gap:'6px', marginTop:'4px' } },
+      h('span', { style:{ fontSize:'19px', fontWeight:'800', letterSpacing:'-0.02em' } }, value==null?'—':value),
+      unit && h('span', { style:{ fontSize:'11px', fontWeight:'600', color:'#605d5d' } }, unit)
+    ),
+    sub && h('span', { style:{ display:'block', marginTop:'2px', fontSize:'11px', color:'#605d5d' } }, sub),
+    show && tooltip && h('div', { style:{ position:'absolute', bottom:'calc(100% + 6px)', left:0, zIndex:200, background:'#201e1d', color:'#ffffff', padding:'12px 14px', width:'300px', maxWidth:'80vw', pointerEvents:'none', boxShadow:'0 4px 16px rgba(0,0,0,0.3)' } },
+      h('span',{style:{display:'block',fontSize:'12px',fontWeight:'700',lineHeight:'1.5'}}, tooltip)
+    )
+  );
+}
 function btnStyle(active) {
   return {
     padding: '9px 14px', border: '2px solid ' + (active ? '#ec3013' : '#201e1d'),
@@ -1529,6 +1548,34 @@ function App() {
       vals.push(smoothed[b]);
     }
     return { labels, vals, lo, hi };
+  }
+
+  // ── Estimation des seuils LT1 (aérobie) / LT2 (anaérobie) ────────────────
+  // Faute de mesure de lactate, on lit l'allure/puissance habituellement tenue
+  // aux % de réserve cardiaque physiologiquement associés à chaque seuil, sur
+  // TA courbe FC → performance (toutes les sorties, tous streams chargés).
+  function estimateLT(sp) {
+    const isBike = sp === 'Vélo';
+    const fcMax = Number(profile.fcMax) || null;
+    const fcRest = Number(profile.fcRest) || null;
+    if (!fcMax || !fcRest || fcMax <= fcRest) return null;
+    const curve = hrCurvePerBpm(sp, 3650);
+    if (!curve) return null;
+    const hrAt = pct => Math.round(fcRest + pct * (fcMax - fcRest));
+    const valAt = bpm => {
+      for (let d = 0; d <= 6; d++) {
+        for (const b of [bpm - d, bpm + d]) {
+          const idx = b - curve.lo;
+          if (idx >= 0 && idx < curve.vals.length && curve.vals[idx] != null) return curve.vals[idx];
+        }
+      }
+      return null;
+    };
+    const lt1Hr = hrAt(0.77), lt2Hr = hrAt(0.89);
+    const lt1 = { hr: lt1Hr, val: valAt(lt1Hr) };
+    const lt2 = { hr: lt2Hr, val: valAt(lt2Hr) };
+    if (lt1.val == null && lt2.val == null) return null;
+    return { lt1, lt2, isBike };
   }
 
   const [hrSport, setHrSport] = useState('Course');
@@ -4868,7 +4915,29 @@ function App() {
                         )
                       : h('span',{style:{fontSize:'11px',color:'#bab6b6'}},per.val&&all.val&&dPct===0?'=':'—')
                   );
-                })
+                }),
+                !isSwim && (()=>{
+                  const lt = estimateLT(sport);
+                  if (!lt) return null;
+                  const weight = Number(profile.weight)||null;
+                  const fmtLtVal = v => {
+                    if (v==null) return null;
+                    if (isVelo) return fmtNum(Math.round(v),0)+' W'+(weight?' · '+(Math.round(v/weight*100)/100)+' W/kg':'');
+                    return (fmtPR(v)||'—')+' /km';
+                  };
+                  return h('div',{key:'lt',style:{marginTop:'16px',paddingTop:'14px',borderTop:'2px solid #201e1d'}},
+                    h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px',marginBottom:'10px'}},
+                      h('h3',{style:{margin:0,fontSize:'12px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:'#605d5d'}},'Seuils estimés'),
+                      h('span',{style:{fontSize:'10px',color:'#bab6b6'}},'depuis ta courbe FC')
+                    ),
+                    h('div',{style:{display:'flex',flexWrap:'wrap',gap:'10px'}},
+                      h(LTTile,{label:'LT1 · seuil aérobie', value:fmtLtVal(lt.lt1.val), sub:lt.lt1.hr?lt.lt1.hr+' bpm':null,
+                        tooltip:'Le LT1 (seuil aérobie, ou premier seuil ventilatoire) est l’intensité au-delà de laquelle l’organisme commence à produire plus de lactate qu’au repos, sans encore l’accumuler : en dessous, l’effort peut être tenu très longtemps. Estimation : '+(isVelo?'puissance':'allure')+' que tu tiens habituellement à environ 77 % de ta réserve cardiaque, lue sur ta courbe fréquence cardiaque → performance construite à partir de toutes tes sorties.'}),
+                      h(LTTile,{label:'LT2 · seuil anaérobie', value:fmtLtVal(lt.lt2.val), sub:lt.lt2.hr?lt.lt2.hr+' bpm':null,
+                        tooltip:'Le LT2 (seuil anaérobie, ou seuil lactique) est l’intensité maximale que tu peux tenir en état stable sur environ 30 à 60 minutes ; au-delà, le lactate s’accumule progressivement et la fatigue s’installe. Estimation : '+(isVelo?'puissance':'allure')+' que tu tiens habituellement à environ 89 % de ta réserve cardiaque, lue sur ta courbe fréquence cardiaque → performance construite à partir de toutes tes sorties.'})
+                    )
+                  );
+                })()
               );
             })()
           ),
