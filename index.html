@@ -2998,7 +2998,7 @@ function App() {
         const isToday=d.toDateString()===today.toDateString();
         const dISO=isoLocal(d), todayISO=isoLocal(today);
         const planned=(dISO>=todayISO)
-          ? planIndexed.filter(x=>x.p.date===dISO&&x.p.sport&&x.p.sport!=='Repos'&&!x.p.done).map(x=>({
+          ? planIndexed.filter(x=>x.p.date===dISO&&x.p.sport&&x.p.sport!=='Repos'&&!x.p.done&&!hiddenPlanKeys.has(x.key)).map(x=>({
               key:x.key,
               sport:({Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'})[x.p.sport]||x.p.sport,
               title:x.p.title||'Séance',
@@ -3016,7 +3016,7 @@ function App() {
       });
       const wkDate=new Date(s); const wkEnd=new Date(s.getTime()+6*86400000);
       const wkStartMs=s.getTime(), wkEndMs=s.getTime()+7*86400000;
-      const plannedSessions=planIndexed.filter(x=>{ const t=new Date(x.p.date+'T12:00:00').getTime(); return t>=wkStartMs&&t<wkEndMs&&x.p.sport&&x.p.sport!=='Repos'; })
+      const plannedSessions=planIndexed.filter(x=>{ const t=new Date(x.p.date+'T12:00:00').getTime(); return t>=wkStartMs&&t<wkEndMs&&x.p.sport&&x.p.sport!=='Repos'&&!hiddenPlanKeys.has(x.key); })
         .concat(customIndexed.filter(x=>{ const t=new Date(x.p.date+'T12:00:00').getTime(); return t>=wkStartMs&&t<wkEndMs; }));
       // Répartition du temps par zone sur la semaine (coach + séances perso).
       const zoneMinAgg={1:0,2:0,3:0,4:0,5:0};
@@ -3191,6 +3191,17 @@ function App() {
   function assignCustomWorkoutDate(id, dateISO) {
     setCustomWorkouts(list => list.map(w => w.id === id ? { ...w, date: dateISO } : w));
   }
+  // Séances du coach masquées (remplacées par une séance perso ce jour-là) : clés 'ps'+index.
+  const [hiddenPlanKeys, setHiddenPlanKeys] = useState(() => {
+    try { const s = localStorage.getItem('bs_hidden_plan_keys'); if (s) return new Set(JSON.parse(s)); } catch (e) {}
+    return new Set();
+  });
+  useEffect(() => { try { localStorage.setItem('bs_hidden_plan_keys', JSON.stringify([...hiddenPlanKeys])); } catch (e) {} }, [hiddenPlanKeys]);
+  function hidePlanKey(key) {
+    setHiddenPlanKeys(prev => { const next = new Set(prev); next.add(key); return next; });
+    setPlannedOpen(k => k === key ? null : k);
+  }
+  function restoreHiddenPlanKeys() { setHiddenPlanKeys(new Set()); }
   const coachAutoRef = useRef(false);
   useEffect(() => { try { localStorage.removeItem('bs_coach_chat'); localStorage.removeItem('bs_coach_avail'); localStorage.removeItem('bs_coach_lastseance'); } catch (e) {} }, []);
   useEffect(() => { try { localStorage.setItem('bs_coach_plan', coachPlan ? JSON.stringify(coachPlan) : ''); } catch (e) {} }, [coachPlan]);
@@ -4066,6 +4077,7 @@ function App() {
             'Séances personnalisées'
           ),
           customMode&&h('button',{type:'button',onClick:()=>{setCustomEditId(null);setCustomModalOpen(true);},style:{border:'2px solid #7c3aed',background:'transparent',color:'#7c3aed',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',padding:'9px 16px',cursor:'pointer'}},'+ Nouvelle séance'),
+          customMode&&hiddenPlanKeys.size>0&&h('button',{type:'button',onClick:restoreHiddenPlanKeys,style:{border:'2px solid #bab6b6',background:'transparent',color:'#605d5d',fontFamily:'inherit',fontSize:'11px',fontWeight:'700',letterSpacing:'0.04em',padding:'9px 14px',cursor:'pointer'}},hiddenPlanKeys.size+' séance(s) du coach remplacée(s) · Réafficher'),
           customMode&&h('div',{style:{display:'flex',flexWrap:'wrap',gap:'8px',flex:1,minWidth:0}},
             customWorkouts.filter(w=>!w.date).length
               ? customWorkouts.filter(w=>!w.date).map(w=>h('div',{key:w.id,draggable:true,onDragStart:()=>setDragCustomId(w.id),onDragEnd:()=>setDragCustomId(null),onClick:()=>{setCustomEditId(w.id);setCustomModalOpen(true);},style:{display:'flex',flexDirection:'column',gap:'2px',padding:'6px 12px',border:'2px solid #c4b5fd',background:'#f3eefe',color:'#7c3aed',cursor:'grab',fontSize:'11px'}},
@@ -4167,7 +4179,8 @@ function App() {
                           ),
                         );
                       }),
-                      (day.planned||[]).map((p,pi)=>h('div',{key:'pl'+pi,onClick:()=>setPlannedOpen(k=>k===p.key?null:p.key),style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px dashed '+(plannedOpen===p.key?'#ec3013':'#bab6b6'),background:plannedOpen===p.key?'#fdf1ee':'transparent',color:plannedOpen===p.key?'#ec3013':'#8a8686',cursor:'pointer'}},
+                      (day.planned||[]).map((p,pi)=>h('div',{key:'pl'+pi,onClick:()=>setPlannedOpen(k=>k===p.key?null:p.key),style:{position:'relative',flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px dashed '+(plannedOpen===p.key?'#ec3013':'#bab6b6'),background:plannedOpen===p.key?'#fdf1ee':'transparent',color:plannedOpen===p.key?'#ec3013':'#8a8686',cursor:'pointer'}},
+                        customMode&&h('button',{type:'button',title:'Remplacer par une séance perso',onClick:e=>{e.stopPropagation();hidePlanKey(p.key);},style:{position:'absolute',top:'2px',right:'2px',width:'16px',height:'16px',lineHeight:'14px',padding:0,border:'1px solid #bab6b6',background:'#ffffff',color:'#605d5d',fontSize:'10px',fontWeight:'800',cursor:'pointer'}},'✕'),
                         h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.1'}},p.sport),
                         h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},p.title),
                         p.focus&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',lineHeight:'1.25',overflowWrap:'anywhere'}},p.focus),
