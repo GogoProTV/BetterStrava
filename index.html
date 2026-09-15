@@ -460,6 +460,142 @@ const COACH_ZONES = [null,
   { label: 'Z4 · seuil', color: '#f0885f' },
   { label: 'Z5 · VMA/PMA', color: '#e2483a' },
 ];
+const ZONE_NAMES = ['', 'Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
+function fmtStepDur(min) {
+  if (min >= 60) return fmtDur(min);
+  const m = Math.floor(min + 1e-6), s = Math.round((min - m) * 60);
+  return s ? (m ? m + ' min ' + s : s + ' s') : m + ' min';
+}
+
+// ── Séances personnalisées (créées à la main, glissées-déposées sur le calendrier) ──
+// Représentation commune : { id, date|null, sport, title, warmupMin,
+//   main:{ reps, zone, target, durationMin|distanceM, recoveryMin, estMin? }, cooldownMin, swimText }
+// « steps » (mêmes {zone,durationMin} que le programme du coach) permet de réutiliser
+// stepsSummary()/WorkoutProfile() tels quels.
+function customWorkoutSteps(w) {
+  const steps = [];
+  const m = w.main || {};
+  const reps = Math.max(1, Number(m.reps) || 1);
+  if (w.warmupMin) steps.push({ zone: 1, durationMin: Number(w.warmupMin) });
+  if (w.sport === 'Natation') {
+    if (m.estMin) steps.push({ zone: Number(m.zone) || 2, durationMin: Number(m.estMin) });
+  } else {
+    for (let i = 0; i < reps; i++) {
+      if (m.durationMin) steps.push({ zone: Number(m.zone) || 2, durationMin: Number(m.durationMin) });
+      if (i < reps - 1 && m.recoveryMin) steps.push({ zone: 1, durationMin: Number(m.recoveryMin) });
+    }
+  }
+  if (w.cooldownMin) steps.push({ zone: 1, durationMin: Number(w.cooldownMin) });
+  return steps;
+}
+function customWorkoutTotalMin(w) {
+  return customWorkoutSteps(w).reduce((s, b) => s + (b.durationMin || 0), 0);
+}
+function customWorkoutDescription(w) {
+  const m = w.main || {}; const reps = Math.max(1, Number(m.reps) || 1);
+  const parts = [];
+  if (w.warmupMin) parts.push('Échauffement ' + fmtStepDur(Number(w.warmupMin)));
+  if (w.sport === 'Natation') {
+    if (m.distanceM) parts.push(reps + ' × ' + Math.round(m.distanceM) + ' m'
+      + (ZONE_NAMES[m.zone] ? ' ' + ZONE_NAMES[m.zone] : '') + (m.target ? ' (' + m.target + ')' : '')
+      + (reps > 1 && m.recoveryMin ? ' · récup ' + fmtStepDur(Number(m.recoveryMin)) : ''));
+  } else if (m.durationMin) {
+    parts.push(reps + ' × ' + fmtStepDur(Number(m.durationMin)) + ' ' + (ZONE_NAMES[m.zone] || '')
+      + (m.target ? ' (' + m.target + ')' : '') + (reps > 1 && m.recoveryMin ? ' · récup ' + fmtStepDur(Number(m.recoveryMin)) : ''));
+  }
+  if (w.cooldownMin) parts.push('Retour au calme ' + fmtStepDur(Number(w.cooldownMin)));
+  return parts.join(' · ');
+}
+function newCustomWorkoutId() { return 'cw' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+// Formulaire de création/édition d'une séance personnalisée : 3 parties
+// (échauffement, corps en répétitions zone+allure+récup, retour au calme),
+// + un bloc « éducatifs » en texte libre et un corps en mètres pour la natation.
+function CustomWorkoutModal({ initial, onSave, onClose, onDelete }) {
+  const isEdit = !!initial.id;
+  const [sport, setSport] = useState(initial.sport || 'Course');
+  const [title, setTitle] = useState(initial.title || '');
+  const [warmupMin, setWarmupMin] = useState(initial.warmupMin ?? 15);
+  const m0 = initial.main || {};
+  const [reps, setReps] = useState(m0.reps ?? 1);
+  const [zone, setZone] = useState(m0.zone ?? 2);
+  const [target, setTarget] = useState(m0.target || '');
+  const [durationMin, setDurationMin] = useState(m0.durationMin ?? 10);
+  const [distanceM, setDistanceM] = useState(m0.distanceM ?? 400);
+  const [recoveryMin, setRecoveryMin] = useState(m0.recoveryMin ?? 1);
+  const [estMin, setEstMin] = useState(m0.estMin ?? '');
+  const [cooldownMin, setCooldownMin] = useState(initial.cooldownMin ?? 10);
+  const [swimText, setSwimText] = useState(initial.swimText || '');
+
+  const isSwim = sport === 'Natation';
+  const draft = {
+    id: initial.id || newCustomWorkoutId(),
+    date: initial.date ?? null,
+    sport,
+    title: title.trim() || (isSwim ? 'Séance natation' : 'Séance personnalisée'),
+    warmupMin: Math.max(0, Number(warmupMin) || 0),
+    main: isSwim
+      ? { reps: Math.max(1, Number(reps) || 1), zone: Number(zone), target, distanceM: Math.max(0, Number(distanceM) || 0), recoveryMin: Math.max(0, Number(recoveryMin) || 0), estMin: estMin !== '' ? Math.max(0, Number(estMin) || 0) : null }
+      : { reps: Math.max(1, Number(reps) || 1), zone: Number(zone), target, durationMin: Math.max(0, Number(durationMin) || 0), recoveryMin: Math.max(0, Number(recoveryMin) || 0) },
+    cooldownMin: Math.max(0, Number(cooldownMin) || 0),
+    swimText: isSwim ? swimText : '',
+  };
+  const totalMin = customWorkoutTotalMin(draft);
+  const fieldStyle = { width: '100%', padding: '9px 10px', border: '2px solid #201e1d', background: '#ffffff', color: '#201e1d', fontFamily: 'inherit', fontSize: '13px', fontWeight: '600' };
+  const labelStyle = { fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#605d5d' };
+  const field = (label, input) => h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, h('label', { style: labelStyle }, label), input);
+
+  return h('div', { style: { position: 'fixed', inset: 0, background: 'rgba(32,30,29,0.55)', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }, onClick: onClose },
+    h('div', { style: { background: '#ffffff', border: '2px solid #201e1d', width: '640px', maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px 28px' }, onClick: e => e.stopPropagation() },
+      h('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '18px' } },
+        h('h2', { style: { margin: 0, fontSize: '18px', fontWeight: '800', letterSpacing: '-0.01em' } }, isEdit ? 'Modifier la séance' : 'Nouvelle séance personnalisée'),
+        h('button', { type: 'button', onClick: onClose, style: { border: '0', background: 'transparent', fontSize: '16px', fontWeight: '800', color: '#605d5d', cursor: 'pointer' } }, '✕')
+      ),
+      h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '16px' } },
+        field('Sport', h('select', { value: sport, onChange: e => setSport(e.target.value), style: fieldStyle },
+          ['Course', 'Trail', 'Vélo', 'Natation'].map(sp => h('option', { key: sp, value: sp }, sp))
+        )),
+        field('Titre', h('input', { type: 'text', value: title, onChange: e => setTitle(e.target.value), placeholder: isSwim ? 'Séance natation' : 'Séance personnalisée', style: fieldStyle }))
+      ),
+      h('div', { style: { padding: '12px 14px', border: '1px solid #d7d3d3', marginBottom: '12px' } },
+        h('span', { style: { ...labelStyle, color: '#ec3013' } }, '1 · Échauffement'),
+        h('div', { style: { marginTop: '8px', maxWidth: '160px' } }, field('Minutes', h('input', { type: 'number', min: 0, step: 1, value: warmupMin, onChange: e => setWarmupMin(e.target.value), style: fieldStyle })))
+      ),
+      h('div', { style: { padding: '12px 14px', border: '1px solid #d7d3d3', marginBottom: '12px' } },
+        h('span', { style: { ...labelStyle, color: '#ec3013' } }, '2 · Corps de séance'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginTop: '8px' } },
+          field('Répétitions', h('input', { type: 'number', min: 1, step: 1, value: reps, onChange: e => setReps(e.target.value), style: fieldStyle })),
+          field('Zone', h('select', { value: zone, onChange: e => setZone(e.target.value), style: fieldStyle },
+            [1, 2, 3, 4, 5].map(z => h('option', { key: z, value: z }, ZONE_NAMES[z] + ' — ' + (COACH_ZONES[z] || {}).label)))
+          ),
+          isSwim
+            ? field('Distance par répétition (m)', h('input', { type: 'number', min: 0, step: 25, value: distanceM, onChange: e => setDistanceM(e.target.value), style: fieldStyle }))
+            : field('Durée par répétition (min)', h('input', { type: 'number', min: 0, step: 0.5, value: durationMin, onChange: e => setDurationMin(e.target.value), style: fieldStyle })),
+          field('Allure / cible (libre)', h('input', { type: 'text', value: target, onChange: e => setTarget(e.target.value), placeholder: isSwim ? 'ex. 1:45 /100 m' : (sport === 'Vélo' ? 'ex. 250 W' : 'ex. 4:30 /km'), style: fieldStyle })),
+          field('Récupération entre répétitions (min)', h('input', { type: 'number', min: 0, step: 0.5, value: recoveryMin, onChange: e => setRecoveryMin(e.target.value), style: fieldStyle })),
+          isSwim && field('Durée estimée du corps de séance (min, optionnel)', h('input', { type: 'number', min: 0, step: 1, value: estMin, onChange: e => setEstMin(e.target.value), placeholder: 'pour inclure ce bloc dans le total', style: fieldStyle }))
+        ),
+        isSwim && h('div', { style: { marginTop: '12px' } }, field('Éducatifs (texte libre)', h('textarea', { rows: 3, value: swimText, onChange: e => setSwimText(e.target.value), placeholder: 'ex. 4×50 m jambes, 4×50 m battements planche…', style: { ...fieldStyle, resize: 'vertical' } })))
+      ),
+      h('div', { style: { padding: '12px 14px', border: '1px solid #d7d3d3', marginBottom: '16px' } },
+        h('span', { style: { ...labelStyle, color: '#ec3013' } }, '3 · Retour au calme'),
+        h('div', { style: { marginTop: '8px', maxWidth: '160px' } }, field('Minutes', h('input', { type: 'number', min: 0, step: 1, value: cooldownMin, onChange: e => setCooldownMin(e.target.value), style: fieldStyle })))
+      ),
+      h('p', { style: { margin: '0 0 18px', fontSize: '13px', fontWeight: '700' } },
+        'Temps total de la séance : ' + fmtDur(totalMin) + (isSwim && !m0.estMin && !estMin ? ' (hors corps de séance, en mètres)' : '')
+      ),
+      h('div', { style: { display: 'flex', gap: '10px', justifyContent: 'space-between' } },
+        isEdit
+          ? h('button', { type: 'button', onClick: () => onDelete(draft.id), style: { padding: '11px 16px', border: '2px solid #bab6b6', background: 'transparent', color: '#605d5d', fontFamily: 'inherit', fontSize: '11px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', cursor: 'pointer' } }, 'Supprimer')
+          : h('span', null),
+        h('div', { style: { display: 'flex', gap: '10px' } },
+          h('button', { type: 'button', onClick: onClose, style: { padding: '11px 16px', border: '2px solid #201e1d', background: 'transparent', color: '#201e1d', fontFamily: 'inherit', fontSize: '11px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', cursor: 'pointer' } }, 'Annuler'),
+          h('button', { type: 'button', onClick: () => onSave(draft), style: { padding: '11px 18px', border: '2px solid #ec3013', background: '#ec3013', color: '#ffffff', fontFamily: 'inherit', fontSize: '11px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', cursor: 'pointer' } }, 'Enregistrer')
+        )
+      )
+    )
+  );
+}
 
 // ── Estimation de puissance vélo (modèle physique) ───────────────────────────
 const CRR = 0.008;
@@ -1554,9 +1690,11 @@ function App() {
   // Faute de mesure de lactate, on lit l'allure/puissance habituellement tenue
   // sur TA courbe FC → performance (toutes les sorties, tous streams chargés),
   // aux plages de % de réserve cardiaque couramment associées à chaque seuil
-  // dans la littérature d'entraînement. Ce sont des repères généraux, pas une
-  // mesure individuelle : la position réelle varie sensiblement selon l'athlète,
-  // d'où l'affichage en fourchette plutôt qu'en valeur unique.
+  // dans la littérature d'entraînement. Les bornes de FC sont calculées avec la
+  // méthode de Karvonen (FC = FC repos + % × (FC max − FC repos)), pas en % de
+  // FC max brute. Ce sont des repères généraux, pas une mesure individuelle :
+  // la position réelle varie sensiblement selon l'athlète, d'où l'affichage en
+  // fourchette plutôt qu'en valeur unique.
   function estimateLT(sp) {
     const isBike = sp === 'Vélo';
     const fcMax = Number(profile.fcMax) || null;
@@ -1564,6 +1702,7 @@ function App() {
     if (!fcMax || !fcRest || fcMax <= fcRest) return null;
     const curve = hrCurvePerBpm(sp, 3650);
     if (!curve) return null;
+    // Karvonen : %FCR appliqué à la réserve cardiaque (FCmax − FCrepos), pas à FCmax seule.
     const hrAt = pct => Math.round(fcRest + pct * (fcMax - fcRest));
     const valAt = bpm => {
       for (let d = 0; d <= 6; d++) {
@@ -2812,6 +2951,17 @@ function App() {
     const plannedAgg=s=>{ const end=s.getTime()+7*86400000; const list=((coachPlan&&coachPlan.sessions)||[]).filter(p=>{const t=new Date(p.date+'T12:00:00').getTime();return t>=s.getTime()&&t<end&&p.sport&&p.sport!=='Repos';}); return {min:list.reduce((x,p)=>x+(p.durationMin||0),0),km:list.reduce((x,p)=>x+(p.distanceKm||0),0),n:list.length}; };
     const planIndexed=(coachPlan&&Array.isArray(coachPlan.sessions))
       ? coachPlan.sessions.map((p,gi)=>({p,key:'ps'+gi})) : [];
+    // Séances personnalisées déjà planifiées : même forme que planIndexed pour réutiliser
+    // le panneau de détail (stepsSummary/WorkoutProfile) et l'agrégat par zone.
+    const customIndexed = customWorkouts.filter(w=>w.date).map(w=>({
+      key:'cw'+w.id, custom:true, workoutId:w.id,
+      p:{
+        date:w.date, sport:w.sport, title:w.title,
+        durationMin:customWorkoutTotalMin(w), distanceKm:null,
+        focus:'Séance personnalisée', description:customWorkoutDescription(w)+(w.swimText?' · Éducatifs : '+w.swimText:''),
+        steps:customWorkoutSteps(w), done:false,
+      },
+    }));
     return starts.map(s=>{
       const cur=agg(s); const prev=agg(new Date(s.getTime()-7*86400000));
       const isCurrent=s.getTime()===thisWeek.getTime();
@@ -2856,11 +3006,23 @@ function App() {
               focus:x.p.focus||'',
             }))
           : [];
-        return{dow,num:d.getDate(),sessions,planned,empty:sessions.length===0&&planned.length===0,numStyle:{fontSize:'12px',fontWeight:'800',...(isToday?{padding:'1px 6px',background:'#201e1d',color:'#ffffff'}:{color:'#201e1d'})},cellStyle:{minWidth:0,padding:'8px 6px 8px',borderRight:'1px solid #d7d3d3',borderLeft:i>0?'0':undefined}};
+        const custom = customIndexed.filter(x=>x.p.date===dISO).map(x=>({
+          key:x.key, workoutId:x.workoutId,
+          sport:({Course:'Course',Trail:'Trail','Vélo':'Vélo',Natation:'Nat.'})[x.p.sport]||x.p.sport,
+          title:x.p.title, time:x.p.durationMin?fmtDur(x.p.durationMin):'',
+        }));
+        const isFutureDay=dISO>todayISO;
+        return{dow,num:d.getDate(),sessions,planned,custom,isFutureDay,dISO,empty:sessions.length===0&&planned.length===0&&custom.length===0,numStyle:{fontSize:'12px',fontWeight:'800',...(isToday?{padding:'1px 6px',background:'#201e1d',color:'#ffffff'}:{color:'#201e1d'})},cellStyle:{minWidth:0,padding:'8px 6px 8px',borderRight:'1px solid #d7d3d3',borderLeft:i>0?'0':undefined}};
       });
       const wkDate=new Date(s); const wkEnd=new Date(s.getTime()+6*86400000);
       const wkStartMs=s.getTime(), wkEndMs=s.getTime()+7*86400000;
-      const plannedSessions=planIndexed.filter(x=>{ const t=new Date(x.p.date+'T12:00:00').getTime(); return t>=wkStartMs&&t<wkEndMs&&x.p.sport&&x.p.sport!=='Repos'; });
+      const plannedSessions=planIndexed.filter(x=>{ const t=new Date(x.p.date+'T12:00:00').getTime(); return t>=wkStartMs&&t<wkEndMs&&x.p.sport&&x.p.sport!=='Repos'; })
+        .concat(customIndexed.filter(x=>{ const t=new Date(x.p.date+'T12:00:00').getTime(); return t>=wkStartMs&&t<wkEndMs; }));
+      // Répartition du temps par zone sur la semaine (coach + séances perso).
+      const zoneMinAgg={1:0,2:0,3:0,4:0,5:0};
+      plannedSessions.forEach(x=>(x.p.steps||[]).forEach(b=>{ if(b&&b.zone&&b.durationMin) zoneMinAgg[b.zone]=(zoneMinAgg[b.zone]||0)+b.durationMin; }));
+      const zoneMinTotal=Object.values(zoneMinAgg).reduce((a,b)=>a+b,0);
+      const zonePct=zoneMinTotal>0 ? [1,2,3,4,5].map(z=>({z,pct:Math.round(zoneMinAgg[z]/zoneMinTotal*100)})).filter(zp=>zp.pct>0) : null;
       // Somme réalisée + visée par type d'activité sur la semaine.
       const SPLIT_ORDER=['Course','Trail','Vélo','Natation'];
       const splitMap={};
@@ -2894,7 +3056,7 @@ function App() {
         if(spk.length>1) perSportLine=spk.map(k=>k+' '+(bySport[k].km?fmtNum(Math.round(bySport[k].km),0)+' km':fmtH(bySport[k].min))).join(' · ');
       }
       return {
-        isCurrent, isFuture, objective, perSportLine, plannedSessions, sportSplit, hidePrev:(isCurrent&&!!coachPlan)||isFuture,
+        isCurrent, isFuture, objective, perSportLine, plannedSessions, sportSplit, zonePct, hidePrev:(isCurrent&&!!coachPlan)||isFuture,
         rowStyle:{borderTop:isCurrent?'2px solid #ec3013':undefined,borderBottom:'2px solid #201e1d',borderLeft:isCurrent?'6px solid #ec3013':isFuture?'6px solid #d7d3d3':undefined,background:isCurrent?'#fdf1ee':undefined},
         title:'Semaine '+wkNum,span,tag:isCurrent?'En cours':isFuture?'À venir':'',
         tagStyle:{padding:'2px 8px',fontSize:'11px',fontWeight:'700',letterSpacing:'0.1em',textTransform:'uppercase',background:isCurrent?'#ec3013':'#bab6b6',color:'#fff',display:(isCurrent||isFuture)?undefined:'none'},
@@ -3006,6 +3168,29 @@ function App() {
   });
   useEffect(() => { try { localStorage.setItem('bs_coach_actan', JSON.stringify(coachActAnalyses)); } catch (e) {} }, [coachActAnalyses]);
   const [plannedOpen, setPlannedOpen] = useState(null); // clé de la séance prévue dépliée dans le calendrier
+
+  // ── Séances personnalisées (créées à la main + glissées-déposées) ────────
+  const [customMode, setCustomMode] = useState(false);
+  const [customWorkouts, setCustomWorkouts] = useState(() => {
+    try { const s = localStorage.getItem('bs_custom_workouts'); if (s) return JSON.parse(s); } catch (e) {}
+    return [];
+  });
+  useEffect(() => { try { localStorage.setItem('bs_custom_workouts', JSON.stringify(customWorkouts)); } catch (e) {} }, [customWorkouts]);
+  const [customModalOpen, setCustomModalOpen] = useState(false);
+  const [customEditId, setCustomEditId] = useState(null);
+  const [dragCustomId, setDragCustomId] = useState(null);
+  function saveCustomWorkout(w) {
+    setCustomWorkouts(list => { const i = list.findIndex(x => x.id === w.id); if (i >= 0) { const next = list.slice(); next[i] = w; return next; } return [...list, w]; });
+    setCustomModalOpen(false); setCustomEditId(null);
+  }
+  function deleteCustomWorkout(id) {
+    setCustomWorkouts(list => list.filter(w => w.id !== id));
+    setCustomModalOpen(false); setCustomEditId(null);
+    setPlannedOpen(k => k === 'cw' + id ? null : k);
+  }
+  function assignCustomWorkoutDate(id, dateISO) {
+    setCustomWorkouts(list => list.map(w => w.id === id ? { ...w, date: dateISO } : w));
+  }
   const coachAutoRef = useRef(false);
   useEffect(() => { try { localStorage.removeItem('bs_coach_chat'); localStorage.removeItem('bs_coach_avail'); localStorage.removeItem('bs_coach_lastseance'); } catch (e) {} }, []);
   useEffect(() => { try { localStorage.setItem('bs_coach_plan', coachPlan ? JSON.stringify(coachPlan) : ''); } catch (e) {} }, [coachPlan]);
@@ -3376,13 +3561,6 @@ function App() {
   const noData=!data.length;
   const noDataMsg=status==='loading'?'Import des activités Strava…':status==='error'?'Erreur Strava : '+error:status==='empty'?'Aucune activité trouvée sur ce compte Strava.':'Donnée manquante — connecte ton compte Strava dans le panneau de gauche pour remplir cette page.';
   const athleteSections=['Condition physique','Puissance','Fréquence cardiaque','VO2 max','Efficacité'];
-
-  const ZONE_NAMES = ['', 'Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
-  function fmtStepDur(min) {
-    if (min >= 60) return fmtDur(min);
-    const m = Math.floor(min + 1e-6), s = Math.round((min - m) * 60);
-    return s ? (m ? m + ' min ' + s : s + ' s') : m + ' min';
-  }
 
   // Résumé lisible du déroulé : « 20 min facile · 5 × (3 min dur / 1 min 30 très facile) · 10 min facile ».
   function stepsSummary(rawSteps) {
@@ -3880,6 +4058,29 @@ function App() {
           )
         ),
         renderCoachBand(),
+        h('div',{style:{display:'flex',alignItems:'center',flexWrap:'wrap',gap:'16px',padding:'18px 32px',borderBottom:'1px solid #d7d3d3'}},
+          h('button',{type:'button',onClick:()=>setCustomMode(m=>!m),style:{display:'flex',alignItems:'center',gap:'10px',border:'2px solid '+(customMode?'#7c3aed':'#201e1d'),background:customMode?'#7c3aed':'transparent',color:customMode?'#ffffff':'#201e1d',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',padding:'9px 16px',cursor:'pointer'}},
+            h('span',{style:{display:'inline-block',width:'28px',height:'16px',borderRadius:'9px',background:customMode?'#ffffff':'#bab6b6',position:'relative',flexShrink:0}},
+              h('span',{style:{position:'absolute',top:'2px',left:customMode?'14px':'2px',width:'12px',height:'12px',borderRadius:'50%',background:customMode?'#7c3aed':'#ffffff',transition:'left .12s'}})
+            ),
+            'Séances personnalisées'
+          ),
+          customMode&&h('button',{type:'button',onClick:()=>{setCustomEditId(null);setCustomModalOpen(true);},style:{border:'2px solid #7c3aed',background:'transparent',color:'#7c3aed',fontFamily:'inherit',fontSize:'12px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',padding:'9px 16px',cursor:'pointer'}},'+ Nouvelle séance'),
+          customMode&&h('div',{style:{display:'flex',flexWrap:'wrap',gap:'8px',flex:1,minWidth:0}},
+            customWorkouts.filter(w=>!w.date).length
+              ? customWorkouts.filter(w=>!w.date).map(w=>h('div',{key:w.id,draggable:true,onDragStart:()=>setDragCustomId(w.id),onDragEnd:()=>setDragCustomId(null),onClick:()=>{setCustomEditId(w.id);setCustomModalOpen(true);},style:{display:'flex',flexDirection:'column',gap:'2px',padding:'6px 12px',border:'2px solid #c4b5fd',background:'#f3eefe',color:'#7c3aed',cursor:'grab',fontSize:'11px'}},
+                  h('span',{style:{fontWeight:'800'}},w.sport+' · '+w.title),
+                  h('span',{style:{fontWeight:'600'}},fmtDur(customWorkoutTotalMin(w))||'—')
+                ))
+              : h('span',{style:{fontSize:'11px',color:'#8a83a8'}},'Glissez une séance sur un jour à venir pour la programmer')
+          )
+        ),
+        customModalOpen&&h(CustomWorkoutModal,{
+          initial:customEditId?(customWorkouts.find(w=>w.id===customEditId)||{}):{},
+          onSave:saveCustomWorkout,
+          onClose:()=>{setCustomModalOpen(false);setCustomEditId(null);},
+          onDelete:deleteCustomWorkout,
+        }),
         noData&&h('p',{style:{margin:0,padding:'28px 32px 32px',fontSize:'14px',color:'#605d5d'}},noDataMsg),
         h('section',null,
           data.length?buildWeeks().map((wk,wi)=>
@@ -3896,37 +4097,54 @@ function App() {
                 )
               ),
               h('div',{style:{display:'grid',gridTemplateColumns:'minmax(230px, 30%) minmax(0, 1fr)'}},
-                h('div',{style:{minWidth:0,padding:'16px 14px 20px',borderRight:'1px solid #d7d3d3',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px 14px'}},
-                  h('div',{style:{display:'flex',flexDirection:'column',gap:'12px',minWidth:0}},
-                    wk.stats.map((st,si)=>h('div',{key:si},
-                      h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},st.label),
-                      h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'4px'}},
-                        h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.02em',fontVariantNumeric:'tabular-nums'}},st.value),
-                        h('span',{style:st.arrowStyle},st.arrow),
-                        h('span',{style:st.deltaStyle},st.delta)
-                      ),
-                      !wk.hidePrev&&h('div',{style:{display:'flex',alignItems:'baseline',gap:'6px',marginTop:'3px'}},
-                        h('span',{style:{fontSize:'10px',color:'#3d3a3a',fontVariantNumeric:'tabular-nums'}},'S\u22121 : '+st.prevVal)
-                      )
-                    ))
+                h('div',{style:{minWidth:0,padding:'16px 14px 20px',borderRight:'1px solid #d7d3d3',display:'flex',flexDirection:'column',gap:'14px'}},
+                  h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px 14px'}},
+                    h('div',{style:{display:'flex',flexDirection:'column',gap:'12px',minWidth:0}},
+                      wk.stats.map((st,si)=>h('div',{key:si},
+                        h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},st.label),
+                        h('div',{style:{display:'flex',flexWrap:'wrap',alignItems:'baseline',gap:'8px',marginTop:'4px'}},
+                          h('span',{style:{fontSize:'20px',fontWeight:'800',letterSpacing:'-0.02em',fontVariantNumeric:'tabular-nums'}},st.value),
+                          h('span',{style:st.arrowStyle},st.arrow),
+                          h('span',{style:st.deltaStyle},st.delta)
+                        ),
+                        !wk.hidePrev&&h('div',{style:{display:'flex',alignItems:'baseline',gap:'6px',marginTop:'3px'}},
+                          h('span',{style:{fontSize:'10px',color:'#3d3a3a',fontVariantNumeric:'tabular-nums'}},'S\u22121 : '+st.prevVal)
+                        )
+                      ))
+                    ),
+                    h('div',{style:{display:'flex',flexDirection:'column',gap:'10px',minWidth:0}},
+                      h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Par activit\u00e9'),
+                      (wk.sportSplit&&wk.sportSplit.length)
+                        ? wk.sportSplit.map(sp=>{
+                            const hasAct=sp.min>0||sp.km>0;
+                            const hasTgt=sp.tMin>0||sp.tKm>0;
+                            return h('div',{key:sp.sport},
+                              h('span',{style:{display:'block',fontSize:'11px',fontWeight:'800',letterSpacing:'-0.01em'}},sp.sport),
+                              hasAct&&h('span',{style:{display:'block',fontSize:'12px',fontWeight:'700',fontVariantNumeric:'tabular-nums'}},fmtH(sp.min)+(sp.km?' \u00b7 '+fmtNum(Math.round(sp.km*10)/10,1)+' km':'')),
+                              hasTgt&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',color:'#605d5d',fontVariantNumeric:'tabular-nums'}},'vis\u00e9 '+(sp.tMin?fmtH(sp.tMin):'')+(sp.tKm?(sp.tMin?' \u00b7 ':'')+fmtNum(Math.round(sp.tKm),0)+' km':''))
+                            );
+                          })
+                        : h('span',{style:{fontSize:'11px',color:'#bab6b6'}},'\u2014')
+                    )
                   ),
-                  h('div',{style:{display:'flex',flexDirection:'column',gap:'10px',minWidth:0}},
-                    h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'Par activit\u00e9'),
-                    (wk.sportSplit&&wk.sportSplit.length)
-                      ? wk.sportSplit.map(sp=>{
-                          const hasAct=sp.min>0||sp.km>0;
-                          const hasTgt=sp.tMin>0||sp.tKm>0;
-                          return h('div',{key:sp.sport},
-                            h('span',{style:{display:'block',fontSize:'11px',fontWeight:'800',letterSpacing:'-0.01em'}},sp.sport),
-                            hasAct&&h('span',{style:{display:'block',fontSize:'12px',fontWeight:'700',fontVariantNumeric:'tabular-nums'}},fmtH(sp.min)+(sp.km?' \u00b7 '+fmtNum(Math.round(sp.km*10)/10,1)+' km':'')),
-                            hasTgt&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',color:'#605d5d',fontVariantNumeric:'tabular-nums'}},'vis\u00e9 '+(sp.tMin?fmtH(sp.tMin):'')+(sp.tKm?(sp.tMin?' \u00b7 ':'')+fmtNum(Math.round(sp.tKm),0)+' km':''))
-                          );
-                        })
-                      : h('span',{style:{fontSize:'11px',color:'#bab6b6'}},'\u2014')
+                  wk.zonePct&&h('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}},
+                    h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},'R\u00e9partition par zone'),
+                    h('div',{style:{display:'flex',height:'10px',width:'100%',overflow:'hidden',border:'1px solid #201e1d'}},
+                      wk.zonePct.map(zp=>h('span',{key:zp.z,title:ZONE_NAMES[zp.z]+' \u00b7 '+zp.pct+' %',style:{display:'block',width:zp.pct+'%',height:'100%',background:(COACH_ZONES[zp.z]||{}).color||'#605d5d'}}))
+                    ),
+                    h('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px 8px'}},
+                      wk.zonePct.map(zp=>h('span',{key:zp.z,style:{display:'flex',alignItems:'center',gap:'4px',fontSize:'10px',color:'#605d5d'}},
+                        h('span',{style:{width:'8px',height:'8px',background:(COACH_ZONES[zp.z]||{}).color||'#605d5d',flexShrink:0}}),
+                        ZONE_NAMES[zp.z]+' '+zp.pct+'%'
+                      ))
+                    )
                   )
                 ),
                 h('div',{style:{display:'grid',gridTemplateColumns:'repeat(7, minmax(0, 1fr))'}},
-                  wk.days.map((day,di)=>h('div',{key:di,style:{minWidth:0,padding:'8px 6px 8px',borderRight:di<6?'1px solid #d7d3d3':undefined}},
+                  wk.days.map((day,di)=>h('div',{key:di,style:{minWidth:0,padding:'8px 6px 8px',borderRight:di<6?'1px solid #d7d3d3':undefined,background:(customMode&&day.isFutureDay&&dragCustomId)?'#fdf1ee':undefined},
+                    onDragOver:e=>{ if(customMode&&day.isFutureDay&&dragCustomId) e.preventDefault(); },
+                    onDrop:e=>{ e.preventDefault(); if(customMode&&day.isFutureDay&&dragCustomId){ assignCustomWorkoutDate(dragCustomId,day.dISO); setDragCustomId(null); } }
+                  },
                     h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'4px'}},
                       h('span',{style:{fontSize:'10px',fontWeight:'600',letterSpacing:'0.1em',textTransform:'uppercase',color:'#605d5d'}},day.dow),
                       h('span',{style:day.numStyle},day.num)
@@ -3955,6 +4173,11 @@ function App() {
                         p.focus&&h('span',{style:{display:'block',fontSize:'10px',fontWeight:'600',lineHeight:'1.25',overflowWrap:'anywhere'}},p.focus),
                         h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',letterSpacing:'0.04em',lineHeight:'1.3'}},(plannedOpen===p.key?'▾ ':'')+'Prévu'+(p.time?' · '+p.time:''))
                       )),
+                      (day.custom||[]).map((c,ci)=>h('div',{key:'cw'+ci,draggable:customMode,onDragStart:()=>setDragCustomId(c.workoutId),onDragEnd:()=>setDragCustomId(null),onClick:()=>setPlannedOpen(k=>k===c.key?null:c.key),style:{flex:'1 1 0',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',justifyContent:'center',padding:'6px 3px',border:'2px solid '+(plannedOpen===c.key?'#7c3aed':'#c4b5fd'),background:plannedOpen===c.key?'#f3eefe':'transparent',color:plannedOpen===c.key?'#7c3aed':'#8a83a8',cursor:customMode?'grab':'pointer'}},
+                        h('span',{style:{display:'block',fontSize:'13px',fontWeight:'800',letterSpacing:'-0.02em',lineHeight:'1.1'}},c.sport),
+                        h('span',{style:{display:'block',fontSize:'11px',fontWeight:'700',lineHeight:'1.2',overflowWrap:'anywhere',hyphens:'auto'}},c.title),
+                        h('span',{style:{display:'block',fontSize:'10px',fontWeight:'700',letterSpacing:'0.04em',lineHeight:'1.3'}},(plannedOpen===c.key?'▾ ':'')+'Perso'+(c.time?' · '+c.time:''))
+                      )),
                       day.empty&&h('span',{style:{display:'flex',alignItems:'center',height:'100%',fontSize:'12px',color:'#bab6b6'}},'Repos')
                     )
                   ))
@@ -3968,7 +4191,9 @@ function App() {
                   h('div',{style:{display:'flex',alignItems:'baseline',gap:'10px',flexWrap:'wrap',marginBottom:'6px'}},
                     h('span',{style:{fontSize:'11px',fontWeight:'700',letterSpacing:'0.08em',textTransform:'uppercase',color:'#ec3013'}},new Date(s.date+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'short'})+' · '+s.sport),
                     h('span',{style:{fontSize:'14px',fontWeight:'800'}},s.title+(s.durationMin?' · '+fmtDur(s.durationMin):'')+(s.distanceKm?' · '+s.distanceKm+' km':'')),
-                    h('button',{type:'button',onClick:()=>setPlannedOpen(null),style:{marginLeft:'auto',border:'0',background:'transparent',color:'#605d5d',fontSize:'15px',fontWeight:'800',cursor:'pointer',lineHeight:1}},'✕')
+                    op.custom&&h('button',{type:'button',onClick:()=>{setCustomEditId(op.workoutId);setCustomModalOpen(true);},style:{marginLeft:'auto',border:'2px solid #7c3aed',background:'transparent',color:'#7c3aed',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',padding:'4px 10px',cursor:'pointer'}},'Modifier'),
+                    op.custom&&h('button',{type:'button',onClick:()=>deleteCustomWorkout(op.workoutId),style:{border:'2px solid #ec3013',background:'transparent',color:'#ec3013',fontFamily:'inherit',fontSize:'10px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',padding:'4px 10px',cursor:'pointer'}},'Supprimer'),
+                    h('button',{type:'button',onClick:()=>setPlannedOpen(null),style:{marginLeft:op.custom?undefined:'auto',border:'0',background:'transparent',color:'#605d5d',fontSize:'15px',fontWeight:'800',cursor:'pointer',lineHeight:1}},'✕')
                   ),
                   h('p',{style:{margin:'0 0 4px',fontSize:'13px',fontWeight:'700'}},'Objectif : '+(s.focus||s.title||'—')),
                   s.description&&h('p',{style:{margin:'0 0 4px',fontSize:'12px',color:'#3d3a3a',lineHeight:'1.45'}},s.description),
@@ -4942,13 +5167,13 @@ function App() {
                   return h('div',{key:'lt',style:{marginTop:'14px',paddingTop:'12px',borderTop:'2px solid #201e1d'}},
                     h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',gap:'8px',marginBottom:'8px'}},
                       h('h3',{style:{margin:0,fontSize:'11px',fontWeight:'700',letterSpacing:'0.06em',textTransform:'uppercase',color:'#605d5d'}},'Seuils estimés'),
-                      h('span',{style:{fontSize:'9px',color:'#bab6b6'}},'repère, depuis ta courbe FC')
+                      h('span',{style:{fontSize:'9px',color:'#bab6b6'}},'repère Karvonen, depuis ta courbe FC')
                     ),
                     h('div',{style:{display:'flex',flexWrap:'wrap',gap:'8px'}},
                       h(LTTile,{label:'LT1 · seuil aérobie', value:fmtLtRange(lt.lt1.vLo,lt.lt1.vHi), sub:(lt.lt1.hrLo&&lt.lt1.hrHi)?lt.lt1.hrLo+'–'+lt.lt1.hrHi+' bpm':null,
-                        tooltip:'Le LT1 (seuil aérobie, ou premier seuil ventilatoire) est l’intensité au-delà de laquelle l’organisme commence à produire plus de lactate qu’au repos, sans encore l’accumuler : en dessous, l’effort peut être tenu très longtemps. Ce n’est PAS une mesure individuelle : la littérature d’entraînement situe généralement ce seuil autour de 74 à 80 % de réserve cardiaque, une fourchette qui varie sensiblement d’un athlète à l’autre. Estimation : '+(isVelo?'puissance':'allure')+' que tu tiens habituellement dans cette fourchette, lue sur ta courbe fréquence cardiaque → performance construite à partir de toutes tes sorties.'}),
+                        tooltip:'Le LT1 (seuil aérobie, ou premier seuil ventilatoire) est l’intensité au-delà de laquelle l’organisme commence à produire plus de lactate qu’au repos, sans encore l’accumuler : en dessous, l’effort peut être tenu très longtemps. Ce n’est PAS une mesure individuelle : la littérature d’entraînement situe généralement ce seuil autour de 74 à 80 % de réserve cardiaque (méthode de Karvonen : FC repos + % × (FC max − FC repos)), une fourchette qui varie sensiblement d’un athlète à l’autre. Estimation : '+(isVelo?'puissance':'allure')+' que tu tiens habituellement dans cette fourchette de FC, lue sur ta courbe fréquence cardiaque → performance construite à partir de toutes tes sorties.'}),
                       h(LTTile,{label:'LT2 · seuil anaérobie', value:fmtLtRange(lt.lt2.vLo,lt.lt2.vHi), sub:(lt.lt2.hrLo&&lt.lt2.hrHi)?lt.lt2.hrLo+'–'+lt.lt2.hrHi+' bpm':null,
-                        tooltip:'Le LT2 (seuil anaérobie, ou seuil lactique) est l’intensité maximale que tu peux tenir en état stable sur environ 30 à 60 minutes ; au-delà, le lactate s’accumule progressivement et la fatigue s’installe. Ce n’est PAS une mesure individuelle : la littérature situe généralement ce seuil autour de 87 à 91 % de réserve cardiaque, une fourchette qui varie sensiblement d’un athlète à l’autre. Estimation : '+(isVelo?'puissance':'allure')+' que tu tiens habituellement dans cette fourchette, lue sur ta courbe fréquence cardiaque → performance construite à partir de toutes tes sorties.'})
+                        tooltip:'Le LT2 (seuil anaérobie, ou seuil lactique) est l’intensité maximale que tu peux tenir en état stable sur environ 30 à 60 minutes ; au-delà, le lactate s’accumule progressivement et la fatigue s’installe. Ce n’est PAS une mesure individuelle : la littérature situe généralement ce seuil autour de 87 à 91 % de réserve cardiaque (méthode de Karvonen : FC repos + % × (FC max − FC repos)), une fourchette qui varie sensiblement d’un athlète à l’autre. Estimation : '+(isVelo?'puissance':'allure')+' que tu tiens habituellement dans cette fourchette de FC, lue sur ta courbe fréquence cardiaque → performance construite à partir de toutes tes sorties.'})
                     )
                   );
                 })()
